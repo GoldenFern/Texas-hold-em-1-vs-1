@@ -62,7 +62,7 @@ python scripts/train_rlcard.py --episodes 50000 --chips 1000 --reward-scale 0.01
   1. `estimate_hand_probabilities(iterations?)`：返回最终牌型分布（不是胜率）
   2. `apply_action(action, amount?)`：`amount` 是 raise-to 总额
 - 每回合必须调用 `apply_action` 恰好一次；非法则把错误 + 约束 + 合法动作作为 tool 消息回传，让模型重试。
-- 每条街第一次 `apply_action` 前要求先调用一次 `estimate_hand_probabilities`；没调用会软性 nudge 一次（不计入三次失败），避免模型完全跳过第一个工具。
+- 估算工具是可选辅助，默认不强制（`require_estimate_first: false`）。打开后只会在每条街第一次 `apply_action` 前软提醒一次，不计入三次失败；`get_random_number` 不能满足这个开关。默认关闭，避免模型机械地在每条街、甚至河牌公共牌发完后仍调用估算。
 - 连续 3 次非法动作：call 优先，否则 fold（`_fallback` 的 `allow_check` 只用于网络错误等非动作失败）。
 - 单回合最多 12 次模型调用（`config/game.json`）。
 - 上下文超过预算时从最早的 `【牌局更新】` 回合边界整段删除，不拆散 assistant/tool 对。

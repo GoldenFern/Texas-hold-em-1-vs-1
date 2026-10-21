@@ -19,7 +19,7 @@
   "llm_runtime": {
     "max_steps_per_turn": 12,
     "max_consecutive_failures": 3,
-    "require_estimate_first": true,
+    "require_estimate_first": false,
     "max_context_tokens_estimate": 220000,
     "request_timeout_seconds": 300,
     "connect_timeout_seconds": 20,

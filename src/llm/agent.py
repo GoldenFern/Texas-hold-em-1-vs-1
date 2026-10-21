@@ -29,7 +29,8 @@ TOOLS = [
             "description": (
                 "根据你的两张底牌和当前公共牌，估算你最终最佳五张牌分别成为"
                 "皇家同花顺/同花顺/四条/葫芦/同花/顺子/三条/两对/一对/高牌的概率。"
-                "这是牌型分布，不是胜率。建议在每条街的第一次决策前调用一次。"
+                "这是牌型分布，不是胜率。只在你需要确认牌型或听牌概率时调用；"
+                "公共牌已经发完、牌型已经确定时通常不必调用。"
             ),
             "parameters": {
                 "type": "object",
@@ -113,7 +114,7 @@ class LLMAgent(BaseAgent):
         self.validate_action = validate_action
         self.max_steps = int(runtime.get("max_steps_per_turn", 12))
         self.max_failures = int(runtime.get("max_consecutive_failures", 3))
-        self.require_estimate_first = bool(runtime.get("require_estimate_first", True))
+        self.require_estimate_first = bool(runtime.get("require_estimate_first", False))
         self.max_context_tokens = int(runtime.get("max_context_tokens_estimate", 220000))
         self.messages: List[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
         self.turn_count = 0

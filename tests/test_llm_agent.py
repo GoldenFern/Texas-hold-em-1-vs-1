@@ -181,6 +181,17 @@ def test_no_tool_calls_eventually_falls_back() -> None:
     assert turn_end and turn_end[-1]["auto"] is True
 
 
+def test_apply_without_estimate_is_allowed_by_default() -> None:
+    agent, events = build_agent(
+        [{"tool_calls": [{"name": "apply_action", "arguments": '{"action": "check"}'}]}]
+    )
+    action = agent.decide(make_view(), events.append)
+    assert action.type == ActionType.CHECK
+    assert agent.client.calls == 1
+    results = [event for event in events if event["type"] == "tool_result"]
+    assert len(results) == 1 and results[0]["ok"] is True
+
+
 def test_apply_before_estimate_is_nudged_once() -> None:
     agent, events = build_agent(
         [
