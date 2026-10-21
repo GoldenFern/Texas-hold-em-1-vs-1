@@ -204,7 +204,7 @@ const dealerStyle = computed(() => {
           <div v-if="!match" class="empty-overlay">
             <div class="empty-mark">♠</div>
             <p>一张桌子，两位玩家。</p>
-            <span>人类 · LLM · RLCard，任选其二。</span>
+            <span>人类 · LLM · RLCard / Project RL，任选其二。</span>
             <button class="btn btn-primary empty-cta" @click="openSetup">
               <AppIcon name="settings" :size="14" />
               配置对局
@@ -212,7 +212,7 @@ const dealerStyle = computed(() => {
             <div class="empty-legend">
               <span><AppIcon name="user" :size="11" /> 人类</span>
               <span><AppIcon name="sparkles" :size="11" /> LLM</span>
-              <span><AppIcon name="bot" :size="11" /> RLCard</span>
+              <span><AppIcon name="bot" :size="11" /> RLCard / Project RL</span>
             </div>
           </div>
         </div>

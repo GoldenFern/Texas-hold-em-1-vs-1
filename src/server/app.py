@@ -263,6 +263,18 @@ def _rlcard_info() -> dict:
                 "description": "加载 RLCard Deep Monte-Carlo checkpoint。",
                 "needs_model": True,
             },
+            {
+                "id": "project_dqn",
+                "name": "Project DQN",
+                "description": "本项目规则训练的 73 维 / 10 动作 DQN。",
+                "needs_model": True,
+            },
+            {
+                "id": "project_nfsp",
+                "name": "Project NFSP",
+                "description": "本项目规则训练的 73 维 / 10 动作 NFSP。",
+                "needs_model": True,
+            },
         ],
         "models": models,
         "model_dir": str(MODELS_DIR.relative_to(PROJECT_ROOT)).replace("\\", "/"),

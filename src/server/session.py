@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from src.agents.base import AgentView
+from src.agents.project_bot import ProjectBot
 from src.agents.rlcard_bot import RLCardBot
 from src.analysis.hand_distribution import HandDistributionAnalyzer
 from src.engine.actions import Action, ActionType
@@ -247,12 +248,28 @@ class GameSession:
                         runtime=self._game_config.get("llm_runtime", {}),
                     )
                 elif seat.kind == "bot":
-                    self.agents[seat_index] = RLCardBot(
-                        name=seat.name,
-                        agent_type=seat.bot_agent_type,
-                        model_path=seat.bot_model_path,
-                        seed=int(base_seed) + seat_index * 97,
-                    )
+                    if str(seat.bot_agent_type).startswith("project_"):
+                        algorithm = str(seat.bot_agent_type).split("_", 1)[1]
+                        model_path = seat.bot_model_path
+                        if not model_path:
+                            raise ValueError(f"座位 {seat_index} 的 Project Bot 需要模型文件")
+                        try:
+                            self.agents[seat_index] = ProjectBot(
+                                name=seat.name,
+                                model_path=model_path,
+                                algorithm=algorithm,
+                            )
+                        except (FileNotFoundError, ValueError, RuntimeError) as exc:
+                            raise ValueError(
+                                f"座位 {seat_index} 的 Project Bot 加载失败: {exc}"
+                            ) from exc
+                    else:
+                        self.agents[seat_index] = RLCardBot(
+                            name=seat.name,
+                            agent_type=seat.bot_agent_type,
+                            model_path=seat.bot_model_path,
+                            seed=int(base_seed) + seat_index * 97,
+                        )
             self._thread = threading.Thread(target=self._run, args=(generation,), daemon=True)
             self._thread.start()
 

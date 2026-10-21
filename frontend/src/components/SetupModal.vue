@@ -130,19 +130,37 @@ function setParam(index: number, key: string, value: unknown): void {
 }
 
 function setBotType(index: number, agentType: string): void {
-  const bot = seat(index).bot || { agent_type: "random", model_path: null };
+  const current = seat(index).bot || { agent_type: "random", model_path: null };
+  const models = rlcard.value?.models || [];
+  const preferred: Record<string, string> = {
+    dqn: "nlh_dqn.pth",
+    nfsp: "nlh_nfsp.pth",
+    dmc: "nlh_dmc.pth",
+    project_dqn: "nlh_dqn_project.pth",
+    project_nfsp: "nlh_nfsp_project.pth",
+  };
+  const chosen =
+    models.find((model) => model.name === preferred[agentType]) ||
+    models.find((model) => model.name.includes("_project") === agentType.startsWith("project_")) ||
+    models[0];
   setup.seats[index] = {
     ...seat(index),
     kind: "bot",
+    name: agentType.startsWith("project_") ? "Project Bot" : "RLCard",
     bot: {
       agent_type: agentType,
-      model_path: agentType === "random" ? null : (bot.model_path || rlcard.value?.models[0]?.path || null),
+      model_path: agentType === "random" ? null : (chosen?.path || current.model_path || null),
     },
   } as SeatSetup;
 }
 
-function setBotModel(index: number, path: string): void {
-  const bot = seat(index).bot || { agent_type: "random", model_path: null };
+function botModels(agentType: string) {
+  const models = rlcard.value?.models || [];
+  const project = agentType.startsWith("project_");
+  return models.filter((model) => model.name.includes("_project") === project);
+}
+
+function setBotModel(index: number, path: string): void {  const bot = seat(index).bot || { agent_type: "random", model_path: null };
   setup.seats[index] = {
     ...seat(index),
     kind: "bot",
@@ -529,7 +547,7 @@ function close(): void {
                   <span class="field-label">模型文件</span>
                   <select class="input" :value="config.bot?.model_path || ''" @change="setBotModel(index, ($event.target as HTMLSelectElement).value)">
                     <option value="">选择 {{ rlcard?.model_dir }} 下的模型</option>
-                    <option v-for="model in rlcard?.models || []" :key="model.path" :value="model.path">
+                    <option v-for="model in botModels(config.bot?.agent_type || 'random')" :key="model.path" :value="model.path">
                       {{ model.name }} · {{ model.size_kb }} KB
                     </option>
                   </select>

@@ -3,7 +3,7 @@
 一个专门为 **单挑（Heads-Up）无限注德州扑克** 做的实验台：人类、LLM、RLCard 三者任选其二上桌。重点不是做一个普通的扑克游戏，而是把 LLM 的**思考、工具调用、参数与结果**完整地摊开在牌桌旁边。
 
 - 游戏引擎：严格双人规则，Treys 牌力评估
-- Agent：每次行动发一条新的牌局消息，保留上下文；两个工具：牌型概率 + 执行动作
+- Agent：每次行动发一条新的牌局消息，保留上下文；三个工具：牌型概率 + 随机数 + 执行动作
 - 可视化：实时思考流、工具卡片、Token/延迟、最终牌型分布
 - 上帝视角：双方底牌、烧牌、完整牌堆
 - LLM：DeepSeek / 火山引擎 / MiniMax / Qwen / 智谱 GLM / Kimi / LongCat
@@ -97,12 +97,13 @@ cd frontend && npm run dev     # 终端 2，:5173，代理到 :5050
 
 1. 追加一条新的 `【牌局更新】` 用户消息，包含底牌、公共牌、底池、双方筹码、需跟注、最小/最大加注、合法动作、本手行动历史、最近几手结果。
 2. Agent 保留之前的完整对话（跨手牌、跨街道）。上下文过长时按“回合边界”压缩最早的回合，保留系统提示与最近回合。
-3. 每条街的第一次决策前，Agent 会先被要求调用一次 `estimate_hand_probabilities`（没调用会给一次软提示，不计入失败），然后调用 `apply_action`。
-4. `apply_action` 合法就进入下一回合；不合法会把错误、最新约束和合法动作回传给模型，让它重试。
-5. 连续三次无效动作：自动 **call**；无法 call 则 **fold**。网络/超时等非动作失败则优先 check/call，避免无意义弃牌。
-6. 厂商要求回传 `reasoning_content` 的（DeepSeek / Qwen / MiniMax / Kimi / GLM 等）会原样回传；不支持的可选参数在 400 时会自动降级重试。
+3. `estimate_hand_probabilities` 是可选工具。默认不强制；打开 `require_estimate_first` 后，每条街第一次 `apply_action` 前会软提醒一次（不计入失败）。
+4. 如果分析后仍难以在几个接近的方案中取舍，Agent 可以调用 `get_random_number` 抽一个 `[0, 1)` 随机数。它只是打破僵局的备选方案，不能替代分析。
+5. `apply_action` 合法就进入下一回合；不合法会把错误、最新约束和合法动作回传给模型，让它重试。
+6. 连续三次无效动作：自动 **call**；无法 call 则 **fold**。网络/超时等非动作失败则优先 check/call，避免无意义弃牌。
+7. 厂商要求回传 `reasoning_content` 的（DeepSeek / Qwen / MiniMax / Kimi / GLM 等）会原样回传；不支持的可选参数在 400 时会自动降级重试。
 
-两个工具的协议见 [`docs/protocol.md`](docs/protocol.md)。
+三个工具的协议见 [`docs/protocol.md`](docs/protocol.md)。
 
 ### 数据分析
 
@@ -118,6 +119,7 @@ cd frontend && npm run dev     # 终端 2，:5173，代理到 :5050
 
 - 观察编码严格对齐 RLCard `no-limit-holdem` 的 54 维向量与 5 个动作 ID
 - 支持 `random` / `dqn` / `nfsp` / `dmc`
+- RLCard 双人局的翻后行动顺序与本项目引擎不同（RLCard 按钮/小盲先行动，本项目大盲先行动）。RLCard checkpoint 直接放进本项目会有位置偏差；比较算法强弱建议在 RLCard 原生环境里跑。
 - 默认 RandomAgent 不需要模型文件；DQN 等需要在配置里选择模型
 - 训练/加载 DQN 需要 PyTorch：`pip install -r requirements-optional.txt`
 - 训练：
@@ -127,6 +129,24 @@ python scripts/train_rlcard.py --episodes 50000 --chips 1000 --reward-scale 0.01
 ```
 
 输出 `models/rlcard/nlh_dqn.pth`，在 UI 中选 **RLCard → DQN → 模型文件** 即可。详见 [`models/rlcard/README.md`](models/rlcard/README.md)。
+
+### 项目规则 RL Bot
+
+- 使用本项目 `HeadsUpGame` 的规则训练，73 维观测，10 个动作槽（fold/check/call/min-raise/1/3、1/2、3/4、pot、1.5x pot/all-in）。
+- DQN / NFSP：
+
+```bash
+python scripts/train_project_bot.py --algorithm dqn --hands 100000 --opponent mix
+python scripts/train_project_bot.py --algorithm nfsp --hands 100000 --opponent mix
+```
+
+- 离线矩阵评估：
+
+```bash
+python scripts/eval_project_bots.py --hands 2000
+```
+
+模型输出到 `models/rlcard/nlh_dqn_project.pth` / `nlh_nfsp_project.pth`。UI 里选 **Project DQN** 或 **Project NFSP**。训练细节见 [`docs/training.md`](docs/training.md)。
 
 ---
 
@@ -185,7 +205,7 @@ cd frontend && npm run typecheck && npm run build
 
 - 盲注/位置、最小加注、短码全下不重开下注、弃牌退款、摊牌平分、随机 60 手筹码守恒
 - 牌型分布精确/蒙特卡洛、重复牌拒绝、缓存
-- LLM 工具循环：估算→动作、连续三次非法动作兜底、无工具调用兜底、未知工具
+- LLM 工具循环：估算→动作、随机数、连续三次非法动作兜底、无工具调用兜底、未知工具
 - RLCard 动作合法性与 54 维 observation 对齐
 
 ---

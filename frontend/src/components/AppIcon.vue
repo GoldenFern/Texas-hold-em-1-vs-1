@@ -28,6 +28,10 @@ const ICONS: Record<string, IconDef> = {
   clock: { circles: [[12, 12, 9]], paths: ["M12 7v5l3 2"] },
   coins: { circles: [[8, 8, 5], [16, 16, 5]], paths: [] },
   zap: { paths: ["M13 2 4 14h7l-1 8 9-12h-7l1-8Z"] },
+  dice: {
+    rects: [[3, 3, 18, 18, 4]],
+    paths: ["M8 8h.01", "M16 8h.01", "M12 12h.01", "M8 16h.01", "M16 16h.01"],
+  },
   list: { paths: ["M8 6h13", "M8 12h13", "M8 18h13", "M3 6h.01", "M3 12h.01", "M3 18h.01"] },
   copy: { paths: ["M8 8h11a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V8Z", "M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"] },
   arrowRight: { paths: ["M5 12h14", "m13 6 6 6-6 6"] },

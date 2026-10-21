@@ -238,3 +238,98 @@ def test_unknown_tool_is_reported() -> None:
     results = [event for event in events if event["type"] == "tool_result"]
     assert results[0]["ok"] is False
     assert "未知工具" in results[0]["summary"]
+
+
+def test_random_number_tool_returns_unit_interval() -> None:
+    agent, events = build_agent(
+        [
+            {
+                "content": "先抽个随机数。",
+                "tool_calls": [{"name": "get_random_number", "arguments": "{}"}],
+            },
+            {
+                "tool_calls": [
+                    {"name": "apply_action", "arguments": '{"action": "check"}'}
+                ]
+            },
+        ]
+    )
+    action = agent.decide(make_view(), events.append)
+    assert action.type == ActionType.CHECK
+    assert agent.client.calls == 2
+    results = [
+        event
+        for event in events
+        if event["type"] == "tool_result" and event.get("name") == "get_random_number"
+    ]
+    assert len(results) == 1
+    assert results[0]["ok"] is True
+    assert 0.0 <= results[0]["result"]["value"] < 1.0
+
+
+def test_random_number_rerolls_on_each_call(monkeypatch) -> None:
+    values = iter([0.1234, 0.8766])
+    monkeypatch.setattr("src.llm.agent.random.random", lambda: next(values))
+    agent, events = build_agent(
+        [
+            {
+                "tool_calls": [
+                    {"name": "get_random_number", "arguments": "{}"},
+                    {"name": "get_random_number", "arguments": "{}"},
+                ]
+            },
+            {
+                "tool_calls": [
+                    {"name": "apply_action", "arguments": '{"action": "check"}'}
+                ]
+            },
+        ]
+    )
+    action = agent.decide(make_view(), events.append)
+    assert action.type == ActionType.CHECK
+    results = [
+        event["result"]["value"]
+        for event in events
+        if event["type"] == "tool_result" and event.get("name") == "get_random_number"
+    ]
+    assert results == [0.1234, 0.8766]
+
+
+def test_random_number_does_not_replace_estimate() -> None:
+    agent, events = build_agent(
+        [
+            {
+                "tool_calls": [{"name": "get_random_number", "arguments": "{}"}],
+            },
+            {
+                "tool_calls": [
+                    {"name": "apply_action", "arguments": '{"action": "check"}'}
+                ]
+            },
+            {
+                "tool_calls": [
+                    {
+                        "name": "estimate_hand_probabilities",
+                        "arguments": '{"iterations": 3000}',
+                    }
+                ]
+            },
+            {
+                "tool_calls": [
+                    {"name": "apply_action", "arguments": '{"action": "check"}'}
+                ]
+            },
+        ],
+        require_estimate_first=True,
+    )
+    action = agent.decide(make_view(), events.append)
+    assert action.type == ActionType.CHECK
+    results = [
+        event for event in events if event["type"] == "tool_result"
+    ]
+    assert results[0]["name"] == "get_random_number"
+    assert results[0]["ok"] is True
+    assert results[1]["ok"] is False
+    assert "请先调用" in results[1]["summary"]
+    assert results[2]["name"] == "estimate_hand_probabilities"
+    assert results[2]["ok"] is True

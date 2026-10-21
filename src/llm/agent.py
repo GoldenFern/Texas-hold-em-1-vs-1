@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 import time
 import uuid
 from typing import Callable, List, Optional
@@ -42,6 +43,23 @@ TOOLS = [
                         "description": "蒙特卡洛采样次数；翻牌前建议 20000-50000，翻牌后引擎会自动精确枚举。",
                     }
                 },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_random_number",
+            "description": (
+                "返回一个 [0, 1) 区间的均匀随机数。"
+                "只有在你完成理性分析后，几种选择的期望仍然非常接近、确实拿不准时，"
+                "才可以用它来打破僵局。这只是备选方案，不要用它代替对牌局、底池赔率、"
+                "位置和对手范围的分析，也不要为了追求某个数字反复调用。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
                 "required": [],
             },
         },
@@ -376,6 +394,10 @@ class LLMAgent(BaseAgent):
                     self._handle_estimate(view, call, parsed, emit, turn_id, index, tool_started)
                     continue
 
+                if call.name == "get_random_number":
+                    self._handle_random(call, emit, turn_id, index, tool_started)
+                    continue
+
                 if call.name == "apply_action":
                     if parsed is None:
                         failures += 1
@@ -479,7 +501,8 @@ class LLMAgent(BaseAgent):
                 failures += 1
                 self._append_tool_error(
                     call,
-                    f"未知工具 {call.name!r}。只能使用 estimate_hand_probabilities 和 apply_action。",
+                    f"未知工具 {call.name!r}。只能使用 estimate_hand_probabilities、"
+                    f"get_random_number 和 apply_action。",
                     emit,
                     turn_id,
                     index,
@@ -583,6 +606,26 @@ class LLMAgent(BaseAgent):
             started,
             ui_result={"ok": True, **result.to_dict()},
             summary=summary,
+        )
+
+    def _handle_random(
+        self,
+        call: ToolCall,
+        emit,
+        turn_id: str,
+        index: int,
+        started: float,
+    ) -> None:
+        value = round(random.random(), 4)
+        payload = {"ok": True, "value": value}
+        self._append_tool_result(
+            call,
+            payload,
+            emit,
+            turn_id,
+            index,
+            started,
+            summary=f"{value:.4f}",
         )
 
     def _build_action(self, view: AgentView, parsed: dict) -> tuple[Optional[Action], str]:

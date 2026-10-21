@@ -8,6 +8,7 @@ const props = defineProps<{ tool: ToolView }>();
 
 const isEstimate = computed(() => props.tool.name === "estimate_hand_probabilities");
 const isAction = computed(() => props.tool.name === "apply_action");
+const isRandom = computed(() => props.tool.name === "get_random_number");
 const parsed = computed<Record<string, unknown>>(() => {
   if (props.tool.parsed) return props.tool.parsed;
   try {
@@ -20,6 +21,12 @@ const parsed = computed<Record<string, unknown>>(() => {
 const result = computed<Record<string, any>>(() => props.tool.result || {});
 const ok = computed(() => props.tool.status === "done" && result.value.ok !== false);
 const ignored = computed(() => Boolean(props.tool.ignored));
+const randomValue = computed<number | null>(() => {
+  const raw = result.value.value;
+  const value = Number(raw);
+  return raw !== undefined && raw !== null && Number.isFinite(value) ? value : null;
+});
+const randomPercent = computed(() => `${Math.min(100, Math.max(0, (randomValue.value ?? 0) * 100))}%`);
 const distribution = computed<any[]>(() => {
   const value = result.value.distribution;
   return Array.isArray(value) ? value : [];
@@ -47,8 +54,12 @@ const statusLabel = computed(() => {
   if (props.tool.status === "error") return "失败";
   return "完成";
 });
-const icon = computed(() => (isEstimate.value ? "chart" : isAction.value ? "zap" : "wrench"));
-const title = computed(() => (isEstimate.value ? "牌型概率" : isAction.value ? "执行动作" : props.tool.name || "工具"));
+const icon = computed(() =>
+  isEstimate.value ? "chart" : isAction.value ? "zap" : isRandom.value ? "dice" : "wrench",
+);
+const title = computed(() =>
+  isEstimate.value ? "牌型概率" : isAction.value ? "执行动作" : isRandom.value ? "随机数" : props.tool.name || "工具",
+);
 const detail = computed(() => {
   if (isEstimate.value) {
     if (method.value === "exact") return `精确枚举 · ${samples.value.toLocaleString()} 种`;
@@ -58,6 +69,9 @@ const detail = computed(() => {
   if (isAction.value) {
     const label = actionLabel(action.value) || "动作";
     return amount.value ? `${label} → ${chips(amount.value)}` : label;
+  }
+  if (isRandom.value) {
+    return randomValue.value !== null ? randomValue.value.toFixed(4) : "0 ≤ x < 1";
   }
   return props.tool.name || "";
 });
@@ -100,7 +114,7 @@ function barWidth(item: any): string {
 </script>
 
 <template>
-  <details class="tool-card" :class="[isEstimate ? 'estimate' : isAction ? 'action' : 'generic', tool.status]" open>
+  <details class="tool-card" :class="[isEstimate ? 'estimate' : isAction ? 'action' : isRandom ? 'random' : 'generic', tool.status]" open>
     <summary class="tool-head">
       <span class="tool-icon"><AppIcon :name="icon" :size="13" /></span>
       <span class="tool-title">{{ title }}</span>
@@ -188,6 +202,30 @@ function barWidth(item: any): string {
         </div>
       </div>
 
+      <!-- Random number result -->
+      <div v-else-if="isRandom" class="random-block">
+        <div v-if="tool.status === 'error'" class="generic-error">
+          <AppIcon name="alert" :size="13" />
+          {{ errorText || "随机数生成失败" }}
+        </div>
+        <template v-else>
+          <div class="random-readout">
+            <span class="random-value mono">{{ randomValue !== null ? randomValue.toFixed(4) : "—" }}</span>
+            <span class="random-unit">均匀随机 · 0 ≤ x &lt; 1</span>
+          </div>
+          <template v-if="randomValue !== null">
+            <div class="random-track">
+              <span class="random-marker" :style="{ left: randomPercent }"></span>
+            </div>
+            <div class="random-scale mono">
+              <span>0</span>
+              <span>0.5</span>
+              <span>1</span>
+            </div>
+          </template>
+        </template>
+      </div>
+
       <!-- Generic result -->
       <div v-else-if="tool.status === 'error'" class="generic-error">
         <AppIcon name="alert" :size="13" />
@@ -235,6 +273,7 @@ function barWidth(item: any): string {
 
 .tool-card.estimate { border-left-color: rgba(232, 195, 122, 0.55); }
 .tool-card.action { border-left-color: rgba(84, 214, 168, 0.5); }
+.tool-card.random { border-left-color: rgba(121, 169, 255, 0.55); }
 .tool-card.action.error { border-left-color: rgba(226, 112, 95, 0.6); }
 .tool-card.running { border-left-color: rgba(121, 169, 255, 0.55); }
 .tool-card:hover { background: rgba(255, 255, 255, 0.035); }
@@ -259,6 +298,7 @@ function barWidth(item: any): string {
 
 .tool-card.estimate .tool-icon { color: var(--gold); }
 .tool-card.action .tool-icon { color: var(--emerald); }
+.tool-card.random .tool-icon { color: var(--blue); }
 .tool-card.action.error .tool-icon { color: var(--red); }
 
 .tool-title {
@@ -383,6 +423,60 @@ function barWidth(item: any): string {
 @keyframes shimmer { to { background-position: -200% 0; } }
 
 .empty-result { font-size: calc(10px * var(--type-scale)); color: var(--faint); }
+
+.random-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0 1px;
+}
+
+.random-readout {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.random-value {
+  font-size: calc(20px * var(--type-scale));
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.02em;
+  line-height: 1.1;
+}
+
+.random-unit {
+  font-size: calc(9px * var(--type-scale));
+  color: var(--faint);
+}
+
+.random-track {
+  position: relative;
+  height: 5px;
+  margin: 2px 4px 0;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.random-marker {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--blue);
+  box-shadow: 0 0 8px rgba(121, 169, 255, 0.6);
+  transform: translate(-50%, -50%);
+  transition: left 0.4s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+.random-scale {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 1px;
+  font-size: calc(8px * var(--type-scale));
+  color: var(--faint);
+}
 
 .action-ok {
   display: flex;

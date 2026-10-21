@@ -537,6 +537,10 @@ class LLMClient:
             len(result.reasoning),
         )
 
+    def close(self) -> None:
+        """Close the underlying HTTP connection pool."""
+        self._session.close()
+
 
 def _split_think_tags(content: str) -> tuple[str, str]:
     """Handle providers that embed reasoning in ``<think>`` tags."""

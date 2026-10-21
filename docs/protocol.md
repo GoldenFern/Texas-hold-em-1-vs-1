@@ -334,6 +334,14 @@ Socket.IO 事件 `agent_event` 的 payload。所有事件带：
 
 估算工具 `result` 会包含完整 `distribution` / `current_best` / `method` / `total` / `elapsed_ms`，供前端画图。
 
+随机数工具的 `result`：
+
+```json
+{"ok": true, "value": 0.7391}
+```
+
+`value` 是 `[0, 1)` 的均匀随机数，每次调用重新抽取，供前端显示数值和刻度。
+
 非法动作的 `result`：
 
 ```json

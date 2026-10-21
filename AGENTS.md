@@ -26,9 +26,16 @@ cd frontend && npm run build           # 构建到 static/dist
 python -m pytest tests -q
 cd frontend && npm run typecheck
 python scripts/train_rlcard.py --episodes 50000 --chips 1000 --reward-scale 0.01
+python scripts/train_nfsp.py --episodes 50000 --chips 1000 --reward-scale 0.01
+python scripts/train_project_bot.py --algorithm dqn --hands 100000 --opponent mix
+python scripts/eval_project_bots.py --hands 2000
+python scripts/eval_bots.py --hands 2000 --allow-untrained   # 离线 Bot 评测；缺模型时用未训练网络占位
+python scripts/eval_llm_vs_bot.py --hands 25 --workers 25   # LLM vs Project DQN，25 手并发
 ```
 
 `.env` 从 `.env.example` 复制；**不要读取或打印真实 Key**，只检查环境变量是否存在。
+
+离线评测不启动 Flask/SocketIO，直接驱动 `HeadsUpGame` + `RLCardBot`，结果写到 `tmp/bot_eval/`。默认 1000 筹码、5/10 盲注、每手重置筹码、同牌换座；`--hands` 是每个组合的手数。没有 DQN/NFSP/DMC checkpoint 时，不加 `--allow-untrained` 会直接报错，避免静默退化成 check/call。
 
 ## 架构分层
 
@@ -36,7 +43,8 @@ python scripts/train_rlcard.py --episodes 50000 --chips 1000 --reward-scale 0.01
 |---|---|---|
 | 引擎 | `src/engine/` | Card/Deck、Treys 评估、双人状态机、动作校验 |
 | 分析 | `src/analysis/` | 最终牌型分布，翻牌后精确枚举，翻前蒙特卡洛，LRU 缓存 |
-| Agent | `src/agents/` | `AgentView`（公平信息）、RLCard 适配器 |
+| Agent | `src/agents/` | `AgentView`（公平信息）、RLCard 适配器、`ProjectBot`（73 维 / 10 动作） |
+| 训练 | `src/training/` | `ProjectHeadsUpEnv`（本项目规则）、73 维观测、10 动作抽象、终端奖励 |
 | LLM | `src/llm/` | Provider/模型元数据、SSE 客户端、Prompt、工具循环 |
 | 服务 | `src/server/` | Flask 工厂、REST、SocketIO、`GameSession` 线程与事件 |
 | 前端 | `frontend/` | Vue 3 + Vite + TS；`src/store.ts` 是 socket/状态 reducer |
@@ -55,12 +63,24 @@ python scripts/train_rlcard.py --episodes 50000 --chips 1000 --reward-scale 0.01
 
 `tests/test_engine.py` 是规则回归安全网，改引擎必须跑。
 
+> **与 RLCard 的规则差异**：RLCard 的 `no-limit-holdem` 在双人局翻后让按钮/小盲先行动，本项目按标准单挑规则让大盲先行动。RLCard checkpoint 直接放进本项目会有位置和行动顺序偏差；比较 RLCard 算法时不要把它在本项目引擎里的胜率当成绝对强弱。
+
+## 项目规则 RL Bot
+
+- `src/training/env.py` 的 `ProjectHeadsUpEnv` 包装 `HeadsUpGame`，不复制规则。
+- 观测 73 维（`src/training/obs.py`），动作 10 槽（`src/training/actions.py`）。
+- 动作掩码只使用引擎的 `legal_actions`、`min_raise_to`、`max_raise_to`；低于最小加注的尺寸屏蔽，不夹取。
+- 训练：`scripts/train_project_bot.py`；离线评估：`scripts/eval_project_bots.py`。
+- 模型格式 `project-bot-v1`，`ProjectBot` 用 `weights_only=True` 加载；旧的 `RLCardBot` 仍是 54 维 / 5 动作。
+- 评估使用同牌换座，按 deal 配对；2000 手只适合粗筛。
+
 ## LLM Agent 契约
 
 - 每次行动：追加一条 `【牌局更新】` 用户消息，保留完整历史。
 - 工具：
   1. `estimate_hand_probabilities(iterations?)`：返回最终牌型分布（不是胜率）
-  2. `apply_action(action, amount?)`：`amount` 是 raise-to 总额
+  2. `get_random_number()`：返回 `[0, 1)` 均匀随机数；只在分析后仍难以取舍时用于打破僵局，每次调用重新抽取，不能替代估算
+  3. `apply_action(action, amount?)`：`amount` 是 raise-to 总额
 - 每回合必须调用 `apply_action` 恰好一次；非法则把错误 + 约束 + 合法动作作为 tool 消息回传，让模型重试。
 - 估算工具是可选辅助，默认不强制（`require_estimate_first: false`）。打开后只会在每条街第一次 `apply_action` 前软提醒一次，不计入三次失败；`get_random_number` 不能满足这个开关。默认关闭，避免模型机械地在每条街、甚至河牌公共牌发完后仍调用估算。
 - 连续 3 次非法动作：call 优先，否则 fold（`_fallback` 的 `allow_check` 只用于网络错误等非动作失败）。
@@ -104,7 +124,7 @@ python scripts/train_rlcard.py --episodes 50000 --chips 1000 --reward-scale 0.01
   - `ResultOverlay`、`ToastHost`
 - 思考块在正文开始后自动折叠；用户手动展开后不再自动折叠。
 - `turn_state` 事件保存发给模型的原样牌局输入，在 `AgentTurn` 的「牌局输入」折叠块中可查。
-- 工具卡片默认展开；估算工具显示迷你分布条，动作工具显示动作徽章/错误约束。
+- 工具卡片默认展开；估算工具显示迷你分布条，随机数工具显示数值和 0 到 1 刻度，动作工具显示动作徽章/错误约束。
 - 响应式断点：1180px 控制台移到下方；720px 牌桌/表单单列。
 - `frontend/src/store.ts` 是唯一 socket 入口；组件不要直接 `io()` 或 `fetch` 游戏接口（`api.ts` 除外）。
 - 字号统一由 `:root` 的 `--type-scale` 缩放（当前 1.2）；新增 `font-size` 必须写成 `calc(Npx * var(--type-scale))`，不要写死 px，否则会绕过整体缩放。
@@ -114,6 +134,7 @@ python scripts/train_rlcard.py --episodes 50000 --chips 1000 --reward-scale 0.01
 
 - 引擎随机 60 手筹码守恒在 `tests/test_engine.py`。
 - 牌型分布精确/蒙特卡洛在 `tests/test_analysis.py`。
+- LLM vs Bot 离线评测：`scripts/eval_llm_vs_bot.py`，每手独立、可并发、同牌换座，输出到 `tmp/llm_eval/`。默认对手是 `nlh_dqn_project.pth`（20k 手矩阵里最强的项目 Bot）。
 - LLM 工具循环用 `FakeClient`，不要依赖真实 API Key。
 - RLCard 适配器测试会构造 `AgentView` 并重复决策，断言动作合法。
 - 真实 Provider 连通性用 UI 的「测试连接」，不要在测试里发真实请求。

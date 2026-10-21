@@ -44,7 +44,7 @@ const avatarIcon = computed(() => {
 const providerIcon = computed(() => props.seatInfo?.icon || "");
 const roleLabel = computed(() => {
   if (kind.value === "llm") return props.seatInfo?.model_name || "LLM Agent";
-  if (kind.value === "bot") return "RLCard";
+  if (kind.value === "bot") return props.seatInfo?.agent?.agent_type?.startsWith("project_") ? "Project RL" : "RLCard";
   return "人类玩家";
 });
 const action = computed(() => props.player?.last_action || null);

@@ -204,7 +204,7 @@ onUnmounted(() => {
           </span>
           <span class="tab-text">
             <strong>{{ shortName(seat.name, 16) }}</strong>
-            <small>{{ seat.model_name || (seat.kind === "bot" ? "RLCard" : seat.kind === "human" ? "人类" : "Agent") }}</small>
+            <small>{{ seat.model_name || (seat.kind === "bot" ? (seat.agent?.agent_type?.startsWith("project_") ? "Project RL" : "RLCard") : seat.kind === "human" ? "人类" : "Agent") }}</small>
           </span>
           <span v-if="seatLive(seat.seat)" class="dot live"></span>
           <span v-else-if="game.pinned && game.selectedSeat === seat.seat" class="pinned-mark">PIN</span>
@@ -213,7 +213,7 @@ onUnmounted(() => {
 
       <div v-if="mode === 'stream' && selectedInfo" class="console-meta">
         <span class="chip" :class="selectedInfo.kind === 'llm' ? 'gold' : 'blue'">
-          {{ selectedInfo.kind === "llm" ? "LLM" : selectedInfo.kind === "bot" ? "RLCARD" : "HUMAN" }}
+          {{ selectedInfo.kind === "llm" ? "LLM" : selectedInfo.agent?.agent_type?.startsWith("project_") ? "PROJECT" : selectedInfo.kind === "bot" ? "RLCARD" : "HUMAN" }}
         </span>
         <span v-if="selectedInfo.model_name" class="chip mono">{{ selectedInfo.model_name }}</span>
         <span v-if="selectedInfo.agent?.agent_type" class="chip mono">{{ selectedInfo.agent.agent_type }}</span>
@@ -273,7 +273,7 @@ onUnmounted(() => {
               <div class="bot-card">
                 <header class="bot-head">
                   <span class="bot-icon"><AppIcon name="bot" :size="14" /></span>
-                  <strong>RLCard</strong>
+                  <strong>{{ item.agentType.startsWith("project_") ? "Project RL" : "RLCard" }}</strong>
                   <span class="chip blue">{{ item.agentType }}</span>
                   <span class="mono faint">#{{ item.handId }} · {{ streetShort(item.street) }}</span>
                   <span class="bot-action mono">
@@ -302,7 +302,7 @@ onUnmounted(() => {
                     </div>
                   </div>
                   <p class="bot-note">
-                    {{ item.agentType === "random" ? "RLCard RandomAgent：在合法动作中均匀采样，不产生思考链。" : "RLCard 策略已加载，动作由模型推理产生。" }}
+                    {{ item.agentType === "random" ? "RLCard RandomAgent：在合法动作中均匀采样，不产生思考链。" : item.agentType.startsWith("project_") ? "项目规则训练的 73 维 / 10 动作策略，动作由模型推理产生。" : "RLCard 策略已加载，动作由模型推理产生。" }}
                   </p>
                 </div>
               </div>
