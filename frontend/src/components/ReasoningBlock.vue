@@ -82,7 +82,7 @@ function toggle(): void {
 }
 
 .reasoning-title {
-  font-size: 11px;
+  font-size: calc(11px * var(--type-scale));
   font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--muted);
@@ -93,7 +93,7 @@ function toggle(): void {
   align-items: center;
   gap: 4px;
   font-family: var(--font-mono);
-  font-size: 7px;
+  font-size: calc(7px * var(--type-scale));
   font-weight: 800;
   letter-spacing: 0.12em;
   color: var(--emerald);
@@ -104,7 +104,7 @@ function toggle(): void {
 
 .reasoning-meta {
   margin-left: auto;
-  font-size: 9px;
+  font-size: calc(9px * var(--type-scale));
   color: var(--faint);
 }
 
@@ -124,7 +124,7 @@ function toggle(): void {
 .reasoning-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--type-scale));
   line-height: 1.65;
   color: #a9b8af;
   font-weight: 450;

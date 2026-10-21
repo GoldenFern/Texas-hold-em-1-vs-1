@@ -403,7 +403,7 @@ onUnmounted(() => {
 
 .head-title h2 {
   margin: 3px 0 0;
-  font-size: 15px;
+  font-size: calc(15px * var(--type-scale));
   font-weight: 750;
   letter-spacing: -0.015em;
   display: flex;
@@ -421,7 +421,7 @@ onUnmounted(() => {
   background: var(--emerald-dim);
   color: var(--emerald);
   font-family: var(--font-mono);
-  font-size: 7px;
+  font-size: calc(7px * var(--type-scale));
   font-weight: 800;
   letter-spacing: 0.1em;
   vertical-align: 2px;
@@ -434,9 +434,9 @@ onUnmounted(() => {
   flex: none;
 }
 
-.follow-btn { padding: 4px 8px; font-size: 10px; }
+.follow-btn { padding: 4px 8px; font-size: calc(10px * var(--type-scale)); }
 .follow-btn.active { color: var(--emerald); }
-.mode-switch button { padding: 4px 8px; font-size: 10px; }
+.mode-switch button { padding: 4px 8px; font-size: calc(10px * var(--type-scale)); }
 
 .seat-tabs {
   display: flex;
@@ -488,7 +488,7 @@ onUnmounted(() => {
 }
 
 .tab-text strong {
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--type-scale));
   font-weight: 700;
   color: var(--text-soft);
   white-space: nowrap;
@@ -497,7 +497,7 @@ onUnmounted(() => {
 }
 
 .tab-text small {
-  font-size: 8.5px;
+  font-size: calc(8.5px * var(--type-scale));
   color: var(--faint);
   white-space: nowrap;
   overflow: hidden;
@@ -506,7 +506,7 @@ onUnmounted(() => {
 
 .pinned-mark {
   font-family: var(--font-mono);
-  font-size: 6.5px;
+  font-size: calc(6.5px * var(--type-scale));
   font-weight: 800;
   color: var(--gold);
   border: 1px solid rgba(232, 195, 122, 0.3);
@@ -522,7 +522,7 @@ onUnmounted(() => {
   padding: 0 14px 9px;
 }
 
-.console-meta .chip { font-size: 8.5px; padding: 2px 6px; }
+.console-meta .chip { font-size: calc(8.5px * var(--type-scale)); padding: 2px 6px; }
 
 .console-scroll {
   flex: 1;
@@ -564,7 +564,7 @@ onUnmounted(() => {
 
 .empty-state h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: calc(14px * var(--type-scale));
   font-weight: 750;
   letter-spacing: -0.01em;
 }
@@ -572,7 +572,7 @@ onUnmounted(() => {
 .empty-state p {
   margin: 0;
   max-width: 300px;
-  font-size: 11px;
+  font-size: calc(11px * var(--type-scale));
   line-height: 1.65;
   color: var(--muted);
 }
@@ -582,7 +582,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 6px;
   margin-top: 8px;
-  font-size: 9px;
+  font-size: calc(9px * var(--type-scale));
   color: var(--faint);
 }
 
@@ -634,27 +634,27 @@ onUnmounted(() => {
   flex-wrap: wrap;
   padding: 7px 10px;
   border-bottom: 1px solid var(--line);
-  font-size: 10px;
+  font-size: calc(10px * var(--type-scale));
 }
 
 .bot-icon { color: var(--blue); display: flex; }
-.bot-head strong { font-size: 10.5px; }
-.bot-action { margin-left: auto; color: var(--blue); font-size: 9px; font-weight: 700; }
+.bot-head strong { font-size: calc(10.5px * var(--type-scale)); }
+.bot-action { margin-left: auto; color: var(--blue); font-size: calc(9px * var(--type-scale)); font-weight: 700; }
 
 .bot-body { padding: 7px 10px 8px; display: flex; flex-direction: column; gap: 6px; }
 
-.bot-legal { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; font-size: 8.5px; }
-.bot-legal .chip { font-size: 8px; padding: 1px 5px; }
+.bot-legal { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; font-size: calc(8.5px * var(--type-scale)); }
+.bot-legal .chip { font-size: calc(8px * var(--type-scale)); padding: 1px 5px; }
 .bot-legal .chip.chosen { color: var(--blue); border-color: rgba(121, 169, 255, 0.4); background: var(--blue-dim); }
 
 .bot-probs { display: flex; flex-direction: column; gap: 3px; }
-.bot-prob-row { display: flex; align-items: center; gap: 6px; font-size: 8.5px; color: var(--faint); }
+.bot-prob-row { display: flex; align-items: center; gap: 6px; font-size: calc(8.5px * var(--type-scale)); color: var(--faint); }
 .bot-prob-row > span:first-child { width: 14px; }
 .bot-prob-row > span:last-child { width: 40px; text-align: right; }
 .bot-prob-track { flex: 1; height: 3px; border-radius: 99px; background: rgba(255, 255, 255, 0.06); overflow: hidden; }
 .bot-prob-fill { height: 100%; background: var(--blue); border-radius: 99px; opacity: 0.7; }
 
-.bot-note { margin: 0; font-size: 9px; line-height: 1.5; color: var(--faint); }
+.bot-note { margin: 0; font-size: calc(9px * var(--type-scale)); line-height: 1.5; color: var(--faint); }
 
 /* Log */
 
@@ -674,8 +674,8 @@ onUnmounted(() => {
   flex-wrap: wrap;
 }
 
-.log-hand { font-size: 9px; color: var(--faint); }
-.log-result { font-size: 9.5px; color: var(--muted); }
+.log-hand { font-size: calc(9px * var(--type-scale)); color: var(--faint); }
+.log-result { font-size: calc(9.5px * var(--type-scale)); color: var(--muted); }
 .log-result.won { color: var(--gold); }
 .log-board { display: flex; gap: 2px; margin-left: auto; }
 
@@ -686,7 +686,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 7px;
   padding: 4px 9px;
-  font-size: 9px;
+  font-size: calc(9px * var(--type-scale));
   border-top: 1px solid rgba(255, 255, 255, 0.025);
 }
 
@@ -696,7 +696,7 @@ onUnmounted(() => {
   width: 38px;
   flex: none;
   font-family: var(--font-mono);
-  font-size: 7px;
+  font-size: calc(7px * var(--type-scale));
   letter-spacing: 0.08em;
   color: var(--faint);
 }
@@ -713,11 +713,11 @@ onUnmounted(() => {
 .log-action.call { color: var(--emerald); }
 .log-action.all_in { color: var(--purple); }
 .log-action.check { color: var(--muted); }
-.log-pot { margin-left: auto; color: var(--faint); font-size: 8px; }
+.log-pot { margin-left: auto; color: var(--faint); font-size: calc(8px * var(--type-scale)); }
 
 .auto-chip {
   font-family: var(--font-mono);
-  font-size: 6.5px;
+  font-size: calc(6.5px * var(--type-scale));
   font-weight: 800;
   color: var(--amber);
   border: 1px solid rgba(231, 179, 94, 0.3);
@@ -735,7 +735,7 @@ onUnmounted(() => {
   padding: 7px 12px;
   border-top: 1px solid var(--line);
   background: rgba(4, 11, 8, 0.5);
-  font-size: 8.5px;
+  font-size: calc(8.5px * var(--type-scale));
   color: var(--faint);
 }
 
@@ -758,7 +758,7 @@ onUnmounted(() => {
   border: 1px solid rgba(232, 195, 122, 0.3);
   background: rgba(12, 26, 20, 0.94);
   color: var(--gold);
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--type-scale));
   font-weight: 700;
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(10px);
@@ -783,6 +783,6 @@ onUnmounted(() => {
   .seat-tabs { padding: 0 10px 7px; }
   .console-scroll { padding: 6px 7px 16px; }
   .seat-tab { max-width: 170px; }
-  .mode-switch button { padding: 4px 7px; font-size: 9px; }
+  .mode-switch button { padding: 4px 7px; font-size: calc(9px * var(--type-scale)); }
 }
 </style>

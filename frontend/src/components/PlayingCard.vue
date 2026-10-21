@@ -214,15 +214,15 @@ const label = computed(() => {
   display: grid;
   place-items: center;
   color: rgba(232, 226, 210, 0.2);
-  font-size: 22px;
+  font-size: calc(22px * var(--type-scale));
 }
 
 .size-mini .corner.tl { top: 3px; left: 3px; }
 .size-mini .corner.br { bottom: 3px; right: 3px; }
-.size-mini .corner .rank { font-size: 10px; }
-.size-mini .corner .suit { font-size: 7px; }
-.size-mini .center-suit { font-size: 16px; }
-.size-mini .back-mark { font-size: 12px; }
+.size-mini .corner .rank { font-size: calc(10px * var(--type-scale)); }
+.size-mini .corner .suit { font-size: calc(7px * var(--type-scale)); }
+.size-mini .center-suit { font-size: calc(16px * var(--type-scale)); }
+.size-mini .back-mark { font-size: calc(12px * var(--type-scale)); }
 
 @media (max-width: 720px) {
   .pcard.size-community { --w: 48px; --h: 68px; }

@@ -261,7 +261,7 @@ const dealerStyle = computed(() => {
   align-items: center;
   gap: 5px;
   color: var(--faint);
-  font-size: 10px;
+  font-size: calc(10px * var(--type-scale));
   font-weight: 700;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -278,7 +278,7 @@ const dealerStyle = computed(() => {
   border-radius: 50%;
   border: 1px solid var(--line-strong);
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: calc(8px * var(--type-scale));
   color: var(--faint);
   transition: all 0.2s ease;
 }
@@ -314,8 +314,8 @@ const dealerStyle = computed(() => {
 }
 
 .table-meta .chip { padding: 4px 9px; }
-.meta-key { color: var(--faint); font-size: 9px; }
-.table-meta strong { font-size: 10.5px; }
+.meta-key { color: var(--faint); font-size: calc(9px * var(--type-scale)); }
+.table-meta strong { font-size: calc(10.5px * var(--type-scale)); }
 
 .felt-wrap {
   padding: 14px 14px 8px;
@@ -386,7 +386,7 @@ const dealerStyle = computed(() => {
   left: 50%;
   top: 50%;
   transform: translate(-50%, -52%);
-  font-size: clamp(150px, 26vw, 280px);
+  font-size: clamp(calc(150px * var(--type-scale)), 26vw, calc(280px * var(--type-scale)));
   line-height: 1;
   color: rgba(255, 255, 255, 0.025);
   pointer-events: none;
@@ -398,7 +398,7 @@ const dealerStyle = computed(() => {
   left: 50%;
   top: 11%;
   transform: translateX(-50%);
-  font-size: 8px;
+  font-size: calc(8px * var(--type-scale));
   font-weight: 700;
   letter-spacing: 0.42em;
   color: rgba(232, 195, 122, 0.24);
@@ -434,7 +434,7 @@ const dealerStyle = computed(() => {
   align-items: center;
   gap: 8px;
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: calc(8px * var(--type-scale));
   font-weight: 700;
   letter-spacing: 0.26em;
   color: var(--gold);
@@ -443,14 +443,14 @@ const dealerStyle = computed(() => {
 
 .pot-result-label {
   font-family: var(--font-ui);
-  font-size: 8px;
+  font-size: calc(8px * var(--type-scale));
   letter-spacing: 0.08em;
   color: var(--muted);
 }
 
 .pot-value {
   font-family: var(--font-mono);
-  font-size: clamp(19px, 2.2vw, 27px);
+  font-size: clamp(calc(19px * var(--type-scale)), 2.2vw, calc(27px * var(--type-scale)));
   font-weight: 700;
   line-height: 1.1;
   color: var(--gold-bright);
@@ -497,7 +497,7 @@ const dealerStyle = computed(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 9px;
+  font-size: calc(9px * var(--type-scale));
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: rgba(232, 226, 210, 0.42);
@@ -523,7 +523,7 @@ const dealerStyle = computed(() => {
   background: linear-gradient(145deg, #f5d89d, #bd8c38);
   color: #241a08;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: calc(10px * var(--type-scale));
   font-weight: 800;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.38), 0 0 0 2px rgba(6, 16, 12, 0.75);
 }
@@ -540,7 +540,7 @@ const dealerStyle = computed(() => {
   border: 1px solid rgba(232, 195, 122, 0.14);
   background: rgba(5, 14, 10, 0.42);
   color: rgba(232, 226, 210, 0.55);
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--type-scale));
   letter-spacing: 0.06em;
   white-space: nowrap;
   backdrop-filter: blur(6px);
@@ -568,7 +568,7 @@ const dealerStyle = computed(() => {
   align-items: center;
   gap: 12px;
   margin-top: 12px;
-  font-size: 9px;
+  font-size: calc(9px * var(--type-scale));
   color: var(--faint);
 }
 
@@ -579,20 +579,20 @@ const dealerStyle = computed(() => {
 }
 
 .empty-mark {
-  font-size: 38px;
+  font-size: calc(38px * var(--type-scale));
   color: rgba(232, 195, 122, 0.4);
   line-height: 1;
 }
 
 .empty-overlay p {
   margin: 6px 0 0;
-  font-size: 15px;
+  font-size: calc(15px * var(--type-scale));
   font-weight: 750;
   letter-spacing: -0.01em;
 }
 
 .empty-overlay span {
-  font-size: 11px;
+  font-size: calc(11px * var(--type-scale));
   color: var(--muted);
 }
 

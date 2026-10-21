@@ -316,7 +316,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 }
 
 .status-text {
-  font-size: 12px;
+  font-size: calc(12px * var(--type-scale));
   font-weight: 750;
   color: var(--text);
   white-space: nowrap;
@@ -331,7 +331,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 10px;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--type-scale));
   color: var(--muted);
 }
 
@@ -364,7 +364,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
 kbd {
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: calc(8px * var(--type-scale));
   padding: 1px 4px;
   border-radius: 3px;
   border: 1px solid currentColor;
@@ -379,7 +379,7 @@ kbd {
   border: 1px solid rgba(196, 140, 255, 0.32);
   background: var(--purple-dim);
   color: var(--purple);
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--type-scale));
   font-weight: 800;
   letter-spacing: 0.04em;
   display: inline-flex;
@@ -413,7 +413,7 @@ kbd {
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.03);
   color: var(--muted);
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--type-scale));
   font-weight: 700;
   transition: all 0.15s ease;
 }
@@ -423,7 +423,7 @@ kbd {
 
 .range-note {
   margin-left: auto;
-  font-size: 9px;
+  font-size: calc(9px * var(--type-scale));
   color: var(--faint);
 }
 
@@ -442,18 +442,18 @@ kbd {
   flex: none;
 }
 
-.amount-prefix { font-size: 9.5px; color: var(--faint); }
+.amount-prefix { font-size: calc(9.5px * var(--type-scale)); color: var(--faint); }
 
 .amount-input .input {
   width: 84px;
   height: 30px;
   padding: 4px 8px;
-  font-size: 12px;
+  font-size: calc(12px * var(--type-scale));
   text-align: right;
 }
 
 .muted-note {
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--type-scale));
   color: var(--faint);
   border-left: 1px solid var(--line);
   padding-left: 14px;
@@ -468,8 +468,8 @@ kbd {
   justify-content: flex-end;
 }
 
-.wait-note { font-size: 11px; color: var(--faint); }
-.match-end { font-size: 12px; font-weight: 700; color: var(--gold); }
+.wait-note { font-size: calc(11px * var(--type-scale)); color: var(--faint); }
+.match-end { font-size: calc(12px * var(--type-scale)); font-weight: 700; color: var(--gold); }
 
 .end-actions {
   display: flex;
@@ -485,7 +485,7 @@ kbd {
   align-items: center;
   gap: 6px;
   margin-right: 6px;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--type-scale));
   color: var(--text-soft);
 }
 

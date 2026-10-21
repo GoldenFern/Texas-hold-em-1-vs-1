@@ -89,7 +89,7 @@ function reload(): void {
   border: 1px solid rgba(226, 112, 95, 0.28);
   background: var(--red-dim);
   color: #ffb3a8;
-  font-size: 11px;
+  font-size: calc(11px * var(--type-scale));
 }
 
 .global-banner .btn { margin-left: auto; }
@@ -99,7 +99,7 @@ function reload(): void {
   align-items: center;
   gap: 8px;
   padding: 4px 4px 0;
-  font-size: 8.5px;
+  font-size: calc(8.5px * var(--type-scale));
   color: var(--faint);
   letter-spacing: 0.05em;
 }
@@ -128,7 +128,7 @@ function reload(): void {
   border-radius: 14px;
   border: 1px solid rgba(232, 195, 122, 0.35);
   color: var(--gold);
-  font-size: 24px;
+  font-size: calc(24px * var(--type-scale));
   animation: mark-pulse 1.5s ease-in-out infinite;
 }
 
@@ -137,7 +137,7 @@ function reload(): void {
   50% { opacity: 1; transform: scale(1); }
 }
 
-.loading-text { font-size: 10px; letter-spacing: 0.24em; color: var(--muted); text-transform: uppercase; }
+.loading-text { font-size: calc(10px * var(--type-scale)); letter-spacing: 0.24em; color: var(--muted); text-transform: uppercase; }
 
 .loading-bar {
   width: 140px;

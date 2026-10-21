@@ -187,7 +187,7 @@ const assessment = computed(() => props.player?.assessment?.category_name || "")
   border: 1px solid rgba(232, 195, 122, 0.24);
   background: rgba(6, 14, 11, 0.65);
   color: var(--gold);
-  font-size: 10px;
+  font-size: calc(10px * var(--type-scale));
   font-weight: 700;
   white-space: nowrap;
   backdrop-filter: blur(8px);
@@ -281,7 +281,7 @@ const assessment = computed(() => props.player?.assessment?.category_name || "")
 }
 
 .name {
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--type-scale));
   font-weight: 750;
   color: var(--text);
   white-space: nowrap;
@@ -292,7 +292,7 @@ const assessment = computed(() => props.player?.assessment?.category_name || "")
 .kind-tag {
   flex: none;
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: calc(8px * var(--type-scale));
   font-weight: 700;
   letter-spacing: 0.1em;
   padding: 1px 4px;
@@ -315,13 +315,13 @@ const assessment = computed(() => props.player?.assessment?.category_name || "")
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--type-scale));
   font-weight: 700;
   color: var(--gold-bright);
 }
 
 .role {
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--type-scale));
   color: var(--faint);
   white-space: nowrap;
   overflow: hidden;
@@ -343,7 +343,7 @@ const assessment = computed(() => props.player?.assessment?.category_name || "")
   padding: 0 4px;
   border-radius: 5px;
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: calc(8px * var(--type-scale));
   font-weight: 800;
   letter-spacing: 0.04em;
 }
@@ -373,7 +373,7 @@ const assessment = computed(() => props.player?.assessment?.category_name || "")
   border: 1px solid rgba(232, 195, 122, 0.28);
   background: #10231b;
   color: var(--gold);
-  font-size: 9px;
+  font-size: calc(9px * var(--type-scale));
   font-weight: 700;
   letter-spacing: 0.03em;
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
@@ -391,7 +391,7 @@ const assessment = computed(() => props.player?.assessment?.category_name || "")
   border: 1px solid var(--line-strong);
   background: rgba(10, 22, 17, 0.92);
   color: var(--text-soft);
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--type-scale));
   font-weight: 700;
   white-space: nowrap;
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.32);
@@ -408,7 +408,7 @@ const assessment = computed(() => props.player?.assessment?.category_name || "")
 
 .auto-tag {
   font-family: var(--font-mono);
-  font-size: 7px;
+  font-size: calc(7px * var(--type-scale));
   color: var(--amber);
   border: 1px solid rgba(231, 179, 94, 0.3);
   border-radius: 3px;
@@ -428,7 +428,7 @@ const assessment = computed(() => props.player?.assessment?.category_name || "")
   background: linear-gradient(135deg, rgba(232, 195, 122, 0.2), rgba(232, 195, 122, 0.08));
   border: 1px solid rgba(232, 195, 122, 0.38);
   color: var(--gold-bright);
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--type-scale));
   font-weight: 800;
   white-space: nowrap;
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
@@ -443,7 +443,7 @@ const assessment = computed(() => props.player?.assessment?.category_name || "")
   .seat { width: min(280px, 60%); }
   .pod { padding: 7px 9px; gap: 8px; }
   .avatar { width: 32px; height: 32px; }
-  .name { font-size: 11.5px; }
+  .name { font-size: calc(11.5px * var(--type-scale)); }
   .role { display: none; }
   .seat.top { top: 1%; }
   .seat.bottom { bottom: 1%; }

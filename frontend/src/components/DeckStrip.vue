@@ -75,7 +75,7 @@ const extra = computed(() => Math.max(0, props.count - shown.value.length));
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--type-scale));
   font-weight: 700;
   letter-spacing: 0.08em;
   color: var(--muted);
@@ -84,13 +84,13 @@ const extra = computed(() => Math.max(0, props.count - shown.value.length));
 
 .deck-count {
   color: var(--gold);
-  font-size: 10px;
+  font-size: calc(10px * var(--type-scale));
   letter-spacing: 0;
 }
 
 .deck-hint {
   margin-left: auto;
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--type-scale));
   color: var(--faint);
 }
 
@@ -99,7 +99,7 @@ const extra = computed(() => Math.max(0, props.count - shown.value.length));
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--type-scale));
   color: var(--faint);
   cursor: default;
 }
@@ -143,7 +143,7 @@ const extra = computed(() => Math.max(0, props.count - shown.value.length));
   bottom: -7px;
   transform: translateX(-50%);
   font-family: var(--font-mono);
-  font-size: 6px;
+  font-size: calc(6px * var(--type-scale));
   letter-spacing: 0.1em;
   color: #241a08;
   background: var(--gold);
@@ -162,10 +162,10 @@ const extra = computed(() => Math.max(0, props.count - shown.value.length));
   border-radius: 5px;
   border: 1px dashed var(--line-strong);
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--type-scale));
 }
 
-.deck-empty { font-size: 10.5px; color: var(--faint); }
+.deck-empty { font-size: calc(10.5px * var(--type-scale)); color: var(--faint); }
 
 .burn-row {
   display: flex;
@@ -177,7 +177,7 @@ const extra = computed(() => Math.max(0, props.count - shown.value.length));
 }
 
 .burn-label {
-  font-size: 9px;
+  font-size: calc(9px * var(--type-scale));
   color: var(--faint);
   letter-spacing: 0.08em;
   writing-mode: vertical-rl;
@@ -194,7 +194,7 @@ const extra = computed(() => Math.max(0, props.count - shown.value.length));
   padding: 8px 10px;
   border: 1px dashed var(--line);
   border-radius: 8px;
-  font-size: 10px;
+  font-size: calc(10px * var(--type-scale));
   color: var(--faint);
   letter-spacing: 0.03em;
 }

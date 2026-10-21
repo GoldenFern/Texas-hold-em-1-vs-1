@@ -107,6 +107,7 @@ python scripts/train_rlcard.py --episodes 50000 --chips 1000 --reward-scale 0.01
 - 工具卡片默认展开；估算工具显示迷你分布条，动作工具显示动作徽章/错误约束。
 - 响应式断点：1180px 控制台移到下方；720px 牌桌/表单单列。
 - `frontend/src/store.ts` 是唯一 socket 入口；组件不要直接 `io()` 或 `fetch` 游戏接口（`api.ts` 除外）。
+- 字号统一由 `:root` 的 `--type-scale` 缩放（当前 1.2）；新增 `font-size` 必须写成 `calc(Npx * var(--type-scale))`，不要写死 px，否则会绕过整体缩放。
 - 类型检查必须通过 `npm run typecheck`；构建必须通过 `npm run build`。
 
 ## 测试 / 质量

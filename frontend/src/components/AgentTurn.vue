@@ -223,7 +223,7 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
 }
 
 .turn-index {
-  font-size: 9px;
+  font-size: calc(9px * var(--type-scale));
   font-weight: 800;
   letter-spacing: 0.14em;
   color: var(--faint);
@@ -234,7 +234,7 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
   align-items: center;
   padding: 1px 6px;
   border-radius: 4px;
-  font-size: 8.5px;
+  font-size: calc(8.5px * var(--type-scale));
   font-weight: 800;
   letter-spacing: 0.08em;
   border: 1px solid var(--line);
@@ -246,7 +246,7 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
 .street-pill.turn { color: var(--blue); border-color: rgba(121, 169, 255, 0.28); background: var(--blue-dim); }
 .street-pill.river { color: var(--purple); border-color: rgba(196, 140, 255, 0.28); background: var(--purple-dim); }
 
-.hand-no { font-size: 8.5px; }
+.hand-no { font-size: calc(8.5px * var(--type-scale)); }
 
 .turn-status {
   display: inline-flex;
@@ -255,7 +255,7 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
   margin-left: auto;
   padding: 1px 6px;
   border-radius: 999px;
-  font-size: 8.5px;
+  font-size: calc(8.5px * var(--type-scale));
   font-weight: 700;
   color: var(--faint);
   border: 1px solid var(--line);
@@ -264,7 +264,7 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
 .turn-status.live { color: var(--gold); border-color: rgba(232, 195, 122, 0.25); background: var(--gold-dim); }
 .turn-status.auto { color: var(--amber); border-color: rgba(231, 179, 94, 0.28); background: rgba(231, 179, 94, 0.08); }
 
-.turn-time { font-size: 8.5px; color: var(--faint); }
+.turn-time { font-size: calc(8.5px * var(--type-scale)); color: var(--faint); }
 
 .turn-stats {
   display: flex;
@@ -277,12 +277,12 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 9px;
+  font-size: calc(9px * var(--type-scale));
   color: var(--faint);
 }
 
-.stat strong { font-size: 9.5px; color: var(--text-soft); font-weight: 600; }
-.stat-key { font-size: 8.5px; }
+.stat strong { font-size: calc(9.5px * var(--type-scale)); color: var(--text-soft); font-weight: 600; }
+.stat-key { font-size: calc(8.5px * var(--type-scale)); }
 .stat.call strong { color: var(--red); }
 
 .legal-line {
@@ -292,7 +292,7 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
   flex-wrap: wrap;
   padding: 5px 10px;
   border-bottom: 1px solid var(--line);
-  font-size: 8.5px;
+  font-size: calc(8.5px * var(--type-scale));
 }
 
 .legal-chip {
@@ -300,13 +300,13 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
   border-radius: 4px;
   border: 1px solid var(--line);
   color: var(--muted);
-  font-size: 8.5px;
+  font-size: calc(8.5px * var(--type-scale));
 }
 
 .position-chip {
   margin-left: auto;
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: calc(8px * var(--type-scale));
   color: var(--faint);
   letter-spacing: 0.08em;
 }
@@ -323,7 +323,7 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
   padding: 4px 10px;
   cursor: pointer;
   list-style: none;
-  font-size: 8.5px;
+  font-size: calc(8.5px * var(--type-scale));
   color: var(--faint);
   user-select: none;
 }
@@ -331,7 +331,7 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
 .state-input > summary::-webkit-details-marker { display: none; }
 .state-input[open] > summary { color: var(--muted); }
 .state-size { color: var(--faint); }
-.state-hint { margin-left: auto; color: var(--faint); font-size: 8px; }
+.state-hint { margin-left: auto; color: var(--faint); font-size: calc(8px * var(--type-scale)); }
 .state-chevron { flex: none; transition: transform 0.15s ease; }
 .state-input[open] .state-chevron { transform: rotate(180deg); }
 
@@ -341,7 +341,7 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
   max-height: 280px;
   overflow: auto;
   font-family: var(--font-mono);
-  font-size: 8.5px;
+  font-size: calc(8.5px * var(--type-scale));
   line-height: 1.55;
   color: #8fa097;
   white-space: pre-wrap;
@@ -360,7 +360,7 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
 .assistant-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--type-scale));
   line-height: 1.68;
   color: var(--text-soft);
   padding: 3px 0 6px;
@@ -391,7 +391,7 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
   align-items: center;
   gap: 7px;
   padding: 8px 0 10px;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--type-scale));
   color: var(--faint);
 }
 
@@ -405,7 +405,7 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
   border: 1px solid rgba(226, 112, 95, 0.28);
   background: var(--red-dim);
   color: #ffb3a8;
-  font-size: 10px;
+  font-size: calc(10px * var(--type-scale));
   line-height: 1.5;
 }
 
@@ -414,7 +414,7 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
   flex-wrap: wrap;
   gap: 7px;
   padding: 2px 0 4px;
-  font-size: 8px;
+  font-size: calc(8px * var(--type-scale));
   color: var(--faint);
   letter-spacing: 0.02em;
 }
@@ -430,7 +430,7 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
   display: flex;
   align-items: flex-start;
   gap: 5px;
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--type-scale));
   line-height: 1.5;
   color: var(--faint);
 }
@@ -452,11 +452,11 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 10px;
+  font-size: calc(10px * var(--type-scale));
 }
 
-.final-label { color: var(--faint); font-size: 8.5px; letter-spacing: 0.06em; }
-.final-action strong { color: var(--emerald); font-size: 10.5px; }
+.final-label { color: var(--faint); font-size: calc(8.5px * var(--type-scale)); letter-spacing: 0.06em; }
+.final-action strong { color: var(--emerald); font-size: calc(10.5px * var(--type-scale)); }
 .final-action.fold strong { color: var(--red); }
 .final-action.raise strong, .final-action.bet strong { color: var(--blue); }
 .final-action.all_in strong { color: var(--purple); }
@@ -464,7 +464,7 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
 
 .auto-chip {
   font-family: var(--font-mono);
-  font-size: 7px;
+  font-size: calc(7px * var(--type-scale));
   font-weight: 800;
   color: var(--amber);
   border: 1px solid rgba(231, 179, 94, 0.3);
@@ -476,7 +476,7 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--type-scale));
   color: var(--faint);
 }
 
@@ -484,13 +484,13 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
   margin-left: auto;
   display: flex;
   gap: 8px;
-  font-size: 8px;
+  font-size: calc(8px * var(--type-scale));
   color: var(--faint);
 }
 
 .turn-reason {
   padding: 0 10px 8px;
-  font-size: 9px;
+  font-size: calc(9px * var(--type-scale));
   color: var(--amber);
 }
 </style>

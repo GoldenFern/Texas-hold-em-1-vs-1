@@ -33,6 +33,8 @@
   --radius-sm: 9px;
   --font-ui: "Manrope Variable", "Manrope", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
   --font-mono: "JetBrains Mono Variable", "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  /* 全站字号缩放系数：只需调整这一个值即可整体放大或缩小界面文字 */
+  --type-scale: 1.2;
   color-scheme: dark;
 }
 
@@ -54,7 +56,7 @@ body {
     linear-gradient(180deg, #07120f 0%, #081410 46%, #06100d 100%);
   color: var(--text);
   font-family: var(--font-ui);
-  font-size: 14px;
+  font-size: calc(14px * var(--type-scale));
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -167,7 +169,7 @@ a:hover {
 }
 
 .eyebrow {
-  font-size: 10px;
+  font-size: calc(10px * var(--type-scale));
   font-weight: 700;
   letter-spacing: 0.22em;
   text-transform: uppercase;
@@ -184,7 +186,7 @@ a:hover {
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.035);
   color: var(--text-soft);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--type-scale));
   font-weight: 600;
   white-space: nowrap;
   transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease, transform 0.12s ease;
@@ -245,7 +247,7 @@ a:hover {
 
 .btn-sm {
   padding: 6px 10px;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--type-scale));
   border-radius: 9px;
 }
 
@@ -258,7 +260,7 @@ a:hover {
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.035);
   color: var(--muted);
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--type-scale));
   font-weight: 600;
   white-space: nowrap;
 }
@@ -344,13 +346,13 @@ a:hover {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--type-scale));
   font-weight: 600;
   color: var(--muted);
 }
 
 .field-hint {
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--type-scale));
   color: var(--faint);
   line-height: 1.45;
 }
@@ -363,7 +365,7 @@ a:hover {
   background: rgba(4, 12, 9, 0.55);
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--type-scale));
   outline: none;
   transition: border-color 0.16s ease, box-shadow 0.16s ease;
 }
@@ -462,7 +464,7 @@ select.input {
 .segmented button {
   padding: 6px 11px;
   border-radius: 8px;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--type-scale));
   font-weight: 600;
   color: var(--muted);
   transition: background 0.16s ease, color 0.16s ease;
@@ -567,13 +569,13 @@ select.input {
 .toast.warn .toast-bar { background: var(--amber); }
 
 .toast-title {
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--type-scale));
   font-weight: 700;
 }
 
 .toast-detail {
   margin-top: 2px;
-  font-size: 11px;
+  font-size: calc(11px * var(--type-scale));
   color: var(--muted);
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -624,14 +626,14 @@ select.input {
 
 .modal-title {
   margin: 0;
-  font-size: 20px;
+  font-size: calc(20px * var(--type-scale));
   font-weight: 750;
   letter-spacing: -0.02em;
 }
 
 .modal-subtitle {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: calc(12px * var(--type-scale));
   color: var(--muted);
   line-height: 1.55;
 }

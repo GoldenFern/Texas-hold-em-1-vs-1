@@ -92,12 +92,12 @@ const handId = computed(() => game.snapshot?.hand_id || 0);
     radial-gradient(circle at 35% 25%, rgba(246, 216, 156, 0.22), transparent 60%),
     linear-gradient(150deg, rgba(232, 195, 122, 0.16), rgba(232, 195, 122, 0.03));
   color: var(--gold-bright);
-  font-size: 20px;
+  font-size: calc(20px * var(--type-scale));
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.25);
 }
 
 .brand-name {
-  font-size: 14px;
+  font-size: calc(14px * var(--type-scale));
   font-weight: 800;
   letter-spacing: 0.12em;
   color: var(--text);
@@ -108,7 +108,7 @@ const handId = computed(() => game.snapshot?.hand_id || 0);
   color: var(--gold);
   font-weight: 700;
   letter-spacing: 0.2em;
-  font-size: 9px;
+  font-size: calc(9px * var(--type-scale));
   margin-left: 4px;
   padding: 1px 5px;
   border: 1px solid rgba(232, 195, 122, 0.34);
@@ -117,7 +117,7 @@ const handId = computed(() => game.snapshot?.hand_id || 0);
 }
 
 .brand-sub {
-  font-size: 10px;
+  font-size: calc(10px * var(--type-scale));
   color: var(--faint);
   letter-spacing: 0.08em;
   margin-top: 2px;
@@ -137,7 +137,7 @@ const handId = computed(() => game.snapshot?.hand_id || 0);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--type-scale));
   color: var(--text-soft);
   padding-right: 4px;
   border-right: 1px solid var(--line);
@@ -158,7 +158,7 @@ const handId = computed(() => game.snapshot?.hand_id || 0);
   align-items: center;
   gap: 6px;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: calc(9px * var(--type-scale));
   letter-spacing: 0.12em;
   color: var(--faint);
   padding: 5px 8px;
@@ -198,8 +198,8 @@ const handId = computed(() => game.snapshot?.hand_id || 0);
 }
 
 @media (max-width: 620px) {
-  .brand-name { font-size: 12px; letter-spacing: 0.08em; }
-  .brand-mark { width: 32px; height: 32px; font-size: 17px; }
+  .brand-name { font-size: calc(12px * var(--type-scale)); letter-spacing: 0.08em; }
+  .brand-mark { width: 32px; height: 32px; font-size: calc(17px * var(--type-scale)); }
   .top-info .chip:nth-child(2) { display: none; }
   .conn { display: none; }
   .new-btn span { display: none; }

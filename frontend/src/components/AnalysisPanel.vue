@@ -204,14 +204,14 @@ function reload(): void {
 
 .title-block h2 {
   margin: 3px 0 2px;
-  font-size: 16px;
+  font-size: calc(16px * var(--type-scale));
   font-weight: 750;
   letter-spacing: -0.015em;
 }
 
 .title-block p {
   margin: 0;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--type-scale));
   color: var(--muted);
   line-height: 1.5;
 }
@@ -223,7 +223,7 @@ function reload(): void {
   flex-wrap: wrap;
 }
 
-.seat-switch button { font-size: 10px; padding: 4px 8px; }
+.seat-switch button { font-size: calc(10px * var(--type-scale)); padding: 4px 8px; }
 .seat-switch { max-width: 100%; overflow-x: auto; }
 
 .analysis-body {
@@ -253,7 +253,7 @@ function reload(): void {
 
 .hero-name {
   margin-left: 6px;
-  font-size: 11px;
+  font-size: calc(11px * var(--type-scale));
   font-weight: 700;
   color: var(--text-soft);
   max-width: 150px;
@@ -269,8 +269,8 @@ function reload(): void {
   min-width: 0;
 }
 
-.hero-key { font-size: 8.5px; color: var(--faint); letter-spacing: 0.05em; }
-.hero-stat strong { font-size: 10.5px; color: var(--text-soft); font-weight: 650; white-space: nowrap; }
+.hero-key { font-size: calc(8.5px * var(--type-scale)); color: var(--faint); letter-spacing: 0.05em; }
+.hero-stat strong { font-size: calc(10.5px * var(--type-scale)); color: var(--text-soft); font-weight: 650; white-space: nowrap; }
 .hero-stat strong.gold { color: var(--gold); }
 
 .stale-chip { margin-left: auto; }
@@ -307,14 +307,14 @@ function reload(): void {
 .chart-index {
   width: 18px;
   flex: none;
-  font-size: 8px;
+  font-size: calc(8px * var(--type-scale));
   color: var(--faint);
 }
 
 .chart-name {
   width: 68px;
   flex: none;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--type-scale));
   color: var(--muted);
   white-space: nowrap;
 }
@@ -359,7 +359,7 @@ function reload(): void {
   width: 48px;
   flex: none;
   text-align: right;
-  font-size: 10px;
+  font-size: calc(10px * var(--type-scale));
   font-weight: 700;
   color: var(--text-soft);
 }
@@ -370,7 +370,7 @@ function reload(): void {
   width: 52px;
   flex: none;
   text-align: right;
-  font-size: 8px;
+  font-size: calc(8px * var(--type-scale));
   color: var(--faint);
 }
 
@@ -388,7 +388,7 @@ function reload(): void {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 9px;
+  font-size: calc(9px * var(--type-scale));
   color: var(--faint);
   line-height: 1.5;
 }
@@ -412,15 +412,15 @@ function reload(): void {
   flex: none;
 }
 
-.analysis-empty strong { font-size: 12px; color: var(--text-soft); }
-.analysis-empty p { margin: 3px 0 0; font-size: 10px; color: var(--faint); line-height: 1.5; }
+.analysis-empty strong { font-size: calc(12px * var(--type-scale)); color: var(--text-soft); }
+.analysis-empty p { margin: 3px 0 0; font-size: calc(10px * var(--type-scale)); color: var(--faint); line-height: 1.5; }
 
 .analysis-loading {
   display: flex;
   align-items: center;
   gap: 7px;
   padding: 16px 4px;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--type-scale));
   color: var(--muted);
 }
 
@@ -433,7 +433,7 @@ function reload(): void {
   border: 1px solid rgba(226, 112, 95, 0.28);
   background: var(--red-dim);
   color: #ffb3a8;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--type-scale));
 }
 
 .analysis-error button { margin-left: auto; }
@@ -442,7 +442,7 @@ function reload(): void {
 
 @media (max-width: 720px) {
   .analysis-panel { padding: 13px 12px 12px; }
-  .chart-name { width: 54px; font-size: 10px; }
+  .chart-name { width: 54px; font-size: calc(10px * var(--type-scale)); }
   .chart-count { display: none; }
   .chart-index { width: 14px; }
   .hero-strip { gap: 10px; }
