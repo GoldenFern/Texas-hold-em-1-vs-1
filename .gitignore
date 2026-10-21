@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Frontend
+frontend/node_modules/
+static/dist/
+frontend/dist/
+*.tsbuildinfo
+
+# Local tooling / secrets
+.env
+.env.local
+.claude/
+.agents/
+.cursor/
+.vscode/
+.idea/
+
+# Runtime
+tmp/
+logs/
+models/rlcard/*.pth
+models/rlcard/*.tar
+models/rlcard/*.pt
+
+# OS
+.DS_Store
+Thumbs.db

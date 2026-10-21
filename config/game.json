@@ -1,0 +1,29 @@
+{
+  "defaults": {
+    "starting_chips": 1000,
+    "small_blind": 5,
+    "big_blind": 10,
+    "auto_rebuy": false,
+    "rebuy_amount": 1000,
+    "max_hands": 0,
+    "seed": null,
+    "god_view": true
+  },
+  "limits": {
+    "starting_chips": {"min": 100, "max": 100000},
+    "small_blind": {"min": 1, "max": 1000},
+    "big_blind": {"min": 2, "max": 2000},
+    "max_hands": {"min": 0, "max": 1000},
+    "rebuy_amount": {"min": 100, "max": 100000}
+  },
+  "llm_runtime": {
+    "max_steps_per_turn": 12,
+    "max_consecutive_failures": 3,
+    "require_estimate_first": true,
+    "max_context_tokens_estimate": 220000,
+    "request_timeout_seconds": 300,
+    "connect_timeout_seconds": 20,
+    "temperature_default": 0.8,
+    "max_tokens_default": 32768
+  }
+}

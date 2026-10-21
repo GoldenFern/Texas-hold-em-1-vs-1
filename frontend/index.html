@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#08130f" />
+    <meta name="description" content="Heads-Up Lab · 二人德州扑克 Human / LLM / RLCard 实验室" />
+    <title>Heads-Up Lab · 单挑德州实验室</title>
+    <style>
+      html, body { margin: 0; min-height: 100%; background: #07120f; }
+      #app { min-height: 100vh; }
+      .boot {
+        min-height: 100vh; display: grid; place-items: center;
+        color: #e9e3d5; font-family: "Manrope", "Noto Sans SC", system-ui, sans-serif;
+      }
+      .boot-inner { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+      .boot-mark {
+        width: 54px; height: 54px; display: grid; place-items: center;
+        border: 1px solid rgba(232,195,122,.45); border-radius: 16px;
+        color: #e8c37a; font-size: 26px; background: rgba(232,195,122,.06);
+        animation: boot-pulse 1.6s ease-in-out infinite;
+      }
+      .boot-text { font-size: 11px; letter-spacing: .28em; color: #87988f; text-transform: uppercase; }
+      @keyframes boot-pulse { 0%,100% { opacity: .45; transform: scale(.96); } 50% { opacity: 1; transform: scale(1); } }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div class="boot">
+        <div class="boot-inner">
+          <div class="boot-mark">♠</div>
+          <div class="boot-text">Shuffling the deck</div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

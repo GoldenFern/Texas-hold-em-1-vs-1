@@ -1,0 +1,272 @@
+{
+  "providers": [
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "icon": "deepseek.svg",
+      "accent": "#5B7CFA",
+      "base_url": "https://api.deepseek.com",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "docs_url": "https://api-docs.deepseek.com",
+      "request": {
+        "thinking_style": "thinking",
+        "reasoning_effort_style": "deepseek",
+        "reasoning_echo": true,
+        "stream_usage": false
+      },
+      "models": [
+        {
+          "id": "deepseek-flash",
+          "name": "DeepSeek V4.1 Flash",
+          "tagline": "1M 上下文 · 原生工具调用",
+          "context_window": 1000000,
+          "max_output": 131072,
+          "defaults": {
+            "temperature": 1.0,
+            "top_p": 1.0,
+            "max_tokens": 32768,
+            "thinking": true,
+            "reasoning_effort": "high"
+          },
+          "controls": {
+            "temperature": {"show": true, "min": 0, "max": 2, "step": 0.1, "hint": "思考模式建议 1.0"},
+            "top_p": {"show": true, "min": 0, "max": 1, "step": 0.05, "hint": "官方建议 1.0"},
+            "max_tokens": {"show": true, "min": 1024, "max": 131072, "step": 1024, "hint": "输出上限 131072，别把思考预算卡太死"},
+            "thinking": {"mode": "toggle", "label": "深度思考", "hint": "开启后返回 reasoning_content，并在工具调用回合回传"},
+            "reasoning_effort": {"show": true, "options": ["low", "high", "max"], "hint": "越高越愿意长考"}
+          }
+        }
+      ]
+    },
+    {
+      "id": "doubao",
+      "name": "火山引擎",
+      "icon": "doubao.svg",
+      "accent": "#3D5AFE",
+      "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+      "api_key_env": "DOUBAO_API_KEY",
+      "docs_url": "https://docs.volcengine.com/docs/82379",
+      "request": {
+        "thinking_style": "thinking",
+        "reasoning_effort_style": "none",
+        "reasoning_echo": true,
+        "stream_usage": false
+      },
+      "models": [
+        {
+          "id": "doubao-seed-2-1-turbo-260628",
+          "name": "Doubao Seed 2.1 Turbo",
+          "tagline": "Agent 通用模型 · 256K 上下文",
+          "context_window": 256000,
+          "max_output": 131072,
+          "defaults": {
+            "temperature": 0.8,
+            "top_p": 0.95,
+            "max_tokens": 32768,
+            "thinking": true,
+            "reasoning_effort": ""
+          },
+          "controls": {
+            "temperature": {"show": true, "min": 0, "max": 2, "step": 0.1, "hint": "Agent 任务建议 0.6–1.0"},
+            "top_p": {"show": true, "min": 0, "max": 1, "step": 0.05, "hint": "默认 0.95"},
+            "max_tokens": {"show": true, "min": 1024, "max": 131072, "step": 1024, "hint": "Seed 2.1 支持长输出"},
+            "thinking": {"mode": "toggle", "label": "深度思考", "hint": "通过 thinking.type 开关"},
+            "reasoning_effort": {"show": false, "options": []}
+          }
+        }
+      ]
+    },
+    {
+      "id": "minimax",
+      "name": "MiniMax",
+      "icon": "minimax.svg",
+      "accent": "#F04E5E",
+      "base_url": "https://api.minimaxi.com/v1",
+      "api_key_env": "MINIMAX_API_KEY",
+      "docs_url": "https://platform.minimax.io/docs",
+      "request": {
+        "thinking_style": "adaptive",
+        "reasoning_effort_style": "minimax",
+        "reasoning_echo": true,
+        "stream_usage": false
+      },
+      "models": [
+        {
+          "id": "MiniMax-M3.1-Flash",
+          "name": "MiniMax M3.1 Flash",
+          "tagline": "1M 上下文 · 交错思考 · 原生工具",
+          "context_window": 1000000,
+          "max_output": 131072,
+          "defaults": {
+            "temperature": 1.0,
+            "top_p": 0.95,
+            "max_tokens": 32768,
+            "thinking": true,
+            "reasoning_effort": "high"
+          },
+          "controls": {
+            "temperature": {"show": false, "min": 0, "max": 2, "step": 0.1, "hint": "M3.1 Flash 会忽略该参数"},
+            "top_p": {"show": false, "min": 0, "max": 1, "step": 0.05, "hint": "M3.1 Flash 会忽略该参数"},
+            "max_tokens": {"show": true, "min": 1024, "max": 131072, "step": 1024, "hint": "输出上限 131072"},
+            "thinking": {"mode": "always", "label": "自适应思考", "hint": "M3.1 Flash 始终思考，不可关闭"},
+            "reasoning_effort": {"show": true, "options": ["low", "medium", "high", "xhigh", "max"], "hint": "推理深度，默认 max"}
+          }
+        }
+      ]
+    },
+    {
+      "id": "qwen",
+      "name": "通义千问",
+      "icon": "qwen.svg",
+      "accent": "#7457F5",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "api_key_env": "QWEN_API_KEY",
+      "docs_url": "https://help.aliyun.com/zh/model-studio",
+      "request": {
+        "thinking_style": "enable_thinking",
+        "reasoning_effort_style": "none",
+        "reasoning_echo": true,
+        "stream_usage": true,
+        "extra_body": {"preserve_thinking": true}
+      },
+      "models": [
+        {
+          "id": "qwen3.8-flash",
+          "name": "Qwen3.8 Flash",
+          "tagline": "1M 上下文 · 混合思考 · 多模态",
+          "context_window": 1000000,
+          "max_output": 131072,
+          "defaults": {
+            "temperature": 0.7,
+            "top_p": 0.95,
+            "max_tokens": 32768,
+            "thinking": true,
+            "reasoning_effort": ""
+          },
+          "controls": {
+            "temperature": {"show": true, "min": 0.6, "max": 1.5, "step": 0.05, "hint": "思考模式下低于 0.6 会被自动抬高"},
+            "top_p": {"show": true, "min": 0, "max": 1, "step": 0.05, "hint": "默认 0.95"},
+            "max_tokens": {"show": true, "min": 1024, "max": 131072, "step": 1024, "hint": "输出上限 131072"},
+            "thinking": {"mode": "toggle", "label": "深度思考", "hint": "enable_thinking；历史 reasoning_content 会原样回传"},
+            "reasoning_effort": {"show": false, "options": []}
+          }
+        }
+      ]
+    },
+    {
+      "id": "zhipu",
+      "name": "智谱 GLM",
+      "icon": "zhipu.svg",
+      "accent": "#2F7CF6",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "api_key_env": "GLM_API_KEY",
+      "docs_url": "https://docs.z.ai",
+      "request": {
+        "thinking_style": "thinking",
+        "reasoning_effort_style": "glm",
+        "reasoning_echo": true,
+        "stream_usage": false,
+        "tool_stream": true
+      },
+      "models": [
+        {
+          "id": "glm-5.3-flash",
+          "name": "GLM-5.3 Flash",
+          "tagline": "1M 上下文 · 原生多模态 · 长程 Agent",
+          "context_window": 1000000,
+          "max_output": 131072,
+          "defaults": {
+            "temperature": 1.0,
+            "top_p": 0.95,
+            "max_tokens": 32768,
+            "thinking": true,
+            "reasoning_effort": "high"
+          },
+          "controls": {
+            "temperature": {"show": true, "min": 0, "max": 2, "step": 0.1, "hint": "官方建议 1.0"},
+            "top_p": {"show": true, "min": 0, "max": 1, "step": 0.05, "hint": "官方建议 0.95"},
+            "max_tokens": {"show": true, "min": 1024, "max": 131072, "step": 1024, "hint": "输出上限 131072"},
+            "thinking": {"mode": "always", "label": "深度思考", "hint": "GLM-5.3 Flash 思考常开，不可关闭"},
+            "reasoning_effort": {"show": true, "options": ["low", "high", "max"], "hint": "默认 max；low 更省 token"}
+          }
+        }
+      ]
+    },
+    {
+      "id": "kimi",
+      "name": "Kimi",
+      "icon": "kimi.svg",
+      "accent": "#111827",
+      "base_url": "https://api.moonshot.cn/v1",
+      "api_key_env": "KIMI_API_KEY",
+      "docs_url": "https://platform.moonshot.cn/docs",
+      "request": {
+        "thinking_style": "none",
+        "reasoning_effort_style": "none",
+        "reasoning_echo": true,
+        "stream_usage": false
+      },
+      "models": [
+        {
+          "id": "kimi-k2.7-code",
+          "name": "Kimi K2.7 Code",
+          "tagline": "262K 上下文 · 强制思考 · 交错工具调用",
+          "context_window": 262144,
+          "max_output": 131072,
+          "defaults": {
+            "temperature": 1.0,
+            "top_p": 0.95,
+            "max_tokens": 32768,
+            "thinking": true,
+            "reasoning_effort": ""
+          },
+          "controls": {
+            "temperature": {"show": true, "min": 0, "max": 2, "step": 0.1, "hint": "K2.7 Code 推荐 1.0"},
+            "top_p": {"show": true, "min": 0.01, "max": 1, "step": 0.05, "hint": "推荐 0.95"},
+            "max_tokens": {"show": true, "min": 1024, "max": 131072, "step": 1024, "hint": "模型最大输出约 235K，这里保守用 131072 上限"},
+            "thinking": {"mode": "always", "label": "强制思考", "hint": "K2.7 Code 只支持思考模式"},
+            "reasoning_effort": {"show": false, "options": []}
+          }
+        }
+      ]
+    },
+    {
+      "id": "longcat",
+      "name": "LongCat",
+      "icon": "longcat.svg",
+      "accent": "#F2A33A",
+      "base_url": "https://api.longcat.chat/openai/v1",
+      "api_key_env": "LONGCAT_API_KEY",
+      "docs_url": "https://longcat.chat/platform/docs",
+      "request": {
+        "thinking_style": "thinking",
+        "reasoning_effort_style": "none",
+        "reasoning_echo": false,
+        "stream_usage": false
+      },
+      "models": [
+        {
+          "id": "LongCat-2.5-Preview",
+          "name": "LongCat 2.5 Preview",
+          "tagline": "1M 上下文 · 原生工具 · 多模态",
+          "context_window": 1048576,
+          "max_output": 131072,
+          "defaults": {
+            "temperature": 1.0,
+            "top_p": 0.95,
+            "max_tokens": 32768,
+            "thinking": true,
+            "reasoning_effort": ""
+          },
+          "controls": {
+            "temperature": {"show": true, "min": 0, "max": 1, "step": 0.05, "hint": "思考开启时固定为 1.0"},
+            "top_p": {"show": true, "min": 0, "max": 1, "step": 0.05, "hint": "默认 0.95"},
+            "max_tokens": {"show": true, "min": 1024, "max": 131072, "step": 1024, "hint": "输出上限 131072"},
+            "thinking": {"mode": "toggle", "label": "深度思考", "hint": "thinking.type 开关"},
+            "reasoning_effort": {"show": false, "options": []}
+          }
+        }
+      ]
+    }
+  ]
+}

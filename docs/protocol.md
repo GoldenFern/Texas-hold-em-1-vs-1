@@ -1,0 +1,453 @@
+# 通信协议
+
+所有 REST 路径以 `/api` 开头；Socket.IO 路径为 `/socket.io`。服务端默认 `127.0.0.1:5050`。
+
+## REST
+
+### `GET /api/bootstrap`
+
+返回 Provider/模型元数据、Key 是否配置、牌局默认值与限制、RLCard 可用性与模型文件列表。
+
+关键字段：
+
+```json
+{
+  "providers": [
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "icon": "deepseek.svg",
+      "accent": "#5B7CFA",
+      "base_url": "https://api.deepseek.com",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "models": [
+        {
+          "provider_id": "deepseek",
+          "provider_name": "DeepSeek",
+          "icon": "deepseek.svg",
+          "accent": "#5B7CFA",
+          "base_url": "https://api.deepseek.com",
+          "api_key_env": "DEEPSEEK_API_KEY",
+          "key_present": true,
+          "docs_url": "https://api-docs.deepseek.com",
+          "id": "deepseek-flash",
+          "name": "DeepSeek V4.1 Flash",
+          "tagline": "1M 上下文 · 原生工具调用",
+          "context_window": 1000000,
+          "max_output": 131072,
+          "defaults": {"temperature": 1.0, "top_p": 1.0, "max_tokens": 32768, "thinking": true, "reasoning_effort": "high"},
+          "controls": {
+            "temperature": {"show": true, "min": 0, "max": 2, "step": 0.1, "hint": "..."},
+            "thinking": {"mode": "toggle", "label": "深度思考", "hint": "..."}
+          }
+        }
+      ]
+    }
+  ],
+  "game": {"defaults": {}, "limits": {}, "llm_runtime": {}},
+  "rlcard": {"available": true, "agents": [], "models": [], "model_dir": "models/rlcard"}
+}
+```
+
+Key 值永远不会返回；只有 `key_present`。
+
+### `GET /api/game/state`
+
+返回当前 `GameSnapshot`。没有对局时 `has_match=false, match=null`。
+
+### `GET /api/game/transcripts`
+
+```json
+{
+  "match_id": "ab12...",
+  "seats": {"0": [/* AgentEvent */], "1": []}
+}
+```
+
+每个座位最近最多 6000 条事件；超过后丢弃最早 1000 条。
+
+### `POST /api/game/new`
+
+```json
+{
+  "seats": [
+    {
+      "kind": "llm",
+      "name": "DeepSeek",
+      "provider_id": "deepseek",
+      "model_id": "deepseek-flash",
+      "params": {"temperature": 1.0, "max_tokens": 32768, "thinking": true, "reasoning_effort": "high"}
+    },
+    {
+      "kind": "human",
+      "name": "你"
+    }
+  ],
+  "rules": {
+    "starting_chips": 1000,
+    "small_blind": 5,
+    "big_blind": 10,
+    "auto_rebuy": false,
+    "rebuy_amount": 1000,
+    "max_hands": 0,
+    "seed": null,
+    "god_view": true
+  }
+}
+```
+
+`kind` 只能是 `human` / `llm` / `bot`；两个 `human` 返回 400。
+Bot 座位：
+
+```json
+{"kind": "bot", "name": "RLCard", "bot": {"agent_type": "random", "model_path": null}}
+```
+
+`agent_type`: `random` / `dqn` / `nfsp` / `dmc`。非 `random` 需要 `model_path`。
+
+返回 `{"ok": true, "state": GameSnapshot}` 或 `{"ok": false, "error": "..."}`（400/500）。
+
+### `POST /api/game/action`
+
+仅人类回合：
+
+```json
+{"action": "raise", "amount": 40}
+```
+
+`amount` 对 `bet` / `raise` 是**本街总额（raise-to）**。`fold/check/call/all_in` 忽略 `amount`。
+
+成功返回 `{"ok": true, "state": ...}`；非法返回 400 与 `{"ok": false, "error": "..."}`，人类需要重新提交。
+
+### `POST /api/game/next-hand`
+
+当前手已结束且比赛未结束时开始下一手。返回新状态。
+
+### `POST /api/game/god-view`
+
+```json
+{"enabled": true}
+```
+
+只改变观战快照，不影响 Agent 输入。
+
+### `POST /api/game/analyze`
+
+```json
+{"seat": 1, "iterations": 30000}
+```
+
+返回：
+
+```json
+{
+  "ok": true,
+  "analysis": {
+    "hero_seat": 1,
+    "method": "exact",
+    "iterations": 1081,
+    "elapsed_ms": 11.7,
+    "total": 1081,
+    "distribution": [
+      {"key": "one_pair", "name": "一对", "short": "一对", "color": "#B9A58A", "count": 528, "probability": 0.4884}
+    ],
+    "current_best": {"category": "high_card", "category_name": "高牌", "score": 6418, "best_five": ["Ah", "Qs", "9d", "8c", "3d"]},
+    "known_cards": ["9d", "Qs", "8c", "3d", "Ah"],
+    "needed_board_cards": 2,
+    "hand_id": 1,
+    "street": "flop",
+    "seat": 1
+  }
+}
+```
+
+非人类座位需要 `god_view=true` 才能分析。
+
+### `POST /api/llm/test`
+
+```json
+{"provider_id": "deepseek", "model_id": "deepseek-flash", "params": {"max_tokens": 2048}}
+```
+
+发一个很短的连通性请求，返回 `text`、`latency_ms`、`usage`。不写数据库、不影响当前对局。
+
+### `GET /api/health`
+
+`{"ok": true, "version": "0.1.0"}`
+
+---
+
+## GameSnapshot
+
+顶层是当前手牌字段，`match` 是对局元信息。关键字段：
+
+```json
+{
+  "has_match": true,
+  "seq": 42,
+  "hand_id": 3,
+  "street": "flop",
+  "pot": 160,
+  "current_bet": 40,
+  "to_call": 40,
+  "min_raise_to": 80,
+  "max_raise_to": 920,
+  "button": 0,
+  "acting_seat": 0,
+  "acting_kind": "llm",
+  "legal_actions": ["fold", "call", "raise", "all_in"],
+  "constraints": {"to_call": 40, "call_amount": 40, "min_raise_to": 80, "max_raise_to": 920, "pot": 160},
+  "community": [{"code": "Ah", "rank": "A", "suit": "h", "symbol": "♥", "red": true, "label": "A♥"}],
+  "burned": [],
+  "deck_remaining": [],
+  "deck_remaining_count": 45,
+  "players": [
+    {
+      "seat": 0,
+      "name": "DeepSeek",
+      "kind": "llm",
+      "chips": 920,
+      "status": "active",
+      "street_bet": 0,
+      "total_bet": 80,
+      "is_button": true,
+      "is_small_blind": true,
+      "is_big_blind": false,
+      "is_acting": true,
+      "hole_cards": [{"code": "9c", "label": "9♣", "rank": "9", "suit": "c", "symbol": "♣", "red": false}],
+      "hole_hidden": false,
+      "assessment": {"category": "one_pair", "category_name": "一对", "score": 4656, "best_five": ["Ah", "Qh", "Jh", "8c", "8h"]},
+      "last_action": {"type": "raise", "label": "加注", "amount": 40, "pot_after": 120, "source": "llm", "auto": false},
+      "rebuy_count": 0
+    }
+  ],
+  "actions": [{"hand_id": 3, "street": "flop", "seat": 0, "type": "raise", "label": "加注", "amount": 40, "pot_after": 120, "chips_after": 920, "source": "llm", "auto": false}],
+  "result": null,
+  "match_over": false,
+  "match": {
+    "id": "ab12...",
+    "hands_played": 2,
+    "max_hands": 0,
+    "match_over": false,
+    "god_view": true,
+    "can_next_hand": false,
+    "rules": {"starting_chips": 1000, "small_blind": 5, "big_blind": 10, "auto_rebuy": false, "rebuy_amount": 1000, "max_hands": 0, "seed": 123},
+    "seats": [{"seat": 0, "name": "DeepSeek", "kind": "llm", "provider_id": "deepseek", "model_id": "deepseek-flash", "model_name": "DeepSeek V4.1 Flash", "icon": "deepseek.svg", "agent": {}}],
+    "history": [],
+    "last_result": null
+  }
+}
+```
+
+- `hole_hidden=true` 时 `hole_cards` 为空数组。
+- `deck_remaining` / `burned` 只在 `god_view=true` 时返回。
+- `seq` 是状态版本；前端丢弃同 match 下更小的 seq。
+
+---
+
+## AgentEvent
+
+Socket.IO 事件 `agent_event` 的 payload。所有事件带：
+
+```json
+{"match_id": "ab12...", "seat": 0, "event_id": 123, "type": "..."}
+```
+
+### `turn_start`
+
+```json
+{
+  "type": "turn_start",
+  "turn_id": "1d3e...",
+  "hand_id": 3, "hand_number": 3,
+  "street": "flop",
+  "pot": 160, "my_chips": 920, "opponent_chips": 920,
+  "to_call": 40, "legal_actions": ["fold", "call", "raise", "all_in"],
+  "position": "button"
+}
+```
+
+### `turn_state`
+
+发送给 LLM 的完整牌局输入（UI 可展开查看）：
+
+```json
+{"type": "turn_state", "turn_id": "...", "text": "【牌局更新 · 第 3 手 · 翻牌】\n..."}
+```
+
+### `message_start`
+
+```json
+{"type": "message_start", "turn_id": "...", "message_id": "...", "step": 1}
+```
+
+### `llm_request`
+
+```json
+{
+  "type": "llm_request", "turn_id": "...", "message_id": "...", "step": 1,
+  "message_count": 12, "estimated_context_tokens": 6420
+}
+```
+
+`estimated_context_tokens` 是发送前的粗略估算，用于 UI 展示上下文规模。
+
+### `reasoning_delta` / `content_delta`
+
+```json
+{"type": "reasoning_delta", "turn_id": "...", "message_id": "...", "delta": "..."}
+{"type": "content_delta", "turn_id": "...", "message_id": "...", "delta": "..."}
+```
+
+### `tool_call_start` / `tool_call_args_delta`
+
+```json
+{"type": "tool_call_start", "turn_id": "...", "message_id": "...", "index": 0, "call_id": "call_0", "name": "apply_action"}
+{"type": "tool_call_args_delta", "turn_id": "...", "message_id": "...", "index": 0, "call_id": "call_0", "delta": "{\"action\":\"raise\","}
+```
+
+### `tool_call`
+
+完整参数（流结束后）：
+
+```json
+{
+  "type": "tool_call", "turn_id": "...", "message_id": "...",
+  "index": 0, "call_id": "call_0", "name": "apply_action",
+  "arguments": "{\"action\":\"raise\",\"amount\":80}",
+  "parsed": {"action": "raise", "amount": 80},
+  "parse_error": false
+}
+```
+
+### `tool_result`
+
+```json
+{
+  "type": "tool_result", "turn_id": "...", "index": 0,
+  "call_id": "call_0", "name": "apply_action",
+  "ok": true, "ignored": false,
+  "result": {"ok": true, "accepted": true, "action": "raise", "amount": 80},
+  "summary": "", "duration_ms": 0.9
+}
+```
+
+估算工具 `result` 会包含完整 `distribution` / `current_best` / `method` / `total` / `elapsed_ms`，供前端画图。
+
+非法动作的 `result`：
+
+```json
+{"ok": false, "error": "最小加注到 80", "legal_actions": ["fold", "call", "raise", "all_in"], "to_call": 40, "min_raise_to": 80, "max_raise_to": 920, "pot": 160}
+```
+
+### `message_end`
+
+```json
+{
+  "type": "message_end", "turn_id": "...", "message_id": "...",
+  "content": "...", "reasoning": "...",
+  "finish_reason": "tool_calls",
+  "usage": {"input_tokens": 1848, "output_tokens": 173, "reasoning_tokens": 28},
+  "latency_ms": 2444.1,
+  "tool_calls": [{"index": 0, "call_id": "call_0", "name": "apply_action", "arguments": "..."}]
+}
+```
+
+### `turn_end`
+
+```json
+{
+  "type": "turn_end", "turn_id": "...",
+  "action": {"seat": 0, "type": "raise", "label": "加注", "amount": 80, "source": "llm", "auto": false},
+  "auto": false, "steps": 1,
+  "usage": {"input_tokens": 1848, "output_tokens": 173, "reasoning_tokens": 28},
+  "latency_ms": 2445.9
+}
+```
+
+### `note` / `error`
+
+```json
+{"type": "note", "level": "warn", "text": "..."}
+{"type": "error", "kind": "auth|rate_limit|timeout|network|param|server|engine|agent|unknown", "text": "..."}
+```
+
+### `bot_decision`
+
+RLCard 的紧凑决策事件：
+
+```json
+{
+  "type": "bot_decision", "hand_id": 2, "street": "preflop",
+  "agent_type": "random",
+  "action_id": 2, "legal_ids": [0, 1, 2, 3, 4],
+  "probabilities": {"1": 0.208, "2": 0.208},
+  "mapped": {"type": "raise", "label": "加注", "amount": 20, "auto": false}
+}
+```
+
+`action_id` 是 RLCard 原始 ID（0 fold, 1 check/call, 2 half pot, 3 pot, 4 all-in）；`mapped` 是引擎实际动作。
+
+### `hand_result`
+
+```json
+{
+  "type": "hand_result", "hand_id": 3,
+  "result": {
+    "hand_id": 3, "reason": "showdown", "winner_seats": [0],
+    "pot": 160, "awarded": {"0": 160}, "refunds": {"0": 0, "1": 0},
+    "board": ["8c", "3d", "Ah", "Jh", "Qh"],
+    "players": [{"seat": 0, "chips_after": 1080, "total_bet": 80, "net": 80}],
+    "showdown": [{"seat": 0, "category": "one_pair", "category_name": "一对", "best_five": ["Ah", "Qh", "Qs", "Jh", "9d"], "score": 3777}]
+  },
+  "match_over": false
+}
+```
+
+### `match_over`
+
+```json
+{"type": "match_over", "text": "比赛结束。"}
+```
+
+### Socket.IO 其他
+
+- `connect`：服务端立即 `emit("state", snapshot)`
+- `request_state`：客户端请求后 `emit("state")`
+- `request_transcripts`：`emit("transcripts", {match_id, seats})`
+
+---
+
+## 事件顺序
+
+一次 LLM 回合：
+
+```
+turn_start
+turn_state
+message_start
+reasoning_delta* / content_delta*
+tool_call_start
+tool_call_args_delta*
+message_end
+tool_call
+tool_result
+(message_start ... 第二轮，如果只调用了估算工具)
+turn_end
+```
+
+RLCard 回合：
+
+```
+bot_decision
+```
+
+一手的结束：
+
+```
+... turn_end / bot_decision
+hand_result
+state（match.can_next_hand=true）
+```
+
+`state` 与 `agent_event` 可能交错到达；前端按 `seq` 处理 state，按 `event_id` 去重 agent_event。

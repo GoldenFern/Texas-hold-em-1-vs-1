@@ -1,0 +1,168 @@
+<script setup lang="ts">
+import { onMounted, ref, watch } from "vue";
+import AgentConsole from "./components/AgentConsole.vue";
+import AnalysisPanel from "./components/AnalysisPanel.vue";
+import AppIcon from "./components/AppIcon.vue";
+import ResultOverlay from "./components/ResultOverlay.vue";
+import SetupModal from "./components/SetupModal.vue";
+import TableView from "./components/TableView.vue";
+import ToastHost from "./components/ToastHost.vue";
+import TopBar from "./components/TopBar.vue";
+import { boot, game, refreshAnalysis } from "./store";
+
+const analysisTimer = ref(0);
+
+onMounted(async () => {
+  await boot();
+  if (game.snapshot?.has_match) {
+    window.setTimeout(() => void refreshAnalysis(), 220);
+  }
+});
+
+watch(
+  () => [
+    game.snapshot?.hand_id,
+    game.snapshot?.street,
+    game.snapshot?.community?.length,
+    game.selectedAnalysisSeat,
+    game.godView,
+  ],
+  () => {
+    if (!game.snapshot?.has_match) return;
+    window.clearTimeout(analysisTimer.value);
+    analysisTimer.value = window.setTimeout(() => void refreshAnalysis(), 320);
+  },
+);
+
+function reload(): void {
+  window.location.reload();
+}
+</script>
+
+<template>
+  <div class="app">
+    <TopBar />
+
+    <div v-if="game.fatalError" class="global-banner">
+      <AppIcon name="alert" :size="14" />
+      <span>{{ game.fatalError }}</span>
+      <button class="btn btn-sm" @click="reload">重新加载</button>
+    </div>
+
+    <main class="app-main">
+      <div class="stage-column">
+        <TableView />
+        <AnalysisPanel />
+        <footer class="stage-foot">
+          <span>HEADS-UP LAB · 本地实验环境</span>
+          <span class="foot-sep"></span>
+          <span>Agent 只读取自己的底牌</span>
+          <span class="foot-spacer"></span>
+          <span class="mono">API keys stay in .env</span>
+        </footer>
+      </div>
+      <div class="console-column">
+        <AgentConsole />
+      </div>
+    </main>
+
+    <SetupModal />
+    <ResultOverlay />
+    <ToastHost />
+
+    <div v-if="game.loading" class="loading-cover">
+      <div class="loading-mark">♠</div>
+      <div class="loading-text">正在连接牌桌</div>
+      <div class="loading-bar"><span></span></div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.global-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 22px 0;
+  padding: 8px 12px;
+  border-radius: 9px;
+  border: 1px solid rgba(226, 112, 95, 0.28);
+  background: var(--red-dim);
+  color: #ffb3a8;
+  font-size: 11px;
+}
+
+.global-banner .btn { margin-left: auto; }
+
+.stage-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 0;
+  font-size: 8.5px;
+  color: var(--faint);
+  letter-spacing: 0.05em;
+}
+
+.foot-sep { width: 1px; height: 8px; background: var(--line); }
+.foot-spacer { flex: 1; }
+
+.loading-cover {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(4, 11, 8, 0.88);
+  backdrop-filter: blur(10px);
+}
+
+.loading-mark {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  border: 1px solid rgba(232, 195, 122, 0.35);
+  color: var(--gold);
+  font-size: 24px;
+  animation: mark-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes mark-pulse {
+  0%, 100% { opacity: 0.5; transform: scale(0.96); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+.loading-text { font-size: 10px; letter-spacing: 0.24em; color: var(--muted); text-transform: uppercase; }
+
+.loading-bar {
+  width: 140px;
+  height: 2px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.loading-bar span {
+  display: block;
+  width: 40%;
+  height: 100%;
+  border-radius: 99px;
+  background: var(--gold);
+  animation: loading-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes loading-slide {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(360%); }
+}
+
+@media (max-width: 720px) {
+  .global-banner { margin: 8px 12px 0; }
+  .stage-foot { display: none; }
+}
+</style>

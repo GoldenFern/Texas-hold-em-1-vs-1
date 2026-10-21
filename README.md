@@ -1,0 +1,213 @@
+# Heads-Up Lab · 二人德州扑克实验室
+
+一个专门为 **单挑（Heads-Up）无限注德州扑克** 做的实验台：人类、LLM、RLCard 三者任选其二上桌。重点不是做一个普通的扑克游戏，而是把 LLM 的**思考、工具调用、参数与结果**完整地摊开在牌桌旁边。
+
+- 游戏引擎：严格双人规则，Treys 牌力评估
+- Agent：每次行动发一条新的牌局消息，保留上下文；两个工具：牌型概率 + 执行动作
+- 可视化：实时思考流、工具卡片、Token/延迟、最终牌型分布
+- 上帝视角：双方底牌、烧牌、完整牌堆
+- LLM：DeepSeek / 火山引擎 / MiniMax / Qwen / 智谱 GLM / Kimi / LongCat
+- Bot：RLCard（RandomAgent 开箱可用，支持加载 DQN/NFSP/DMC checkpoint）
+
+---
+
+## 快速开始
+
+### 1. Python 依赖
+
+```bash
+pip install -r requirements.txt
+```
+
+需要 Python 3.11+。当前项目在 Python 3.13 + Windows 下开发。
+
+### 2. 配置 Key
+
+```bash
+copy .env.example .env        # Windows
+cp .env.example .env          # macOS / Linux
+```
+
+把对应厂商的 Key 填入 `.env`：
+
+```dotenv
+DEEPSEEK_API_KEY=
+DOUBAO_API_KEY=
+MINIMAX_API_KEY=
+QWEN_API_KEY=
+GLM_API_KEY=
+KIMI_API_KEY=
+LONGCAT_API_KEY=
+```
+
+`.env` 已在 `.gitignore` 中，不会入库。页面上只显示“Key 已配置/缺失”，永远不会把 Key 发到浏览器。
+
+### 3. 构建前端
+
+```bash
+cd frontend
+npm install
+npm run build
+cd ..
+```
+
+构建产物在 `static/dist/`，由 Flask 直接托管。
+
+### 4. 启动
+
+```bash
+python main.py
+# 或双击 start.bat（会自动检测并构建前端）
+```
+
+打开 <http://127.0.0.1:5050>。
+
+开发模式（前端热更新）：
+
+```bash
+python main.py                 # 终端 1，:5050
+cd frontend && npm run dev     # 终端 2，:5173，代理到 :5050
+```
+
+---
+
+## 功能说明
+
+### 对局配置
+
+- 两个座位，各自选择 **人类 / LLM / RLCard**
+- 不允许两个人类同时上桌
+- 可配置：起始筹码、小盲/大盲、自动重购、重购筹码、最大手数、随机种子、上帝视角
+- 快速预设：人 vs DeepSeek、DeepSeek vs GLM、人 vs RLCard
+
+### 上帝视角
+
+开启后：
+
+- 双方底牌可见
+- 烧牌可见
+- 剩余牌堆按“下一张在左”的顺序完整展示
+- 可以对任意玩家计算牌型分布
+
+上帝视角**只影响观战界面**。Agent 的输入里没有对手底牌、没有牌堆。
+
+### LLM Agent
+
+每次轮到 LLM：
+
+1. 追加一条新的 `【牌局更新】` 用户消息，包含底牌、公共牌、底池、双方筹码、需跟注、最小/最大加注、合法动作、本手行动历史、最近几手结果。
+2. Agent 保留之前的完整对话（跨手牌、跨街道）。上下文过长时按“回合边界”压缩最早的回合，保留系统提示与最近回合。
+3. 每条街的第一次决策前，Agent 会先被要求调用一次 `estimate_hand_probabilities`（没调用会给一次软提示，不计入失败），然后调用 `apply_action`。
+4. `apply_action` 合法就进入下一回合；不合法会把错误、最新约束和合法动作回传给模型，让它重试。
+5. 连续三次无效动作：自动 **call**；无法 call 则 **fold**。网络/超时等非动作失败则优先 check/call，避免无意义弃牌。
+6. 厂商要求回传 `reasoning_content` 的（DeepSeek / Qwen / MiniMax / Kimi / GLM 等）会原样回传；不支持的可选参数在 400 时会自动降级重试。
+
+两个工具的协议见 [`docs/protocol.md`](docs/protocol.md)。
+
+### 数据分析
+
+目前只做一个可视化：**最终最佳五张牌的牌型分布**（皇家同花顺、同花顺、四条、葫芦、同花、顺子、三条、两对、一对、高牌）。
+
+- 翻牌前：蒙特卡洛（默认 30,000 次）
+- 翻牌：精确枚举 C(47,2)=1,081 种
+- 转牌：46 种；河牌：1 种
+- 结果带：当前最佳牌型、方法、样本数、耗时、绝对概率
+- 这不是胜率；胜率还取决于对手范围与行动
+
+### RLCard Bot
+
+- 观察编码严格对齐 RLCard `no-limit-holdem` 的 54 维向量与 5 个动作 ID
+- 支持 `random` / `dqn` / `nfsp` / `dmc`
+- 默认 RandomAgent 不需要模型文件；DQN 等需要在配置里选择模型
+- 训练/加载 DQN 需要 PyTorch：`pip install -r requirements-optional.txt`
+- 训练：
+
+```bash
+python scripts/train_rlcard.py --episodes 50000 --chips 1000 --reward-scale 0.01
+```
+
+输出 `models/rlcard/nlh_dqn.pth`，在 UI 中选 **RLCard → DQN → 模型文件** 即可。详见 [`models/rlcard/README.md`](models/rlcard/README.md)。
+
+---
+
+## LLM 接入
+
+所有厂商走 OpenAI 兼容的 `/chat/completions`，但参数按厂商分别适配。
+
+| Provider | Base URL | 模型 | Key | 备注 |
+|---|---|---|---|---|
+| DeepSeek | `https://api.deepseek.com` | `deepseek-flash` | `DEEPSEEK_API_KEY` | 1M 上下文，`thinking` + `reasoning_effort`，工具回合需回传 reasoning_content |
+| 火山引擎 | `https://ark.cn-beijing.volces.com/api/v3` | `doubao-seed-2-1-turbo-260628` | `DOUBAO_API_KEY` | `thinking.type` 开关，OpenAI 兼容 |
+| MiniMax | `https://api.minimaxi.com/v1` | `MiniMax-M3.1-Flash` | `MINIMAX_API_KEY` | 始终思考，忽略 temperature/top_p，支持 `reasoning_effort` |
+| 通义千问 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen3.8-flash` | `QWEN_API_KEY` | `enable_thinking`，`preserve_thinking`，思考模式温度 ≥0.6 |
+| 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-5.3-flash` | `GLM_API_KEY` | 思考常开，`reasoning_effort` low/high/max，流式工具调用 |
+| Kimi | `https://api.moonshot.cn/v1` | `kimi-k2.7-code` | `KIMI_API_KEY` | 强制思考，262K 上下文，工具调用 |
+| LongCat | `https://api.longcat.chat/openai/v1` | `LongCat-2.5-Preview` | `LONGCAT_API_KEY` | `thinking.type` 开关，1M 上下文，原生工具 |
+
+参数不是“越保守越好”：默认 `max_tokens` 为 **32,768**，各家允许的上限不同，UI 里会显示范围与建议值。默认温度按厂商推荐设置（如 DeepSeek/GLM 1.0、Qwen 0.7、MiniMax 忽略）。
+
+每个模型旁有 **测试连接** 按钮，会发一个很短的请求并显示延迟。
+
+---
+
+## 项目结构
+
+```
+main.py                       # 启动入口
+config/
+  game.json                   # 规则默认值 / 限制 / LLM 运行时
+  providers.json              # 7 家 Provider、模型、参数控件
+src/
+  engine/                     # Card / Deck / Treys 评估 / 双人状态机
+  analysis/                   # 牌型分布（精确枚举 + 蒙特卡洛 + 缓存）
+  agents/                     # AgentView、RLCardBot
+  llm/                        # providers / streaming client / prompt / tool loop
+  server/                     # Flask + Socket.IO + GameSession 线程
+frontend/                     # Vue 3 + Vite + TypeScript
+  src/components/             # 牌桌、Agent 控制台、分析、配置弹窗
+  src/store.ts                # socket + 增量事件 reducer + 状态同步
+static/dist/                  # 前端构建产物（gitignore）
+tests/                        # 引擎 / 分析 / LLM 工具循环 / RLCard 适配
+scripts/train_rlcard.py       # DQN 训练
+models/rlcard/                # checkpoint 目录（文件 gitignore）
+```
+
+---
+
+## 测试
+
+```bash
+python -m pytest tests -q
+cd frontend && npm run typecheck && npm run build
+```
+
+当前测试覆盖：
+
+- 盲注/位置、最小加注、短码全下不重开下注、弃牌退款、摊牌平分、随机 60 手筹码守恒
+- 牌型分布精确/蒙特卡洛、重复牌拒绝、缓存
+- LLM 工具循环：估算→动作、连续三次非法动作兜底、无工具调用兜底、未知工具
+- RLCard 动作合法性与 54 维 observation 对齐
+
+---
+
+## 已知限制
+
+- 单进程、内存态，只维护一桌；重启服务后对局丢失
+- 没有登录/权限，默认只监听 `127.0.0.1`，不要直接暴露到公网
+- God view 是观战功能，不会进入 Agent 上下文
+- LLM 的 `reasoning_content` 是厂商原始输出；不同模型可能用英文思考
+- RLCard 短训练容易退化；默认用 RandomAgent 验证链路，训练模型请自行评估
+- 模型文件是 PyTorch pickle，只加载可信来源；模型路径限制在 `models/rlcard/` 下
+- LLM 调用会产生厂商费用；「测试连接」也会发一个很小的真实请求
+- 目前只做牌型分布，不做胜率/EV/范围推断
+
+---
+
+## 技术栈与致谢
+
+- [Treys](https://github.com/ihendley/treys)：TwoPlusTwo 查表牌力评估
+- [RLCard](https://github.com/datamllab/rlcard)：强化学习扑克环境与 agent
+- Flask / Flask-SocketIO / Vue 3 / Vite / TypeScript
+- Provider 图标来自本地 `API-Key/key-manager` 项目中的品牌 SVG；仅用于本地实验界面
+
+人类牌桌快捷键：**F** 弃牌、**C** 过牌/跟注、**R** 聚焦加注、**A** 全下。

@@ -1,0 +1,511 @@
+<script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import AppIcon from "./AppIcon.vue";
+import { chips, percent, streetLabel } from "../format";
+import {
+  game,
+  humanAction,
+  humanSeat,
+  nextHand,
+  openSetup,
+  openResult,
+  dismissResult,
+} from "../store";
+
+const raiseTo = ref(0);
+const raiseInput = ref<HTMLInputElement | null>(null);
+const quickFraction = ref<string>("");
+
+const snapshot = computed(() => game.snapshot);
+const match = computed(() => snapshot.value?.match || null);
+const legal = computed(() => snapshot.value?.legal_actions || []);
+const canAct = computed(
+  () =>
+    Boolean(snapshot.value?.has_match) &&
+    snapshot.value?.acting_kind === "human" &&
+    snapshot.value?.street !== "finished" &&
+    !game.busy,
+);
+const isRaise = computed(() => legal.value.includes("bet") || legal.value.includes("raise"));
+const canCheck = computed(() => legal.value.includes("check"));
+const canCall = computed(() => legal.value.includes("call"));
+const canFold = computed(() => legal.value.includes("fold"));
+const canAllIn = computed(() => legal.value.includes("all_in") && isRaise.value);
+const toCall = computed(() => Number(snapshot.value?.to_call || 0));
+const callAmount = computed(() => Number(snapshot.value?.call_amount || 0));
+const pot = computed(() => Number(snapshot.value?.pot || 0));
+const currentBet = computed(() => Number(snapshot.value?.current_bet || 0));
+const minRaise = computed(() => Number(snapshot.value?.min_raise_to || 0));
+const maxRaise = computed(() => Number(snapshot.value?.max_raise_to || 0));
+const humanPlayer = computed(() => {
+  if (!humanSeat.value) return null;
+  return snapshot.value?.players?.find((player) => player.seat === humanSeat.value?.seat) || null;
+});
+const potOdds = computed(() => {
+  if (toCall.value <= 0) return 0;
+  return toCall.value / (pot.value + toCall.value);
+});
+const assessment = computed(() => {
+  const seat = snapshot.value?.acting_seat;
+  return snapshot.value?.players?.find((player) => player.seat === seat)?.assessment || null;
+});
+const actingName = computed(() => {
+  const seat = snapshot.value?.acting_seat;
+  return snapshot.value?.players?.find((player) => player.seat === seat)?.name || "对手";
+});
+const winnerNames = computed(() => {
+  const result = game.lastResult;
+  if (!result) return "";
+  return result.winner_seats
+    .map((seat) => snapshot.value?.players?.find((player) => player.seat === seat)?.name || `座位 ${seat}`)
+    .join(" · ");
+});
+const phaseText = computed(() => {
+  if (game.busy) return "正在提交动作";
+  if (!match.value) return "尚未开局";
+  if (match.value.match_over) return "比赛结束";
+  if (snapshot.value?.street === "finished") return "本手结束";
+  if (snapshot.value?.acting_kind === "human") return "轮到你行动";
+  if (snapshot.value?.acting_kind === "llm") return `${actingName.value} 正在思考`;
+  if (snapshot.value?.acting_kind === "bot") return `${actingName.value} 正在决策`;
+  return "等待中";
+});
+
+function clampRaise(value: number): number {
+  const min = minRaise.value || 0;
+  const max = maxRaise.value || min;
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function targetFor(fraction: number): number {
+  const potAfterCall = pot.value + toCall.value;
+  return clampRaise(currentBet.value + potAfterCall * fraction);
+}
+
+function setFraction(fraction: number, label: string): void {
+  quickFraction.value = label;
+  raiseTo.value = label === "allin" ? maxRaise.value : targetFor(fraction);
+}
+
+function setRaise(value: number): void {
+  quickFraction.value = "";
+  raiseTo.value = clampRaise(value);
+}
+
+const sliderPct = computed(() => {
+  const span = maxRaise.value - minRaise.value;
+  if (span <= 0) return 100;
+  return Math.max(0, Math.min(100, ((raiseTo.value - minRaise.value) / span) * 100));
+});
+
+watch(
+  () => [
+    snapshot.value?.hand_id,
+    snapshot.value?.street,
+    snapshot.value?.acting_seat,
+    currentBet.value,
+    minRaise.value,
+    maxRaise.value,
+  ],
+  () => {
+    if (!isRaise.value) return;
+    raiseTo.value = clampRaise(minRaise.value);
+    quickFraction.value = "";
+  },
+  { immediate: true },
+);
+
+async function act(action: string, amount = 0): Promise<void> {
+  if (game.busy) return;
+  await humanAction(action, amount);
+}
+
+function raiseAction(): void {
+  if (!isRaise.value) return;
+  const type = currentBet.value === 0 ? "bet" : "raise";
+  void act(type, clampRaise(raiseTo.value));
+}
+
+function onKeydown(event: KeyboardEvent): void {
+  if (game.setupOpen || game.resultOpen) return;
+  const target = event.target as HTMLElement | null;
+  if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+  if (!canAct.value) return;
+  const key = event.key.toLowerCase();
+  if (key === "f" && canFold.value) {
+    event.preventDefault();
+    void act("fold");
+  } else if (key === "c" && (canCheck.value || canCall.value)) {
+    event.preventDefault();
+    void act(canCheck.value ? "check" : "call");
+  } else if (key === "a" && canAllIn.value) {
+    event.preventDefault();
+    void act("all_in");
+  } else if (key === "r" && isRaise.value) {
+    event.preventDefault();
+    raiseInput.value?.focus();
+    raiseInput.value?.select();
+  }
+}
+
+onMounted(() => window.addEventListener("keydown", onKeydown));
+onUnmounted(() => window.removeEventListener("keydown", onKeydown));
+</script>
+
+<template>
+  <div class="action-bar" :class="{ 'your-turn': canAct }">
+    <div class="status-side">
+      <div class="status-line">
+        <span v-if="canAct" class="dot live"></span>
+        <span v-else-if="snapshot?.street === 'finished' || match?.match_over" class="dot"></span>
+        <span v-else class="spinner"></span>
+        <span class="status-text">{{ phaseText }}</span>
+        <span v-if="snapshot?.street && snapshot.street !== 'finished'" class="chip mono street-chip">
+          {{ streetLabel(snapshot.street) }}
+        </span>
+      </div>
+      <div class="status-sub">
+        <template v-if="match">
+          <span>底池 <strong class="mono gold">{{ chips(pot) }}</strong></span>
+          <span v-if="toCall > 0">需跟注 <strong class="mono">{{ chips(toCall) }}</strong></span>
+          <span v-if="toCall > 0" class="pot-odds">底池赔率 <strong class="mono">{{ percent(potOdds, 0) }}</strong></span>
+          <span v-if="assessment" class="chip gold">{{ assessment.category_name }}</span>
+        </template>
+        <template v-else>
+          <span>选择两个玩家，开始一局单挑。</span>
+        </template>
+      </div>
+    </div>
+
+    <div v-if="match && snapshot?.street === 'finished'" class="end-actions">
+      <div class="winner-line">
+        <AppIcon name="sparkles" :size="14" />
+        <span>{{ winnerNames || "本手结束" }} 赢下底池 <strong class="mono gold">{{ chips(game.lastResult?.pot || 0) }}</strong></span>
+      </div>
+      <button v-if="match.can_next_hand" class="btn btn-primary" :disabled="game.busy" @click="nextHand">
+        下一手
+        <AppIcon name="arrowRight" :size="15" />
+      </button>
+      <button class="btn" @click="game.resultOpen ? dismissResult() : openResult()">
+        {{ game.resultOpen ? "查看牌桌" : "查看结果" }}
+      </button>
+      <button class="btn btn-ghost" @click="openSetup">新比赛</button>
+    </div>
+
+    <div v-else-if="canAct" class="controls">
+      <div class="primary-actions">
+        <button v-if="canFold" class="btn btn-danger action-btn" @click="act('fold')" title="快捷键 F">
+          <AppIcon name="x" :size="15" />
+          弃牌
+          <kbd>F</kbd>
+        </button>
+        <button
+          v-if="canCheck || canCall"
+          class="btn btn-emerald action-btn main-action"
+          @click="act(canCheck ? 'check' : 'call')"
+          title="快捷键 C"
+        >
+          <AppIcon :name="canCheck ? 'check' : 'arrowRight'" :size="15" />
+          {{ canCheck ? "过牌" : `跟注 ${chips(callAmount)}` }}
+          <kbd>C</kbd>
+        </button>
+        <button v-if="isRaise" class="btn btn-primary action-btn main-action" @click="raiseAction" title="快捷键 R">
+          <AppIcon name="zap" :size="15" />
+          {{ currentBet === 0 ? "下注" : "加注" }}到 {{ chips(raiseTo) }}
+          <kbd>R</kbd>
+        </button>
+        <button v-if="canAllIn" class="btn allin-btn" @click="act('all_in')" title="快捷键 A">
+          <AppIcon name="flame" :size="14" />
+          ALL-IN
+          <kbd>A</kbd>
+        </button>
+      </div>
+
+      <div v-if="isRaise" class="raise-panel">
+        <div class="quick-row">
+          <button class="quick" :class="{ active: quickFraction === 'half' }" @click="setFraction(0.5, 'half')">½ 池</button>
+          <button class="quick" :class="{ active: quickFraction === 'three' }" @click="setFraction(0.75, 'three')">¾ 池</button>
+          <button class="quick" :class="{ active: quickFraction === 'pot' }" @click="setFraction(1, 'pot')">1 池</button>
+          <button class="quick" :class="{ active: quickFraction === 'allin' }" @click="setFraction(1, 'allin')">ALL-IN</button>
+          <span class="range-note mono">{{ chips(minRaise) }} – {{ chips(maxRaise) }}</span>
+        </div>
+        <div class="slider-row">
+          <input
+            class="range"
+            type="range"
+            :min="minRaise"
+            :max="maxRaise"
+            step="1"
+            :value="raiseTo"
+            :style="{ '--pct': `${sliderPct}%` }"
+            @input="setRaise(Number(($event.target as HTMLInputElement).value))"
+          />
+          <div class="amount-input">
+            <span class="amount-prefix">到</span>
+            <input
+              ref="raiseInput"
+              class="input"
+              type="number"
+              :min="minRaise"
+              :max="maxRaise"
+              :value="raiseTo"
+              @input="setRaise(Number(($event.target as HTMLInputElement).value))"
+              @blur="raiseTo = clampRaise(raiseTo)"
+            />
+          </div>
+        </div>
+      </div>
+      <div v-else class="raise-panel muted-note">
+        当前筹码不足以加注，只能跟注或弃牌。
+      </div>
+    </div>
+
+    <div v-else class="waiting-side">
+      <template v-if="!match">
+        <button class="btn btn-primary" @click="openSetup">
+          <AppIcon name="settings" :size="15" />
+          配置对局
+        </button>
+      </template>
+      <template v-else-if="match.match_over">
+        <span class="match-end">比赛结束</span>
+        <button class="btn btn-primary" @click="openSetup">新比赛</button>
+      </template>
+      <template v-else>
+        <span class="wait-note">
+          {{ snapshot?.acting_kind === "llm" ? "思考流在右侧实时展开" : snapshot?.acting_kind === "bot" ? "RLCard 正在选择动作" : "等待牌局推进" }}
+        </span>
+        <span v-if="humanPlayer" class="mono faint">你的筹码 {{ chips(humanPlayer.chips) }}</span>
+      </template>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.action-bar {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 13px 16px;
+  border-top: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(10, 22, 17, 0.65), rgba(6, 14, 11, 0.8));
+  min-height: 88px;
+}
+
+.action-bar.your-turn {
+  background:
+    radial-gradient(500px 100px at 18% 0%, rgba(84, 214, 168, 0.08), transparent 70%),
+    linear-gradient(180deg, rgba(10, 22, 17, 0.65), rgba(6, 14, 11, 0.8));
+}
+
+.status-side {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 190px;
+  max-width: 300px;
+  flex: none;
+}
+
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.status-text {
+  font-size: 12px;
+  font-weight: 750;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.street-chip { margin-left: 2px; }
+
+.status-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.status-sub strong { color: var(--text-soft); font-weight: 700; }
+.pot-odds { color: var(--faint); }
+.pot-odds strong { color: var(--gold); }
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: 1;
+  min-width: 0;
+}
+
+.primary-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  flex: none;
+}
+
+.action-btn {
+  height: 38px;
+  padding: 0 13px;
+}
+
+.main-action { min-width: 108px; }
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  opacity: 0.42;
+  margin-left: 2px;
+}
+
+.allin-btn {
+  height: 38px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(196, 140, 255, 0.32);
+  background: var(--purple-dim);
+  color: var(--purple);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.allin-btn:hover { background: rgba(196, 140, 255, 0.2); }
+
+.raise-panel {
+  flex: 1;
+  min-width: 220px;
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-left: 14px;
+  border-left: 1px solid var(--line);
+}
+
+.quick-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.quick {
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-size: 9.5px;
+  font-weight: 700;
+  transition: all 0.15s ease;
+}
+
+.quick:hover { color: var(--text); border-color: var(--line-strong); }
+.quick.active { color: var(--gold); border-color: rgba(232, 195, 122, 0.32); background: var(--gold-dim); }
+
+.range-note {
+  margin-left: auto;
+  font-size: 9px;
+  color: var(--faint);
+}
+
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.slider-row .range { flex: 1; }
+
+.amount-input {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+}
+
+.amount-prefix { font-size: 9.5px; color: var(--faint); }
+
+.amount-input .input {
+  width: 84px;
+  height: 30px;
+  padding: 4px 8px;
+  font-size: 12px;
+  text-align: right;
+}
+
+.muted-note {
+  font-size: 10.5px;
+  color: var(--faint);
+  border-left: 1px solid var(--line);
+  padding-left: 14px;
+}
+
+.waiting-side {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.wait-note { font-size: 11px; color: var(--faint); }
+.match-end { font-size: 12px; font-weight: 700; color: var(--gold); }
+
+.end-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.winner-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 6px;
+  font-size: 11.5px;
+  color: var(--text-soft);
+}
+
+.winner-line strong { color: var(--gold); }
+
+@media (max-width: 1180px) {
+  .action-bar { flex-wrap: wrap; gap: 12px; }
+  .status-side { max-width: none; min-width: 0; flex: 1 1 100%; }
+  .controls { flex: 1 1 100%; }
+  .raise-panel { max-width: none; }
+}
+
+@media (max-width: 720px) {
+  .action-bar { padding: 10px 12px; min-height: 0; }
+  .controls { flex-direction: column; align-items: stretch; gap: 9px; }
+  .primary-actions { justify-content: stretch; }
+  .primary-actions .action-btn { flex: 1; }
+  .raise-panel { border-left: 0; border-top: 1px solid var(--line); padding-left: 0; padding-top: 8px; }
+  .range-note { display: none; }
+  .end-actions { margin-left: 0; justify-content: flex-start; }
+  .waiting-side { margin-left: 0; justify-content: flex-start; }
+}
+</style>
