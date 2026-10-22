@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import statistics
@@ -50,13 +51,16 @@ from src.agents.project_bot import ProjectBot
 from src.analysis.hand_distribution import HandDistributionAnalyzer
 from src.engine.actions import Action, ActionType
 from src.engine.heads_up import HeadsUpGame, Street
-from src.llm.agent import LLMAgent
+from src.llm.agent import LLMAgent, select_tools
 from src.llm.client import LLMClient
+from src.llm.prompt import ALL_TOOL_NAMES, build_system_prompt
 from src.llm.providers import ModelSpec, ProviderRegistry
 
 DEFAULT_BOT_MODEL = PROJECT_ROOT / "models" / "rlcard" / "nlh_dqn_project.pth"
 GAME_CONFIG_PATH = PROJECT_ROOT / "config" / "game.json"
 MAX_ACTIONS_PER_HAND = 500
+
+AUX_TOOL_NAMES = tuple(name for name in ALL_TOOL_NAMES if name != "apply_action")
 
 INVALID_ACTION_REASONS = (
     "连续三次无效动作",
@@ -64,8 +68,88 @@ INVALID_ACTION_REASONS = (
     "单回合超过",
 )
 
+TOOL_RECOMMENDATIONS = {
+    "estimate_hand_probabilities": (
+        "每次行动前，先调用 estimate_hand_probabilities 查看你当前最佳五张牌"
+        "最终成为各类牌型的概率分布，再结合底池赔率、位置和对手行动决定。"
+        "它描述的是你自己的牌型分布，不是胜率。"
+    ),
+    "estimate_equity": (
+        "每次行动前，先调用 estimate_equity 查看当前摊牌 equity，再结合底池赔率、"
+        "位置和对手行动决定。它默认假设对手是随机手牌，结果是胜率加平局率的一半。"
+    ),
+    "get_random_number": (
+        "每次行动前都先调用 get_random_number 抽一个 [0, 1) 随机数，把它作为"
+        "本回合混合策略的随机化依据。即使你分析后已经倾向于某个动作，也建议"
+        "抽取一次，用随机数决定是否执行备选动作或调整下注尺度。不要为了追求"
+        "某个数字反复抽取，也不要用它完全代替牌局分析。"
+    ),
+    "call_ev": (
+        "每次需要跟注时，先调用 call_ev 计算静态跟注 EV、盈亏平衡胜率和有效底池，"
+        "再决定跟注、加注或弃牌。它假设跟注后不再下注，翻牌和转牌还要考虑隐含赔率。"
+    ),
+}
+
+
+def resolve_tool_names(raw: str) -> tuple[str, ...]:
+    """Resolve a CLI tool list into canonical tool names.
+
+    Args:
+        raw: ``all``, ``none``, or a comma-separated list of tool names.
+
+    Returns:
+        Tool names in canonical order, always including ``apply_action``.
+
+    Raises:
+        ValueError: If the list is empty or contains unknown tools.
+    """
+    text = str(raw or "").strip().lower()
+    if text in ("", "all", "default"):
+        return tuple(ALL_TOOL_NAMES)
+    if text == "none":
+        return ("apply_action",)
+    requested = [part.strip() for part in text.split(",") if part.strip()]
+    if not requested:
+        raise ValueError("--tools 不能为空")
+    unknown = sorted(set(requested).difference(ALL_TOOL_NAMES))
+    if unknown:
+        raise ValueError(f"未知工具：{', '.join(unknown)}")
+    if "apply_action" not in requested:
+        requested.append("apply_action")
+    wanted = set(requested)
+    return tuple(name for name in ALL_TOOL_NAMES if name in wanted)
+
+
+def build_tool_recommendation(tool_names: Sequence[str]) -> str:
+    """Build a strong, non-binding recommendation for the available tools."""
+    auxiliaries = [
+        name for name in ALL_TOOL_NAMES if name != "apply_action" and name in set(tool_names)
+    ]
+    if not auxiliaries:
+        return ""
+    lines = [
+        "【工具使用建议（强烈推荐，非强制）】",
+        "为了获得更好的胜率，强烈建议你使用本局提供的辅助工具：",
+    ]
+    for name in auxiliaries:
+        lines.append(f"- {TOOL_RECOMMENDATIONS[name]}")
+    lines.append("系统不会强制调用，是否使用由你根据牌局自行判断。")
+    lines.append(
+        "如果你决定使用辅助工具，请先调用它并读取返回结果，然后再调用 apply_action；"
+        "不要把 apply_action 放在同一批调用的前面。"
+    )
+    return "\n".join(lines)
+
+
+def build_eval_prompt(tool_names: Sequence[str], recommend_tools: bool) -> str:
+    """Build the system prompt for one experiment group."""
+    extra = build_tool_recommendation(tool_names) if recommend_tools else ""
+    return build_system_prompt(tool_names, extra_instructions=extra)
+
+
 CSV_FIELDS = [
     "hand_index",
+    "group",
     "deal_index",
     "assignment",
     "llm_seat",
@@ -82,12 +166,21 @@ CSV_FIELDS = [
     "llm_actions_count",
     "bot_actions_count",
     "llm_turns",
+    "aux_tool_calls",
+    "tool_turns",
+    "aux_tool_errors",
+    "distribution_calls",
+    "equity_calls",
+    "random_calls",
+    "call_ev_calls",
+    "call_ev_not_applicable",
     "api_calls",
     "input_tokens",
     "output_tokens",
     "reasoning_tokens",
     "auto_turns",
     "invalid_action_auto",
+    "api_error_auto",
     "api_errors",
     "infra_error",
     "fatal_error",
@@ -123,6 +216,31 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--workers", type=int, default=25, help="Concurrent hands.")
     parser.add_argument("--provider", default="deepseek")
     parser.add_argument("--model", default="deepseek-flash")
+    parser.add_argument(
+        "--group",
+        default="",
+        help="Experiment group label written to CSV and reports.",
+    )
+    parser.add_argument(
+        "--llm-name",
+        default=None,
+        help="Display name for the LLM seat. Defaults to the model name.",
+    )
+    parser.add_argument(
+        "--tools",
+        default="all",
+        help="'all', 'none', or a comma-separated list of tool names.",
+    )
+    parser.add_argument(
+        "--recommend-tools",
+        action="store_true",
+        help="Append a strong, non-binding tool-use recommendation to the prompt.",
+    )
+    parser.add_argument(
+        "--retry-api-errors",
+        action="store_true",
+        help="Retry a whole hand when any LLM API error occurred.",
+    )
     parser.add_argument("--bot-model", type=Path, default=DEFAULT_BOT_MODEL)
     parser.add_argument("--bot-algorithm", default="dqn", choices=("dqn", "nfsp"))
     parser.add_argument("--chips", type=int, default=1000)
@@ -153,6 +271,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--quiet", action="store_true")
 
     args = parser.parse_args(argv)
+    try:
+        args.tool_names = resolve_tool_names(args.tools)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if not args.group:
+        auxiliaries = [name for name in args.tool_names if name != "apply_action"]
+        args.group = "+".join(auxiliaries) if auxiliaries else "none"
+    args.group = str(args.group).strip()
     if args.hands <= 0:
         parser.error("--hands must be positive")
     if args.workers <= 0:
@@ -313,9 +439,10 @@ def compact_events(events: Sequence[dict]) -> List[dict]:
     return [dict(event) for event in events if event.get("type") not in dropped]
 
 
-def count_auto_turns(events: Sequence[dict]) -> tuple[int, int]:
+def count_auto_turns(events: Sequence[dict]) -> tuple[int, int, int]:
     auto_turns = 0
     invalid_auto = 0
+    api_error_auto = 0
     for event in events:
         if event.get("type") != "turn_end" or not event.get("auto"):
             continue
@@ -323,7 +450,50 @@ def count_auto_turns(events: Sequence[dict]) -> tuple[int, int]:
         reason = str(event.get("reason") or "")
         if any(marker in reason for marker in INVALID_ACTION_REASONS):
             invalid_auto += 1
-    return auto_turns, invalid_auto
+        if "LLM 调用失败" in reason or "LLM 调用异常" in reason:
+            api_error_auto += 1
+    return auto_turns, invalid_auto, api_error_auto
+
+
+def hand_tool_stats(events: Sequence[dict]) -> dict:
+    """Count auxiliary tool usage from compacted agent events."""
+    stats = {
+        "aux_tool_calls": 0,
+        "tool_turns": 0,
+        "aux_tool_errors": 0,
+        "distribution_calls": 0,
+        "equity_calls": 0,
+        "random_calls": 0,
+        "call_ev_calls": 0,
+        "call_ev_not_applicable": 0,
+    }
+    turn_ids: set[str] = set()
+    for event in events:
+        if event.get("type") != "tool_result":
+            continue
+        name = str(event.get("name") or "")
+        if name not in AUX_TOOL_NAMES:
+            continue
+        if not event.get("ok"):
+            stats["aux_tool_errors"] += 1
+            continue
+        stats["aux_tool_calls"] += 1
+        if name == "estimate_hand_probabilities":
+            stats["distribution_calls"] += 1
+        elif name == "estimate_equity":
+            stats["equity_calls"] += 1
+        elif name == "get_random_number":
+            stats["random_calls"] += 1
+        elif name == "call_ev":
+            stats["call_ev_calls"] += 1
+            result = event.get("result") or {}
+            if isinstance(result, dict) and result.get("applicable") is False:
+                stats["call_ev_not_applicable"] += 1
+        turn_id = str(event.get("turn_id") or "")
+        if turn_id:
+            turn_ids.add(turn_id)
+    stats["tool_turns"] = len(turn_ids)
+    return stats
 
 
 def make_llm_agent(
@@ -334,16 +504,21 @@ def make_llm_agent(
     params: dict,
     runtime: dict,
     client: LLMClient,
+    llm_name: str,
+    tool_names: Sequence[str],
+    system_prompt: str,
 ) -> LLMAgent:
     return LLMAgent(
         seat=task.llm_seat,
-        name="DeepSeek V4.1 Flash",
+        name=llm_name,
         spec=spec,
         params=params,
         client=client,
         analyzer=analyzer,
         validate_action=lambda action: game.preview(action),
         runtime=runtime,
+        tools=select_tools(tool_names),
+        system_prompt=system_prompt,
     )
 
 
@@ -375,8 +550,16 @@ def play_hand(
             seed=task.seed,
         )
         game.button_index = -1
+        llm_name = getattr(args, "llm_name", None) or spec.name
+        tool_names = tuple(
+            getattr(args, "tool_names", None) or ("apply_action",)
+        )
+        system_prompt = getattr(args, "system_prompt", None) or build_eval_prompt(
+            tool_names,
+            bool(getattr(args, "recommend_tools", False)),
+        )
         names = {
-            llm_seat: ("DeepSeek V4.1 Flash", "llm"),
+            llm_seat: (llm_name, "llm"),
             bot_seat: ("Project DQN", "bot"),
         }
         game.configure_players(
@@ -393,7 +576,18 @@ def play_hand(
             connect_timeout=float(args.connect_timeout),
             read_timeout=float(args.timeout),
         )
-        llm = make_llm_agent(task, game, spec, analyzer, params, runtime, client)
+        llm = make_llm_agent(
+            task,
+            game,
+            spec,
+            analyzer,
+            params,
+            runtime,
+            client,
+            llm_name,
+            tool_names,
+            system_prompt,
+        )
         bot = ProjectBot(
             name="Project DQN",
             model_path=str(args.bot_model),
@@ -433,13 +627,15 @@ def play_hand(
 
         llm_actions = [item for item in game.actions if item["seat"] == llm_seat]
         bot_actions = [item for item in game.actions if item["seat"] == bot_seat]
-        auto_turns, invalid_auto = count_auto_turns(events)
+        auto_turns, invalid_auto, api_error_auto = count_auto_turns(events)
+        tool_stats = hand_tool_stats(events)
         api_errors = sum(1 for event in events if event.get("type") == "error")
         llm_turns = sum(1 for event in events if event.get("type") == "turn_start")
         api_calls = sum(1 for event in events if event.get("type") == "llm_request")
 
         row = {
             "hand_index": task.index,
+            "group": getattr(args, "group", ""),
             "deal_index": task.deal_index,
             "assignment": task.assignment,
             "llm_seat": llm_seat,
@@ -456,12 +652,14 @@ def play_hand(
             "llm_actions_count": len(llm_actions),
             "bot_actions_count": len(bot_actions),
             "llm_turns": llm_turns,
+            **tool_stats,
             "api_calls": api_calls,
             "input_tokens": int(llm.total_usage.get("input_tokens", 0)),
             "output_tokens": int(llm.total_usage.get("output_tokens", 0)),
             "reasoning_tokens": int(llm.total_usage.get("reasoning_tokens", 0)),
             "auto_turns": auto_turns,
             "invalid_action_auto": invalid_auto,
+            "api_error_auto": api_error_auto,
             "api_errors": api_errors,
             "infra_error": 0,
             "fatal_error": "",
@@ -474,6 +672,7 @@ def play_hand(
     except Exception as exc:  # noqa: BLE001
         return {
             "hand_index": task.index,
+            "group": getattr(args, "group", ""),
             "deal_index": task.deal_index,
             "assignment": task.assignment,
             "llm_seat": task.llm_seat,
@@ -490,12 +689,21 @@ def play_hand(
             "llm_actions_count": 0,
             "bot_actions_count": 0,
             "llm_turns": 0,
+            "aux_tool_calls": 0,
+            "tool_turns": 0,
+            "aux_tool_errors": 0,
+            "distribution_calls": 0,
+            "equity_calls": 0,
+            "random_calls": 0,
+            "call_ev_calls": 0,
+            "call_ev_not_applicable": 0,
             "api_calls": 0,
             "input_tokens": 0,
             "output_tokens": 0,
             "reasoning_tokens": 0,
             "auto_turns": 0,
             "invalid_action_auto": 0,
+            "api_error_auto": 0,
             "api_errors": 0,
             "infra_error": 0,
             "fatal_error": f"{type(exc).__name__}: {exc}",
@@ -520,12 +728,14 @@ def run_task(
     runtime: dict,
     args: argparse.Namespace,
 ) -> dict:
-    """Run one hand, retrying only API/fatal failures."""
+    """Run one hand, retrying API/fatal failures when requested."""
     row: dict = {}
     for attempt in range(args.retries + 1):
         row = play_hand(task, spec, registry, runtime, args)
         row["attempts"] = attempt + 1
         retryable = bool(row.get("fatal_error")) or bool(row.get("infra_error"))
+        if getattr(args, "retry_api_errors", False) and int(row.get("api_errors", 0)) > 0:
+            retryable = True
         if not retryable:
             break
         if attempt < args.retries:
@@ -600,9 +810,21 @@ def summarize(rows: Sequence[dict], args: argparse.Namespace) -> dict:
     bot_total_actions = sum(bot_counter.values())
     total_pot = sum(int(row["pot"]) for row in valid)
     total_net = sum(nets)
-    api_errors = sum(int(row["api_errors"]) for row in valid)
-    auto_turns = sum(int(row["auto_turns"]) for row in valid)
-    invalid_auto = sum(int(row["invalid_action_auto"]) for row in valid)
+    api_errors = sum(int(row.get("api_errors", 0)) for row in valid)
+    auto_turns = sum(int(row.get("auto_turns", 0)) for row in valid)
+    invalid_auto = sum(int(row.get("invalid_action_auto", 0)) for row in valid)
+    api_error_auto = sum(int(row.get("api_error_auto", 0)) for row in valid)
+    llm_turns = sum(int(row.get("llm_turns", 0)) for row in valid)
+    aux_tool_calls = sum(int(row.get("aux_tool_calls", 0)) for row in valid)
+    tool_turns = sum(int(row.get("tool_turns", 0)) for row in valid)
+    aux_tool_errors = sum(int(row.get("aux_tool_errors", 0)) for row in valid)
+    distribution_calls = sum(int(row.get("distribution_calls", 0)) for row in valid)
+    equity_calls = sum(int(row.get("equity_calls", 0)) for row in valid)
+    random_calls = sum(int(row.get("random_calls", 0)) for row in valid)
+    call_ev_calls = sum(int(row.get("call_ev_calls", 0)) for row in valid)
+    call_ev_not_applicable = sum(
+        int(row.get("call_ev_not_applicable", 0)) for row in valid
+    )
     api_latencies = [
         float(event.get("latency_ms", 0.0))
         for row in valid
@@ -662,15 +884,36 @@ def summarize(rows: Sequence[dict], args: argparse.Namespace) -> dict:
         "avg_hand_sec": round(
             statistics.fmean(float(row["duration_sec"]) for row in valid), 3
         ),
-        "llm_turns": sum(int(row["llm_turns"]) for row in valid),
-        "api_calls": sum(int(row["api_calls"]) for row in valid),
-        "input_tokens": sum(int(row["input_tokens"]) for row in valid),
-        "output_tokens": sum(int(row["output_tokens"]) for row in valid),
-        "reasoning_tokens": sum(int(row["reasoning_tokens"]) for row in valid),
+        "llm_turns": llm_turns,
+        "aux_tool_calls": aux_tool_calls,
+        "aux_tool_calls_per_turn": round(aux_tool_calls / llm_turns, 3)
+        if llm_turns
+        else 0.0,
+        "tool_turns": tool_turns,
+        "tool_turns_pct": round(100.0 * tool_turns / llm_turns, 3)
+        if llm_turns
+        else 0.0,
+        "aux_tool_errors": aux_tool_errors,
+        "distribution_calls": distribution_calls,
+        "equity_calls": equity_calls,
+        "random_calls": random_calls,
+        "call_ev_calls": call_ev_calls,
+        "call_ev_not_applicable": call_ev_not_applicable,
+        "call_ev_applicable_calls": call_ev_calls - call_ev_not_applicable,
+        "api_calls": sum(int(row.get("api_calls", 0)) for row in valid),
+        "input_tokens": sum(int(row.get("input_tokens", 0)) for row in valid),
+        "output_tokens": sum(int(row.get("output_tokens", 0)) for row in valid),
+        "reasoning_tokens": sum(int(row.get("reasoning_tokens", 0)) for row in valid),
         "api_errors": api_errors,
-        "hands_with_api_error": sum(1 for row in valid if int(row["api_errors"]) > 0),
+        "hands_with_api_error": sum(
+            1 for row in valid if int(row.get("api_errors", 0)) > 0
+        ),
+        "hands_with_retry": sum(
+            1 for row in valid if int(row.get("attempts", 1)) > 1
+        ),
         "auto_turns": auto_turns,
         "invalid_action_auto": invalid_auto,
+        "api_error_auto": api_error_auto,
         "hands_with_auto": sum(1 for row in valid if int(row["auto_turns"]) > 0),
         "avg_api_latency_ms": round(statistics.fmean(api_latencies), 1)
         if api_latencies
@@ -715,12 +958,26 @@ def write_jsonl(path: Path, rows: Sequence[dict]) -> None:
 
 
 def write_report(path: Path, summary: dict, args: argparse.Namespace) -> None:
+    llm_name = getattr(args, "llm_name", None) or args.model
+    tools = list(getattr(args, "tool_names", ()))
+    group = getattr(args, "group", "")
+    tool_text = "、".join(f"`{name}`" for name in tools) if tools else "无"
+    has_auxiliary = any(name != "apply_action" for name in tools)
+    if not has_auxiliary:
+        recommend_text = "本组无辅助工具"
+    elif args.recommend_tools:
+        recommend_text = "开启（强烈推荐，非强制）"
+    else:
+        recommend_text = "关闭"
     lines = [
-        "# DeepSeek vs Project DQN",
+        f"# {llm_name} vs Project DQN（{group}）",
         "",
         f"- 生成时间: {datetime.now(timezone.utc).isoformat()}",
+        f"- 组别: `{group}`",
         f"- 模型: `{args.provider}/{args.model}`",
         f"- Bot: `{args.bot_algorithm}` / `{args.bot_model}`",
+        f"- 工具: {tool_text}",
+        f"- 提示词工具推荐: {recommend_text}",
         f"- 手数: {summary.get('hands', 0)}，同牌换座组: {summary.get('paired_deals', 0)}",
         f"- 规则: {args.chips} 筹码，盲注 {args.sb}/{args.bb}，每手重置筹码",
         "",
@@ -728,18 +985,36 @@ def write_report(path: Path, summary: dict, args: argparse.Namespace) -> None:
         "",
         "| 指标 | 数值 |",
         "|---|---:|",
-        f"| DeepSeek 总净筹码 | {summary.get('total_net', 0):+d} |",
-        f"| DeepSeek 每手均值 | {summary.get('mean_net', 0):+.2f} |",
-        f"| DeepSeek bb/100 | {summary.get('mean_bb100', 0):+.1f} |",
+        f"| {llm_name} 总净筹码 | {summary.get('total_net', 0):+d} |",
+        f"| {llm_name} 每手均值 | {summary.get('mean_net', 0):+.2f} |",
+        f"| {llm_name} bb/100 | {summary.get('mean_bb100', 0):+.1f} |",
+        f"| bb/100 95% CI | ±{summary.get('ci95_bb100', 0):.1f} |",
         f"| 胜率 | {summary.get('win_pct', 0):.1f}% |",
         f"| 同牌换座 bb/100 | {summary.get('paired_mean_bb100', 0):+.1f} |",
+        f"| 同牌换座 95% CI | ±{summary.get('paired_ci95_bb100', 0):.1f} |",
         f"| 摊牌率 | {summary.get('showdown_pct', 0):.1f}% |",
         f"| 全下手牌占比 | {summary.get('allin_hand_pct', 0):.1f}% |",
         f"| API 错误手数 | {summary.get('hands_with_api_error', 0)} |",
+        f"| 自动行动回合 | {summary.get('auto_turns', 0)} |",
+        f"| 其中 API 错误导致 | {summary.get('api_error_auto', 0)} |",
+        "",
+        "## 工具使用",
+        "",
+        "| 指标 | 数值 |",
+        "|---|---:|",
+        f"| 辅助工具调用 | {summary.get('aux_tool_calls', 0)} |",
+        f"| 每回合辅助工具调用 | {summary.get('aux_tool_calls_per_turn', 0):.3f} |",
+        f"| 使用辅助工具的回合占比 | {summary.get('tool_turns_pct', 0):.1f}% |",
+        f"| 辅助工具错误 | {summary.get('aux_tool_errors', 0)} |",
+        f"| 牌型分布调用 | {summary.get('distribution_calls', 0)} |",
+        f"| 胜率调用 | {summary.get('equity_calls', 0)} |",
+        f"| 随机数调用 | {summary.get('random_calls', 0)} |",
+        f"| 跟注 EV 调用 | {summary.get('call_ev_calls', 0)} |",
+        f"| 跟注 EV 不适用 | {summary.get('call_ev_not_applicable', 0)} |",
         "",
         "## 行动分布",
         "",
-        "| 动作 | DeepSeek | Project DQN |",
+        f"| 动作 | {llm_name} | Project DQN |",
         "|---|---:|---:|",
         f"| fold | {summary.get('llm_fold_pct', 0):.1f}% | {summary.get('bot_fold_pct', 0):.1f}% |",
         f"| check | {summary.get('llm_check_pct', 0):.1f}% | {summary.get('bot_check_pct', 0):.1f}% |",
@@ -750,11 +1025,21 @@ def write_report(path: Path, summary: dict, args: argparse.Namespace) -> None:
         "",
         "## 说明",
         "",
-        "- 每手都是独立牌局，筹码不跨手累积；总净筹码等价于带重购的 25 手总和。",
-        "- 25 手样本很小，置信区间很宽，结果只能作为快速对照，不能当成稳定强弱结论。",
+        f"- 每手都是独立牌局，筹码不跨手累积；总净筹码等价于带重购的 {summary.get('hands', 0)} 手总和。",
+        f"- {summary.get('hands', 0)} 手样本仍然有限，置信区间很宽，结果只能作为对照，不能当成稳定强弱结论。",
         "- 同牌换座只对偶数手生效；奇数手会多出一手未配对牌局。",
         "- `invalid_action_auto` 记录模型连续非法动作或超步数导致的自动跟注/弃牌。",
+        "- `api_error_auto` 记录 API 失败后系统自动跟注/过牌/弃牌的回合。",
+        "- 工具使用统计来自 `tool_result` 事件，`call_ev` 在无跟注时返回 `applicable=false`，仍计入调用次数。",
     ]
+    if "call_ev" in tools:
+        lines.append(
+            "- `call_ev` 省略 `equity` 时会自动估算胜率，因此本组除了 EV 数值，也间接获得了胜率信息。"
+        )
+    if "get_random_number" in tools:
+        lines.append(
+            "- `get_random_number` 本身不提供牌局信息，主要用于混合策略或打破僵局，不应期待它单独带来系统性优势。"
+        )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -767,11 +1052,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 f"{task.index + 1:02d}: deal={task.deal_index + 1:02d} "
                 f"LLM seat={task.llm_seat} seed={task.seed}"
             )
-        print(f"tasks={len(tasks)} workers={args.workers}")
+        print(
+            f"group={args.group} tools={','.join(args.tool_names)} "
+            f"recommend_tools={args.recommend_tools} "
+            f"tasks={len(tasks)} workers={args.workers}"
+        )
         return 0
 
     registry = ProviderRegistry()
     spec = registry.resolve(args.provider, args.model)
+    args.llm_name = args.llm_name or spec.name
+    args.system_prompt = build_eval_prompt(args.tool_names, args.recommend_tools)
     bot_model = Path(args.bot_model)
     if not bot_model.is_absolute():
         bot_model = (PROJECT_ROOT / bot_model).resolve()
@@ -791,12 +1082,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     output = args.output or (PROJECT_ROOT / "tmp" / "llm_eval" / timestamp)
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
+    (output / "prompt.txt").write_text(args.system_prompt + "\n", encoding="utf-8")
     runtime = load_runtime(args)
     params = resolve_params(spec, args)
 
     print(f"output: {output}")
     print(
-        f"LLM: {spec.provider_name} / {spec.name} ({spec.id}), "
+        f"group: {args.group}, tools: {','.join(args.tool_names)}, "
+        f"recommend_tools={args.recommend_tools}, "
+        f"prompt_chars={len(args.system_prompt)}"
+    )
+    print(
+        f"LLM: {args.llm_name} / {spec.provider_name} {spec.id}, "
         f"thinking={params.get('thinking')}, "
         f"effort={params.get('reasoning_effort') or '-'}, "
         f"max_tokens={params.get('max_tokens')}"
@@ -824,16 +1121,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             except Exception as exc:  # noqa: BLE001
                 row = {
                     "hand_index": task.index,
+                    "group": args.group,
                     "deal_index": task.deal_index,
                     "assignment": task.assignment,
                     "llm_seat": task.llm_seat,
                     "fatal_error": f"{type(exc).__name__}: {exc}",
                     "infra_error": 0,
                     "api_errors": 0,
+                    "api_error_auto": 0,
                     "net_llm": 0,
                     "net_bot": 0,
                     "pot": 0,
                     "llm_turns": 0,
+                    "aux_tool_calls": 0,
+                    "tool_turns": 0,
+                    "aux_tool_errors": 0,
+                    "distribution_calls": 0,
+                    "equity_calls": 0,
+                    "random_calls": 0,
+                    "call_ev_calls": 0,
+                    "call_ev_not_applicable": 0,
                     "duration_sec": 0.0,
                     "attempts": 0,
                     "events": [],
@@ -855,6 +1162,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         f"[{len(rows):02d}/{len(tasks):02d}] {task.label} "
                         f"LLM={seat}: {int(row['net_llm']):+5d} chips, "
                         f"pot={int(row['pot']):4d}, turns={int(row['llm_turns']):2d}, "
+                        f"tools={int(row.get('aux_tool_calls', 0)):2d}, "
                         f"{float(row['duration_sec']):5.1f}s, cum={cumulative:+d}"
                         + (
                             f", attempts={row['attempts']}"
@@ -868,8 +1176,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     rows.sort(key=lambda item: int(item.get("hand_index", 0)))
     summary = summarize(rows, args)
     summary["elapsed_sec"] = round(elapsed, 3)
+    summary["group"] = args.group
+    summary["llm_name"] = args.llm_name
     summary["provider"] = args.provider
     summary["model"] = args.model
+    summary["tools"] = list(args.tool_names)
+    summary["recommend_tools"] = bool(args.recommend_tools)
+    summary["system_prompt_sha256"] = hashlib.sha256(
+        args.system_prompt.encode("utf-8")
+    ).hexdigest()
+    summary["system_prompt_chars"] = len(args.system_prompt)
+    summary["prompt_path"] = str(output / "prompt.txt")
     summary["bot_model"] = str(bot_model)
     summary["bot_algorithm"] = args.bot_algorithm
     summary["chips"] = args.chips
@@ -890,8 +1207,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     print("")
     print(
-        f"result: DeepSeek {summary['total_net']:+d} chips over {summary['hands']} hands, "
-        f"{summary['mean_bb100']:+.1f} bb/100, win {summary['win_pct']:.1f}%"
+        f"result: {args.llm_name} [{args.group}] {summary['total_net']:+d} chips over "
+        f"{summary['hands']} hands, {summary['mean_bb100']:+.1f} bb/100, "
+        f"win {summary['win_pct']:.1f}%"
     )
     print(
         f"paired: {summary.get('paired_mean_bb100', 0.0):+.1f} bb/100 "
@@ -899,10 +1217,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         f"{summary.get('paired_deals', 0)} mirrored deals"
     )
     print(
+        f"tools: {summary.get('aux_tool_calls', 0)} calls, "
+        f"{summary.get('aux_tool_calls_per_turn', 0):.3f}/turn, "
+        f"{summary.get('tool_turns_pct', 0):.1f}% turns with a tool, "
+        f"{summary.get('aux_tool_errors', 0)} errors"
+    )
+    print(
         f"api: {summary.get('api_calls', 0)} calls, "
         f"{summary.get('input_tokens', 0)} input / {summary.get('output_tokens', 0)} output tokens, "
         f"{summary.get('hands_with_api_error', 0)} hands with errors, "
-        f"{summary.get('invalid_action_auto', 0)} invalid-action auto turns"
+        f"{summary.get('invalid_action_auto', 0)} invalid-action auto turns, "
+        f"{summary.get('api_error_auto', 0)} API-error auto turns"
     )
     print(f"elapsed: {elapsed:.1f}s")
     print(f"summary: {output / 'summary.json'}")
