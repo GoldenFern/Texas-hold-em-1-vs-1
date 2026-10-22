@@ -259,11 +259,49 @@ function dealOrder(index: number): number {
 }
 
 .seat.active .pod {
-  border-color: rgba(232, 195, 122, 0.52);
+  border-color: rgba(246, 214, 145, 0.88);
+  background: linear-gradient(160deg, rgba(31, 52, 40, 0.96), rgba(11, 24, 17, 0.97));
   box-shadow:
-    0 0 0 1px rgba(232, 195, 122, 0.16),
-    0 0 34px rgba(232, 195, 122, 0.12),
-    0 18px 40px rgba(0, 0, 0, 0.38);
+    0 0 0 2px rgba(232, 195, 122, 0.28),
+    0 0 22px rgba(232, 195, 122, 0.38),
+    0 0 58px rgba(232, 195, 122, 0.18),
+    0 18px 44px rgba(0, 0, 0, 0.42);
+  animation: turn-glow 1.8s ease-in-out infinite;
+}
+
+.seat.active .pod::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 19px;
+  border: 1px solid rgba(255, 226, 160, 0.78);
+  box-shadow:
+    0 0 18px rgba(232, 195, 122, 0.32),
+    inset 0 0 14px rgba(232, 195, 122, 0.1);
+  pointer-events: none;
+  animation: turn-frame 1.8s ease-in-out infinite;
+}
+
+@keyframes turn-glow {
+  0%, 100% {
+    box-shadow:
+      0 0 0 2px rgba(232, 195, 122, 0.28),
+      0 0 22px rgba(232, 195, 122, 0.38),
+      0 0 58px rgba(232, 195, 122, 0.18),
+      0 18px 44px rgba(0, 0, 0, 0.42);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px rgba(246, 214, 145, 0.52),
+      0 0 34px rgba(232, 195, 122, 0.58),
+      0 0 78px rgba(232, 195, 122, 0.28),
+      0 18px 44px rgba(0, 0, 0, 0.42);
+  }
+}
+
+@keyframes turn-frame {
+  0%, 100% { opacity: 0.42; }
+  50% { opacity: 1; }
 }
 
 .seat.winner .pod {
@@ -304,15 +342,16 @@ function dealOrder(index: number): number {
 
 .active-ring {
   position: absolute;
-  inset: -4px;
-  border-radius: 14px;
-  border: 1px solid rgba(232, 195, 122, 0.55);
+  inset: -5px;
+  border-radius: 15px;
+  border: 2px solid rgba(246, 214, 145, 0.72);
+  box-shadow: 0 0 14px rgba(232, 195, 122, 0.42);
   animation: ring-pulse 1.9s ease-in-out infinite;
 }
 
 @keyframes ring-pulse {
-  0%, 100% { opacity: 0.35; transform: scale(0.98); }
-  50% { opacity: 0.95; transform: scale(1.02); }
+  0%, 100% { opacity: 0.42; transform: scale(0.98); }
+  50% { opacity: 1; transform: scale(1.03); }
 }
 
 .identity {
@@ -456,19 +495,22 @@ function dealOrder(index: number): number {
 .turn-flag {
   position: absolute;
   right: 10px;
-  top: -9px;
+  top: -10px;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 2px 7px;
+  padding: 3px 8px;
   border-radius: 999px;
-  border: 1px solid rgba(232, 195, 122, 0.28);
-  background: #10231b;
-  color: var(--gold);
+  border: 1px solid rgba(255, 226, 160, 0.8);
+  background: linear-gradient(150deg, rgba(27, 49, 37, 0.98), rgba(13, 27, 20, 0.98));
+  color: var(--gold-bright);
   font-size: calc(9px * var(--type-scale));
-  font-weight: 700;
+  font-weight: 800;
   letter-spacing: 0.03em;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+  box-shadow:
+    0 0 0 1px rgba(232, 195, 122, 0.16),
+    0 0 16px rgba(232, 195, 122, 0.34),
+    0 6px 16px rgba(0, 0, 0, 0.34);
 }
 
 .auto-tag {

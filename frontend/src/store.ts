@@ -168,7 +168,7 @@ export function defaultSeat(kind: SeatSetup["kind"], model?: ProviderModel | nul
     return { kind: "human", name: "你" };
   }
   if (kind === "bot") {
-    return { kind: "bot", name: "RLCard", bot: { agent_type: "random", model_path: null } };
+    return { kind: "bot", name: "RLCard", bot: { agent_type: "random", model_path: null, delay_seconds: 3 } };
   }
   const picked = model || pickDefaultModel();
   return {

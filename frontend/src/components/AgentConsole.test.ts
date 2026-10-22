@@ -1,6 +1,6 @@
 import { mount } from "@vue/test-utils";
 import { nextTick } from "vue";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const storeMock = vi.hoisted(() => {
   function turn(id: string, handId: number) {
@@ -41,6 +41,7 @@ const storeMock = vi.hoisted(() => {
       lastResult: null,
       snapshot: {
         has_match: true,
+        hand_id: 0,
         players: [
           { seat: 0, name: "Agent A", kind: "llm" },
           { seat: 1, name: "Agent B", kind: "llm" },
@@ -76,6 +77,10 @@ vi.mock("../store", async () => {
 import AgentConsole from "./AgentConsole.vue";
 
 describe("AgentConsole stream", () => {
+  beforeEach(() => {
+    storeMock.game.snapshot.hand_id = 0;
+  });
+
   it("renders a visual divider at the start of every hand", async () => {
     const wrapper = mount(AgentConsole);
     await nextTick();
@@ -83,6 +88,15 @@ describe("AgentConsole stream", () => {
     expect(dividers).toHaveLength(2);
     expect(dividers[0].text()).toContain("HAND #1");
     expect(dividers[1].text()).toContain("HAND #2");
+    wrapper.unmount();
+  });
+
+  it("opens the next hand before the agent has acted", async () => {
+    storeMock.game.snapshot.hand_id = 3;
+    const wrapper = mount(AgentConsole);
+    await nextTick();
+    const labels = wrapper.findAll(".hand-divider").map((divider) => divider.text());
+    expect(labels).toEqual(["HAND #1", "HAND #2", "HAND #3"]);
     wrapper.unmount();
   });
 });

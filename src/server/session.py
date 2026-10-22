@@ -24,6 +24,10 @@ from src.llm.providers import ProviderRegistry
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GAME_CONFIG_PATH = PROJECT_ROOT / "config" / "game.json"
 
+BOT_DELAY_DEFAULT = 3.0
+BOT_DELAY_MIN = 0.0
+BOT_DELAY_MAX = 10.0
+
 
 @dataclass
 class SeatConfig:
@@ -34,6 +38,7 @@ class SeatConfig:
     params: dict = None  # type: ignore[assignment]
     bot_agent_type: str = "random"
     bot_model_path: Optional[str] = None
+    bot_delay_seconds: float = BOT_DELAY_DEFAULT
 
     def __post_init__(self) -> None:
         if self.params is None:
@@ -202,6 +207,17 @@ class GameSession:
                 model_path = bot_raw.get("model_path")
                 if agent_type != "random" and not model_path:
                     raise ValueError(f"座位 {index} 的 {agent_type} 需要模型文件")
+                delay_raw = bot_raw.get("delay_seconds", BOT_DELAY_DEFAULT)
+                if isinstance(delay_raw, bool):
+                    raise ValueError(f"座位 {index} 的 Bot 延迟必须是数字")
+                try:
+                    delay_seconds = float(delay_raw)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"座位 {index} 的 Bot 延迟必须是数字") from exc
+                if not BOT_DELAY_MIN <= delay_seconds <= BOT_DELAY_MAX:
+                    raise ValueError(
+                        f"座位 {index} 的 Bot 延迟必须在 {BOT_DELAY_MIN:g} 到 {BOT_DELAY_MAX:g} 秒之间"
+                    )
                 name = name or ("Project Bot" if agent_type.startswith("project_") else "RLCard Bot")
                 seats.append(
                     SeatConfig(
@@ -209,6 +225,7 @@ class GameSession:
                         name=name,
                         bot_agent_type=agent_type,
                         bot_model_path=str(model_path) if model_path else None,
+                        bot_delay_seconds=delay_seconds,
                     )
                 )
                 continue
@@ -487,6 +504,16 @@ class GameSession:
             except Exception:
                 pass
 
+    def _wait_bot_delay(self, generation: int, seconds: float) -> bool:
+        """Pause before a bot acts; returns False when the match was reset."""
+        deadline = time.monotonic() + seconds
+        while self._alive(generation):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return True
+            self._stop_event.wait(min(0.2, remaining))
+        return False
+
     def _run_agent_turn(self, generation: int, seat: int) -> None:
         with self.lock:
             if not self._alive(generation) or not self.game:
@@ -497,7 +524,11 @@ class GameSession:
                 action = self._safe_action(seat)
             else:
                 action = None
+            config = self.seat_configs.get(seat)
+            delay = config.bot_delay_seconds if config and config.kind == "bot" else 0.0
             token = (self.game.hand_id, len(self.game.actions), seat)
+        if delay > 0 and not self._wait_bot_delay(generation, delay):
+            return
         if agent is not None:
             emit = self._make_emit(generation, seat)
             try:

@@ -40,6 +40,23 @@ const latestHandId = computed<number | null>(() => {
   return itemHandId(turns.value[turns.value.length - 1]);
 });
 
+const currentHandId = computed(() => Number(game.snapshot?.hand_id || 0));
+
+// A new hand starts before the selected agent acts. Keep a divider for that
+// hand so the stream moves on as soon as the cards are dealt, not when the
+// first turn_event arrives.
+const pendingHandId = computed<number | null>(() => {
+  if (!turns.value.length) return null;
+  const latest = latestHandId.value ?? 0;
+  if (currentHandId.value <= latest) return null;
+  return currentHandId.value;
+});
+
+const streamHandId = computed<number | null>(() => {
+  const latest = latestHandId.value ?? 0;
+  return Math.max(latest, pendingHandId.value ?? 0) || null;
+});
+
 function handDividerLabel(handId: number): string {
   return handId > 0 ? `HAND #${handId}` : "HAND";
 }
@@ -208,7 +225,7 @@ watch(
   () => game.selectedSeat,
   () => {
     clearAnchor();
-    seenHandId = latestHandId.value;
+    seenHandId = streamHandId.value;
     stick.value = true;
     nextTick(scrollToBottom);
   },
@@ -225,7 +242,7 @@ watch(
   },
 );
 
-watch(latestHandId, (handId) => {
+watch(streamHandId, (handId) => {
   if (mode.value !== "stream") {
     seenHandId = handId;
     return;
@@ -256,7 +273,7 @@ onMounted(() => {
     scrollToBottom();
   }
   mode.value = agentSeats.value.length ? "stream" : "log";
-  seenHandId = latestHandId.value;
+  seenHandId = streamHandId.value;
 });
 
 onUnmounted(() => {
@@ -430,6 +447,14 @@ onUnmounted(() => {
               </div>
             </article>
           </template>
+          <div
+            v-if="pendingHandId !== null"
+            class="hand-divider"
+            role="separator"
+            :data-hand-id="pendingHandId"
+          >
+            <span class="hand-divider-label">{{ handDividerLabel(pendingHandId) }}</span>
+          </div>
           <div class="stream-anchor-tail" :style="{ height: `${anchorTail}px` }" aria-hidden="true"></div>
         </template>
       </div>

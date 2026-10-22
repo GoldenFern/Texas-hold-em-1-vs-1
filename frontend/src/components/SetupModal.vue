@@ -28,6 +28,10 @@ const FALLBACK_RULES: SetupDraft["rules"] = {
   god_view: true,
 };
 
+const BOT_DELAY_DEFAULT = 3;
+const BOT_DELAY_MIN = 0;
+const BOT_DELAY_MAX = 10;
+
 const setup = reactive<SetupDraft>({
   seats: [
     { kind: "llm", name: "LLM Agent" },
@@ -47,12 +51,27 @@ function deepCopy<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function normalizeBotDelay(value: unknown): number {
+  const numeric = Number(value ?? BOT_DELAY_DEFAULT);
+  if (!Number.isFinite(numeric)) return BOT_DELAY_DEFAULT;
+  const clamped = Math.min(BOT_DELAY_MAX, Math.max(BOT_DELAY_MIN, numeric));
+  return Math.round(clamped * 2) / 2;
+}
+
 function resetSetup(): void {
   const source = buildDefaultSetup();
   const copy = deepCopy(source);
   setup.seats = copy.seats;
   setup.rules = { ...copy.rules };
   if (!setup.rules.rebuy_amount) setup.rules.rebuy_amount = setup.rules.starting_chips;
+  for (const config of setup.seats) {
+    if (config.kind !== "bot") continue;
+    config.bot = {
+      agent_type: config.bot?.agent_type || "random",
+      model_path: config.bot?.model_path || null,
+      delay_seconds: normalizeBotDelay(config.bot?.delay_seconds),
+    };
+  }
 }
 
 watch(
@@ -113,7 +132,11 @@ function setKind(index: number, kind: SeatSetup["kind"]): void {
   if (kind === "human") {
     setup.seats[index] = { kind: "human", name: "你" };
   } else if (kind === "bot") {
-    setup.seats[index] = { kind: "bot", name: "RLCard", bot: { agent_type: "random", model_path: null } };
+    setup.seats[index] = {
+      kind: "bot",
+      name: "RLCard",
+      bot: { agent_type: "random", model_path: null, delay_seconds: BOT_DELAY_DEFAULT },
+    };
   } else {
     const model = modelFor(current.provider_id || "", current.model_id || "")
       || providers.value.flatMap((provider) => provider.models).find((item) => item.key_present)
@@ -189,6 +212,7 @@ function setBotType(index: number, agentType: string): void {
     bot: {
       agent_type: agentType,
       model_path: agentType === "random" ? null : (chosen?.path || current.model_path || null),
+      delay_seconds: normalizeBotDelay(current.delay_seconds),
     },
   } as SeatSetup;
 }
@@ -205,6 +229,19 @@ function setBotModel(index: number, path: string): void {
     ...seat(index),
     kind: "bot",
     bot: { ...bot, model_path: path || null },
+  } as SeatSetup;
+}
+
+function botDelay(index: number): number {
+  return normalizeBotDelay(seat(index).bot?.delay_seconds);
+}
+
+function setBotDelay(index: number, event: Event): void {
+  const bot = seat(index).bot || { agent_type: "random", model_path: null };
+  setup.seats[index] = {
+    ...seat(index),
+    kind: "bot",
+    bot: { ...bot, delay_seconds: normalizeBotDelay((event.target as HTMLInputElement).value) },
   } as SeatSetup;
 }
 
@@ -608,6 +645,24 @@ function close(): void {
                     </span>
                   </button>
                 </div>
+
+                <label class="field">
+                  <div class="param-head">
+                    <span>行动延迟 <span class="param-en">delay</span></span>
+                    <strong class="mono">{{ botDelay(index).toFixed(1) }}s</strong>
+                  </div>
+                  <input
+                    class="range"
+                    type="range"
+                    :min="BOT_DELAY_MIN"
+                    :max="BOT_DELAY_MAX"
+                    step="0.5"
+                    :value="botDelay(index)"
+                    :style="{ '--pct': rangePct(botDelay(index), BOT_DELAY_MIN, BOT_DELAY_MAX) }"
+                    @input="setBotDelay(index, $event)"
+                  />
+                  <span class="field-hint">每次行动前暂停，方便你看清牌桌变化；0 秒表示立即出手。</span>
+                </label>
 
                 <label v-if="config.bot?.agent_type !== 'random'" class="field">
                   <span class="field-label">模型文件</span>

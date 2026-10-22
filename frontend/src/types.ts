@@ -274,7 +274,7 @@ export interface SeatSetup {
   provider_id?: string;
   model_id?: string;
   params?: Record<string, unknown>;
-  bot?: { agent_type: string; model_path: string | null };
+  bot?: { agent_type: string; model_path: string | null; delay_seconds?: number };
 }
 
 export interface MatchSetupPayload {

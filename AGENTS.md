@@ -78,6 +78,8 @@ python scripts/eval_llm_vs_llm.py --hands 100 --workers 5  # LLM vs LLM 工具�
 - 动作掩码只使用引擎的 `legal_actions`、`min_raise_to`、`max_raise_to`；低于最小加注的尺寸屏蔽，不夹取。
 - 训练：`scripts/train_project_bot.py`；离线评估：`scripts/eval_project_bots.py`。
 - 模型格式 `project-bot-v1`，`ProjectBot` 用 `weights_only=True` 加载；旧的 `RLCardBot` 仍是 54 维 / 5 动作。
+- Bot 行动延迟在选对手时配置（`bot.delay_seconds`，默认 3 秒，范围 0 到 10 秒）；`GameSession._run_agent_turn` 在决策前用可中断等待实现，换局或关闭服务时立即退出，不要改成阻塞 `time.sleep`。
+- 延迟只影响 Bot 座位，LLM 和人类不套用；离线评测脚本直接驱动 Bot，不走这段延迟。
 - 评估使用同牌换座，按 deal 配对；2000 手只适合粗筛。
 
 ## LLM Agent 契约
@@ -150,9 +152,10 @@ python scripts/eval_llm_vs_llm.py --hands 100 --workers 5  # LLM vs LLM 工具�
 - POT 固定在公共牌右侧，与牌面垂直居中；顶部工具栏不再重复显示底池。窄屏 (<=560px) POT 落到公共牌下方。
 - 公共牌组用 `top: 50%` + `translate(-50%, -50%)` 整体垂直居中，不要再按 POT 在上方的旧布局设置 `top: 45%` 之类的偏移。
 - 牌桌只显示当前街每家最近一条动作，位置在 `SeatPod` 的第二行；完整行动顺序在控制台「日志」页。不要恢复悬浮 `action-badge`，否则会和 `turn-flag` 抢座位卡右上角。
+- 当前行动座位用加强的金色描边、外层光环和呼吸动画（`.seat.active .pod`、`::before`、`turn-flag`）一起突出；不要退回单层细边框。
 - 动作文案统一走 `frontend/src/actionMeta.ts` 的 `describeAction`；取某个座位当前街最后动作走 `lastActionForSeat`。
 - 下注/跟注动作触发筹码飞向 POT 和 POT 脉冲；弃牌、过牌不飞筹码。首次加载和重连不补播动画。
-- 思考流按手牌插入 `HAND #N` 分隔符。新一手出现时，滚动位置锚定到该分隔符顶部，历史留在上方；此时暂停自动跟随，点「回到最新」或滚到底部后恢复。
+- 思考流按手牌插入 `HAND #N` 分隔符。新一手发牌时（即使当前是人类先行动、Agent 还没出手）就插入新分隔符并把滚动位置锚定到它顶部，历史留在上方；此时暂停自动跟随，点「回到最新」或滚到底部后恢复。不要在 Agent 首次行动时才补分隔符。
 - 思考块默认在正文开始后自动折叠；手动折叠任一块后，后续思考（含流式中）默认折叠。偏好由 `frontend/src/reasoning.ts` 存到 localStorage，控制台的「思考默认折叠」徽标可恢复自动。手动展开只影响当前块，不改变全局偏好。
 - `turn_state` 事件保存发给模型的原样牌局输入，在 `AgentTurn` 的「牌局输入」折叠块中可查。
 - `AgentTurn` 底部的阶段文案由 `turnPhase.ts` 根据最后一条 message 与 tool 状态推导；不要再用 `turn.status === "running"` 当作“等待工具调用”。

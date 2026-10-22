@@ -88,6 +88,27 @@ def test_human_token_is_set_when_state_is_broadcast() -> None:
         session.shutdown()
 
 
+def test_bot_delay_defaults_and_validates_range() -> None:
+    session = make_session()
+    try:
+        seats = session._parse_seats(human_vs_random())
+        assert seats[1].bot_delay_seconds == 3.0
+
+        for value in (0, 2.5, 10):
+            payload = human_vs_random()
+            payload["seats"][1]["bot"]["delay_seconds"] = value
+            seats = session._parse_seats(payload)
+            assert seats[1].bot_delay_seconds == float(value)
+
+        for value in (-0.5, 10.5, "fast", True):
+            payload = human_vs_random()
+            payload["seats"][1]["bot"]["delay_seconds"] = value
+            with pytest.raises(ValueError):
+                session._parse_seats(payload)
+    finally:
+        session.shutdown()
+
+
 def test_rule_normalization_is_strict_and_explicit() -> None:
     session = make_session()
     rules = session._normalize_rules({"god_view": "false", "auto_rebuy": "true"})
