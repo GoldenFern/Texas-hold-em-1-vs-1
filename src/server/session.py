@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 from src.agents.base import AgentView
 from src.agents.project_bot import ProjectBot
 from src.agents.rlcard_bot import RLCardBot
+from src.analysis.equity import EquityAnalyzer
 from src.analysis.hand_distribution import HandDistributionAnalyzer
 from src.engine.actions import Action, ActionType
 from src.engine.heads_up import HeadsUpGame, Street
@@ -48,11 +49,13 @@ class GameSession:
         registry: ProviderRegistry,
         client: LLMClient,
         analyzer: HandDistributionAnalyzer,
+        equity_analyzer: Optional[EquityAnalyzer] = None,
     ) -> None:
         self.socketio = socketio
         self.registry = registry
         self.client = client
         self.analyzer = analyzer
+        self.equity_analyzer = equity_analyzer or EquityAnalyzer()
         self.lock = threading.RLock()
         self._start_lock = threading.Lock()
         self.game: Optional[HeadsUpGame] = None
@@ -267,6 +270,7 @@ class GameSession:
                         params=seat.params,
                         client=self.client,
                         analyzer=self.analyzer,
+                        equity_analyzer=self.equity_analyzer,
                         validate_action=self._validator_for(generation_holder),
                         runtime=self._game_config.get("llm_runtime", {}),
                     )

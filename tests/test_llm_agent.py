@@ -90,6 +90,22 @@ def make_view() -> AgentView:
     )
 
 
+def make_river_view() -> AgentView:
+    """A river spot facing a 50-chip bet into 100."""
+    return replace(
+        make_view(),
+        street="river",
+        community=["Qh", "Jh", "2c", "7d", "9s"],
+        pot=150,
+        current_bet=50,
+        to_call=50,
+        call_amount=50,
+        opponent_street_bet=50,
+        min_raise_to=100,
+        legal_actions=["fold", "call", "raise", "all_in"],
+    )
+
+
 def build_agent(
     responses: List[dict],
     failures: int = 3,
@@ -301,7 +317,9 @@ def test_require_estimate_each_turn_skips_river() -> None:
 def test_system_prompt_matches_available_tools() -> None:
     control = build_system_prompt(("apply_action",))
     assert "estimate_hand_probabilities" not in control
+    assert "estimate_equity" not in control
     assert "get_random_number" not in control
+    assert "call_ev" not in control
     assert "本回合你只需要调用 apply_action" in control
 
     treatment = build_system_prompt(
@@ -311,6 +329,8 @@ def test_system_prompt_matches_available_tools() -> None:
     assert "只要公共牌少于五张" in treatment
     assert "河牌圈五张公共牌全部发出后不再要求" in treatment
     assert "get_random_number" in treatment
+    assert "estimate_equity" in treatment
+    assert "call_ev" in treatment
 
 
 def test_unknown_tool_is_reported() -> None:
@@ -571,3 +591,183 @@ def test_model_raise_is_normalized_to_bet_at_big_blind_option() -> None:
     action = agent.decide(view, events.append)
     assert action.type == ActionType.BET
     assert action.amount == 20
+
+
+def test_select_tools_includes_equity_tools() -> None:
+    tools = select_tools(["estimate_equity", "call_ev", "apply_action"])
+    assert [tool["function"]["name"] for tool in tools] == [
+        "estimate_equity",
+        "call_ev",
+        "apply_action",
+    ]
+
+
+def test_equity_tool_then_apply() -> None:
+    agent, events = build_agent(
+        [
+            {
+                "tool_calls": [
+                    {"name": "estimate_equity", "arguments": "{}"}
+                ]
+            },
+            {
+                "tool_calls": [
+                    {"name": "apply_action", "arguments": '{"action": "call"}'}
+                ]
+            },
+        ]
+    )
+    action = agent.decide(make_river_view(), events.append)
+    assert action.type == ActionType.CALL
+    results = [
+        event
+        for event in events
+        if event["type"] == "tool_result" and event.get("name") == "estimate_equity"
+    ]
+    assert len(results) == 1
+    assert results[0]["ok"] is True
+    assert results[0]["result"]["method"] == "exact"
+    assert 0.0 <= results[0]["result"]["equity"] <= 1.0
+
+
+def test_call_ev_defaults_to_current_situation() -> None:
+    agent, events = build_agent(
+        [
+            {"tool_calls": [{"name": "call_ev", "arguments": "{}"}]},
+            {
+                "tool_calls": [
+                    {"name": "apply_action", "arguments": '{"action": "call"}'}
+                ]
+            },
+        ]
+    )
+    action = agent.decide(make_river_view(), events.append)
+    assert action.type == ActionType.CALL
+    results = [
+        event
+        for event in events
+        if event["type"] == "tool_result" and event.get("name") == "call_ev"
+    ]
+    assert len(results) == 1
+    assert results[0]["ok"] is True
+    assert results[0]["result"]["equity_source"] == "internal"
+    assert results[0]["result"]["call_amount"] == 50
+    assert results[0]["result"]["effective_pot"] == 200
+    assert "ev_call" in results[0]["result"]
+
+
+def test_call_ev_uses_provided_equity() -> None:
+    agent, events = build_agent(
+        [
+            {
+                "tool_calls": [
+                    {"name": "call_ev", "arguments": '{"equity": 0.25}'}
+                ]
+            },
+            {
+                "tool_calls": [
+                    {"name": "apply_action", "arguments": '{"action": "call"}'}
+                ]
+            },
+        ]
+    )
+    action = agent.decide(make_river_view(), events.append)
+    assert action.type == ActionType.CALL
+    results = [
+        event
+        for event in events
+        if event["type"] == "tool_result" and event.get("name") == "call_ev"
+    ]
+    assert results[0]["ok"] is True
+    assert results[0]["result"]["equity_source"] == "model"
+    assert abs(float(results[0]["result"]["ev_call"])) < 1e-9
+    assert results[0]["result"]["breakeven_equity"] == 0.25
+
+
+def test_call_ev_uses_short_stack_refund() -> None:
+    view = replace(
+        make_river_view(),
+        pot=400,
+        my_chips=100,
+        opponent_chips=0,
+        current_bet=300,
+        to_call=300,
+        call_amount=100,
+        opponent_street_bet=300,
+        legal_actions=["fold", "call", "all_in"],
+    )
+    agent, events = build_agent(
+        [
+            {
+                "tool_calls": [
+                    {"name": "call_ev", "arguments": '{"equity": 1.0}'}
+                ]
+            },
+            {
+                "tool_calls": [
+                    {"name": "apply_action", "arguments": '{"action": "call"}'}
+                ]
+            },
+        ]
+    )
+    action = agent.decide(view, events.append)
+    assert action.type == ActionType.CALL
+    results = [
+        event
+        for event in events
+        if event["type"] == "tool_result" and event.get("name") == "call_ev"
+    ]
+    assert results[0]["ok"] is True
+    assert results[0]["result"]["call_amount"] == 100
+    assert results[0]["result"]["refund"] == 200
+    assert results[0]["result"]["effective_pot"] == 300
+    assert results[0]["result"]["ev_call"] == 200.0
+
+
+def test_call_ev_rejects_percent_equity() -> None:
+    agent, events = build_agent(
+        [
+            {
+                "tool_calls": [
+                    {"name": "call_ev", "arguments": '{"equity": 63.2}'}
+                ]
+            },
+            {
+                "tool_calls": [
+                    {"name": "apply_action", "arguments": '{"action": "call"}'}
+                ]
+            },
+        ]
+    )
+    action = agent.decide(make_river_view(), events.append)
+    assert action.type == ActionType.CALL
+    results = [
+        event
+        for event in events
+        if event["type"] == "tool_result" and event.get("name") == "call_ev"
+    ]
+    assert results[0]["ok"] is False
+    assert "0 到 1" in results[0]["summary"]
+
+
+def test_call_ev_is_not_applicable_without_a_bet() -> None:
+    agent, events = build_agent(
+        [
+            {"tool_calls": [{"name": "call_ev", "arguments": "{}"}]},
+            {
+                "tool_calls": [
+                    {"name": "apply_action", "arguments": '{"action": "check"}'}
+                ]
+            },
+        ]
+    )
+    action = agent.decide(make_view(), events.append)
+    assert action.type == ActionType.CHECK
+    results = [
+        event
+        for event in events
+        if event["type"] == "tool_result" and event.get("name") == "call_ev"
+    ]
+    assert results[0]["ok"] is True
+    assert results[0]["result"]["applicable"] is False
+    assert "to_call=0" in results[0]["summary"]

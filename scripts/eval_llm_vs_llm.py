@@ -2,8 +2,9 @@
 
 This evaluation is built for controlled tool-use experiments.  One seat gets
 only ``apply_action``.  The other seat additionally gets
-``estimate_hand_probabilities`` and ``get_random_number``, and is required to
-call the estimator before every action until the river (five community cards).
+``estimate_hand_probabilities``, ``estimate_equity``, ``get_random_number`` and
+``call_ev``, and is required to call the hand-distribution estimator before
+every action until the river (five community cards).
 Each hand is an independent 100 BB heads-up game with fresh chips, and the same
 deck is normally replayed with the seats swapped.
 
@@ -989,7 +990,7 @@ def write_report(path: Path, summary: dict, args: argparse.Namespace) -> None:
         f"- 手数: {summary.get('hands', 0)}，同牌换座组: {summary.get('paired_deals', 0)}",
         f"- 规则: {args.chips} 筹码，盲注 {args.sb}/{args.bb}，每手重置筹码",
         "- 对照组: 只提供 `apply_action`",
-        "- 工具组: 提供 `estimate_hand_probabilities`、`get_random_number`、`apply_action`",
+        "- 工具组: 提供 `estimate_hand_probabilities`、`estimate_equity`、`get_random_number`、`call_ev`、`apply_action`",
         "- 工具组要求: 公共牌少于五张时，每次行动前至少估算一次；河牌不要求",
         "",
         "## 结果（工具组视角）",

@@ -9,7 +9,9 @@ from src.agents.base import AgentView
 
 ALL_TOOL_NAMES = (
     "estimate_hand_probabilities",
+    "estimate_equity",
     "get_random_number",
+    "call_ev",
     "apply_action",
 )
 
@@ -79,7 +81,9 @@ def build_system_prompt(
     if unknown:
         raise ValueError(f"未知工具：{', '.join(sorted(unknown))}")
     has_estimate = "estimate_hand_probabilities" in names
+    has_equity = "estimate_equity" in names
     has_random = "get_random_number" in names
+    has_call_ev = "call_ev" in names
 
     steps: List[str] = [
         "你会收到一条以「【牌局更新】」开头的新消息，里面包含当前牌局、底池、"
@@ -99,6 +103,20 @@ def build_system_prompt(
                 "成为各类牌型的概率分布（不是胜率）。是否调用以及调用几次，由你"
                 "自行决定。"
             )
+    if has_equity:
+        steps.append(
+            "estimate_equity 返回你当前摊牌时的期望底池份额（0 到 1 的小数），"
+            "平局算半份，默认假设对手是随机手牌。它衡量胜率，和只描述自己牌型"
+            "分布的 estimate_hand_probabilities 不同。河牌和转牌精确枚举，"
+            "翻牌和翻前蒙特卡洛。"
+        )
+    if has_call_ev:
+        steps.append(
+            "call_ev 用当前底池、跟注额和筹码计算静态跟注 EV。equity 参数可以省略，"
+            "省略时自动按当前牌局估算。底池赔率是 跟注额 / (底池 + 跟注额)，"
+            "equity 高于这个数才是正静态 EV。这个 EV 假设跟注后不再下注，"
+            "翻牌和转牌还要考虑隐含赔率。"
+        )
     if has_random:
         steps.append(
             "理性分析永远是第一位的。如果在分析之后，几种选择的期望仍然非常接近、"
@@ -117,19 +135,19 @@ def build_system_prompt(
         f"{index}. {step}" for index, step in enumerate(steps, start=1)
     )
 
-    if has_estimate and has_random:
+    auxiliaries: List[str] = []
+    if has_estimate:
+        auxiliaries.append("estimate_hand_probabilities")
+    if has_equity:
+        auxiliaries.append("estimate_equity")
+    if has_random:
+        auxiliaries.append("get_random_number")
+    if has_call_ev:
+        auxiliaries.append("call_ev")
+    if auxiliaries:
         tool_style = (
-            "- estimate_hand_probabilities 和 get_random_number 是你可以调用的"
-            "辅助工具，但最终必须调用 apply_action。"
-        )
-    elif has_estimate:
-        tool_style = (
-            "- estimate_hand_probabilities 是你可以调用的辅助工具，但最终必须调用 "
-            "apply_action。"
-        )
-    elif has_random:
-        tool_style = (
-            "- get_random_number 是你可以调用的辅助工具，但最终必须调用 apply_action。"
+            f"- {'、'.join(auxiliaries)} 是你可以调用的辅助工具，"
+            "但最终必须调用 apply_action。"
         )
     else:
         tool_style = "- 本回合你只需要调用 apply_action。"
@@ -158,7 +176,7 @@ def build_turn_message(view: AgentView) -> str:
 
 def build_nudge_message() -> str:
     return (
-        "你刚才没有调用任何工具，或者只调用了辅助工具（估算/随机数）。"
+        "你刚才没有调用任何工具，或者只调用了辅助工具（牌型估算/胜率/随机数/跟注 EV）。"
         "现在请立即调用 apply_action，提交本回合的最终动作。"
         "辅助工具不能替代 apply_action，最终必须以 apply_action 结束本回合。"
     )

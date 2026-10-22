@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_from_directory
 from flask_socketio import SocketIO
 
+from src.analysis.equity import EquityAnalyzer
 from src.analysis.hand_distribution import HandDistributionAnalyzer
 from src.llm.client import LLMClient, LLMError
 from src.llm.providers import PROJECT_ROOT, ProviderRegistry
@@ -105,7 +106,8 @@ def create_app() -> tuple[Flask, SocketIO, GameSession]:
         ),
     )
     analyzer = HandDistributionAnalyzer()
-    session = GameSession(socketio, registry, client, analyzer)
+    equity_analyzer = EquityAnalyzer()
+    session = GameSession(socketio, registry, client, analyzer, equity_analyzer)
 
     # ------------------------------------------------------------------
     # Pages

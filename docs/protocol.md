@@ -334,6 +334,51 @@ Socket.IO 事件 `agent_event` 的 payload。所有事件带：
 
 估算工具 `result` 会包含完整 `distribution` / `current_best` / `method` / `total` / `elapsed_ms`，供前端画图。
 
+胜率工具的 `result`：
+
+```json
+{
+  "ok": true,
+  "street": "turn",
+  "method": "exact",
+  "samples": 45540,
+  "equity": 0.6368,
+  "win": 0.6123,
+  "tie": 0.0491,
+  "lose": 0.3386,
+  "std_error": 0.0,
+  "opponent": "random",
+  "cached": false
+}
+```
+
+`equity` 是 `win + tie/2`，所有概率都是 0 到 1 的小数。
+
+跟注 EV 工具的 `result`：
+
+```json
+{
+  "ok": true,
+  "street": "river",
+  "equity_source": "internal",
+  "equity_method": "exact",
+  "equity_samples": 990,
+  "equity": 0.6368,
+  "ev_call": 12.4,
+  "ev_fold": 0.0,
+  "breakeven_equity": 0.25,
+  "pot": 150,
+  "to_call": 50,
+  "call_amount": 50,
+  "effective_pot": 200,
+  "refund": 0,
+  "pot_to_call_ratio": 3.0,
+  "static_positive": true
+}
+```
+
+`pot_to_call_ratio` 是底池/跟注的倍数，不是百分比；临界胜率看 `breakeven_equity`。短码全下时 `effective_pot` 会扣除 `refund`。
+
 随机数工具的 `result`：
 
 ```json

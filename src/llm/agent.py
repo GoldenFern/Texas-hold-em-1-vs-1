@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 import threading
 import time
@@ -10,7 +11,14 @@ import uuid
 from typing import Callable, List, Optional, Sequence
 
 from src.agents.base import AgentView, BaseAgent
+from src.analysis.equity import (
+    DEFAULT_ITERATIONS as DEFAULT_EQUITY_ITERATIONS,
+    MIN_ITERATIONS as MIN_EQUITY_ITERATIONS,
+    EquityAnalyzer,
+    EquityResult,
+)
 from src.analysis.hand_distribution import HandDistributionAnalyzer
+from src.analysis.pot_odds import analyze_call
 from src.engine.actions import Action, ActionType
 from src.engine.cards import Card
 
@@ -50,6 +58,22 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "estimate_equity",
+            "description": (
+                "估算当前牌局的摊牌 equity。对手按剩余牌均匀随机；"
+                "河牌和转牌精确枚举，翻牌和翻前蒙特卡洛。"
+                "返回赢/平/输概率，equity = 胜率 + 平局率/2。不需要参数。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_random_number",
             "description": (
                 "返回一个 [0, 1) 区间的均匀随机数。"
@@ -60,6 +84,30 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "call_ev",
+            "description": (
+                "计算当前跟注的静态期望收益。底池、跟注额和筹码自动取当前牌局；"
+                "equity 可省略，省略时自动按当前牌局估算。"
+                "返回跟注 EV、盈亏平衡胜率和有效底池。"
+                "假设跟注后不再下注，翻牌和转牌还要考虑隐含赔率。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "equity": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "description": "可选。0 到 1 的小数；省略时自动估算。",
+                    }
+                },
                 "required": [],
             },
         },
@@ -107,6 +155,10 @@ _ACTION_ALIASES = {
 }
 
 
+class EquityBudgetError(RuntimeError):
+    """Raised when the per-turn equity budget is exhausted."""
+
+
 def select_tools(names: Sequence[str]) -> List[dict]:
     """Return the tool schemas for the requested tool names.
 
@@ -144,6 +196,7 @@ class LLMAgent(BaseAgent):
         runtime: dict,
         tools: Optional[Sequence[dict]] = None,
         system_prompt: Optional[str] = None,
+        equity_analyzer: Optional[EquityAnalyzer] = None,
     ) -> None:
         self.seat = seat
         self.name = name
@@ -151,6 +204,7 @@ class LLMAgent(BaseAgent):
         self.params = spec.normalize_params(params)
         self.client = client
         self.analyzer = analyzer
+        self.equity_analyzer = equity_analyzer or EquityAnalyzer()
         self.validate_action = validate_action
         self.max_steps = int(runtime.get("max_steps_per_turn", 12))
         self.max_failures = int(runtime.get("max_consecutive_failures", 3))
@@ -169,6 +223,8 @@ class LLMAgent(BaseAgent):
         self.max_context_tokens = max(8000, runtime_budget)
         self.max_estimate_calls = int(runtime.get("max_estimate_calls_per_turn", 2))
         self.max_estimate_iterations = int(runtime.get("max_estimate_iterations", 50000))
+        self.max_equity_calls = int(runtime.get("max_equity_calls_per_turn", 2))
+        self.max_equity_iterations = int(runtime.get("max_equity_iterations", 50000))
         self.tools = list(tools) if tools is not None else list(TOOLS)
         self.tool_names = {tool["function"]["name"] for tool in self.tools}
         if self.require_estimate_each_turn and "estimate_hand_probabilities" not in self.tool_names:
@@ -181,6 +237,8 @@ class LLMAgent(BaseAgent):
         self._estimated_this_turn = False
         self._estimate_calls_this_turn = 0
         self._estimate_iterations_this_turn = 0
+        self._equity_calls_this_turn = 0
+        self._equity_iterations_this_turn = 0
         self._tools_tokens = estimate_tokens(json.dumps(self.tools, ensure_ascii=False))
         self.total_usage = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
         self.last_error = ""
@@ -202,6 +260,8 @@ class LLMAgent(BaseAgent):
         self._estimated_this_turn = False
         self._estimate_calls_this_turn = 0
         self._estimate_iterations_this_turn = 0
+        self._equity_calls_this_turn = 0
+        self._equity_iterations_this_turn = 0
         self._cancel_event.clear()
 
     def cancel(self) -> None:
@@ -242,6 +302,8 @@ class LLMAgent(BaseAgent):
         self._estimated_this_turn = False
         self._estimate_calls_this_turn = 0
         self._estimate_iterations_this_turn = 0
+        self._equity_calls_this_turn = 0
+        self._equity_iterations_this_turn = 0
         if self._cancel_event.is_set():
             return Action(view.seat, ActionType.FOLD, source="llm", auto=True)
 
@@ -498,6 +560,36 @@ class LLMAgent(BaseAgent):
 
                 if call.name == "estimate_hand_probabilities":
                     if not self._handle_estimate(view, call, parsed, emit, turn_id, index, tool_started):
+                        failures += 1
+                        if failures >= self.max_failures:
+                            return self._fallback(
+                                view,
+                                emit,
+                                turn_id,
+                                started,
+                                steps,
+                                usage_total,
+                                reason="连续三次无效动作",
+                            )
+                    continue
+
+                if call.name == "estimate_equity":
+                    if not self._handle_equity(view, call, parsed, emit, turn_id, index, tool_started):
+                        failures += 1
+                        if failures >= self.max_failures:
+                            return self._fallback(
+                                view,
+                                emit,
+                                turn_id,
+                                started,
+                                steps,
+                                usage_total,
+                                reason="连续三次无效动作",
+                            )
+                    continue
+
+                if call.name == "call_ev":
+                    if not self._handle_call_ev(view, call, parsed, emit, turn_id, index, tool_started):
                         failures += 1
                         if failures >= self.max_failures:
                             return self._fallback(
@@ -775,6 +867,232 @@ class LLMAgent(BaseAgent):
             summary=summary,
         )
         return True
+
+    def _handle_equity(
+        self,
+        view: AgentView,
+        call: ToolCall,
+        parsed: Optional[dict],
+        emit,
+        turn_id: str,
+        index: int,
+        started: float,
+    ) -> bool:
+        if parsed is None or not isinstance(parsed, dict):
+            self._append_tool_error(
+                call,
+                f"工具参数不是合法 JSON：{call.arguments[:300]}",
+                emit,
+                turn_id,
+                index,
+            )
+            return False
+        try:
+            result = self._compute_equity(view)
+        except EquityBudgetError as exc:
+            self._append_tool_error(call, str(exc), emit, turn_id, index)
+            return False
+        except Exception as exc:  # noqa: BLE001
+            self._append_tool_error(
+                call,
+                f"胜率计算失败：{exc}",
+                emit,
+                turn_id,
+                index,
+            )
+            return True
+
+        payload = {"ok": True, "street": view.street, **result.to_llm_dict()}
+        summary = (
+            f"equity {result.equity * 100:.1f}% · "
+            f"胜 {result.win_rate * 100:.1f}% / 平 {result.tie_rate * 100:.1f}%"
+        )
+        self._append_tool_result(
+            call,
+            payload,
+            emit,
+            turn_id,
+            index,
+            started,
+            ui_result={"ok": True, "street": view.street, **result.to_dict()},
+            summary=summary,
+        )
+        return True
+
+    def _handle_call_ev(
+        self,
+        view: AgentView,
+        call: ToolCall,
+        parsed: Optional[dict],
+        emit,
+        turn_id: str,
+        index: int,
+        started: float,
+    ) -> bool:
+        if parsed is None or not isinstance(parsed, dict):
+            self._append_tool_error(
+                call,
+                f"工具参数不是合法 JSON：{call.arguments[:300]}",
+                emit,
+                turn_id,
+                index,
+            )
+            return False
+
+        if view.to_call <= 0 or view.call_amount <= 0 or "call" not in view.legal_actions:
+            if view.to_call <= 0:
+                reason = "当前 to_call=0，跟注不合法；请使用 check 或 bet。"
+            elif view.call_amount <= 0:
+                reason = "你没有可跟注的筹码；请选择 fold 或 all_in。"
+            else:
+                reason = "当前行动不包含 call；请查看合法动作。"
+            payload = {
+                "ok": True,
+                "applicable": False,
+                "reason": reason,
+                "street": view.street,
+                "pot": view.pot,
+                "to_call": view.to_call,
+                "call_amount": view.call_amount,
+                "legal_actions": list(view.legal_actions),
+            }
+            self._append_tool_result(
+                call,
+                payload,
+                emit,
+                turn_id,
+                index,
+                started,
+                summary=reason,
+            )
+            return True
+
+        equity_result: Optional[EquityResult] = None
+        equity_source = "model"
+        raw_equity = parsed.get("equity")
+        if raw_equity is None:
+            try:
+                equity_result = self._compute_equity(view)
+            except EquityBudgetError as exc:
+                self._append_tool_error(call, str(exc), emit, turn_id, index)
+                return False
+            except Exception as exc:  # noqa: BLE001
+                self._append_tool_error(
+                    call,
+                    f"胜率估算失败：{exc}",
+                    emit,
+                    turn_id,
+                    index,
+                )
+                return True
+            equity = equity_result.equity
+            equity_source = "internal"
+        else:
+            try:
+                equity = float(raw_equity)
+            except (TypeError, ValueError):
+                self._append_tool_error(
+                    call,
+                    "equity 必须是 0 到 1 之间的小数；例如 63.2% 请写 0.632。",
+                    emit,
+                    turn_id,
+                    index,
+                )
+                return False
+            if not math.isfinite(equity) or not 0.0 <= equity <= 1.0:
+                self._append_tool_error(
+                    call,
+                    "equity 必须是 0 到 1 之间的小数；例如 63.2% 请写 0.632。",
+                    emit,
+                    turn_id,
+                    index,
+                )
+                return False
+
+        try:
+            calc = analyze_call(view.pot, view.to_call, view.my_chips, equity)
+        except Exception as exc:  # noqa: BLE001
+            self._append_tool_error(
+                call,
+                f"跟注 EV 计算失败：{exc}",
+                emit,
+                turn_id,
+                index,
+            )
+            return True
+
+        payload = {
+            "ok": True,
+            "equity_source": equity_source,
+            "street": view.street,
+            **calc.to_llm_dict(),
+        }
+        ui_result = {
+            "ok": True,
+            "equity_source": equity_source,
+            "street": view.street,
+            **calc.to_dict(),
+        }
+        if equity_result is not None:
+            payload.update(
+                {
+                    "equity_method": equity_result.method,
+                    "equity_samples": equity_result.samples,
+                    "equity_std_error": round(equity_result.std_error, 4),
+                }
+            )
+            ui_result.update(
+                {
+                    "equity_method": equity_result.method,
+                    "equity_samples": equity_result.samples,
+                    "equity_std_error": equity_result.std_error,
+                    "equity_cached": equity_result.cached,
+                }
+            )
+        else:
+            payload["equity_method"] = "model"
+            ui_result["equity_method"] = "model"
+
+        summary = (
+            f"EV {calc.ev_call:+.1f} · 临界 {calc.breakeven_equity * 100:.1f}% · "
+            f"你的 {equity * 100:.1f}%"
+        )
+        self._append_tool_result(
+            call,
+            payload,
+            emit,
+            turn_id,
+            index,
+            started,
+            ui_result=ui_result,
+            summary=summary,
+        )
+        return True
+
+    def _compute_equity(self, view: AgentView) -> EquityResult:
+        if self._equity_calls_this_turn >= self.max_equity_calls:
+            raise EquityBudgetError(
+                f"本回合调用 equity 的次数已达上限（{self.max_equity_calls} 次），"
+                "请直接提交 apply_action。"
+            )
+        remaining = self.max_equity_iterations - self._equity_iterations_this_turn
+        if remaining < MIN_EQUITY_ITERATIONS:
+            raise EquityBudgetError(
+                "本回合的 equity 采样预算已用完，请直接提交 apply_action。"
+            )
+        iterations = min(DEFAULT_EQUITY_ITERATIONS, remaining)
+        hole = [Card.from_str(code) for code in view.hole_cards]
+        community = [Card.from_str(code) for code in view.community]
+        result = self.equity_analyzer.analyze(
+            hole,
+            community,
+            hero_seat=view.seat,
+            iterations=iterations,
+        )
+        self._equity_calls_this_turn += 1
+        if not result.cached and result.method == "monte_carlo":
+            self._equity_iterations_this_turn += result.samples
+        return result
 
     def _handle_random(
         self,

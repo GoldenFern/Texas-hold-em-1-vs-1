@@ -44,7 +44,7 @@ python scripts/eval_llm_vs_llm.py --hands 100 --workers 5  # LLM vs LLM 工具�
 | 层 | 目录 | 职责 |
 |---|---|---|
 | 引擎 | `src/engine/` | Card/Deck、Treys 评估、双人状态机、动作校验 |
-| 分析 | `src/analysis/` | 最终牌型分布，翻牌后精确枚举，翻前蒙特卡洛，LRU 缓存 |
+| 分析 | `src/analysis/` | 最终牌型分布、单挑 equity、静态跟注 EV；翻牌后精确枚举，翻前蒙特卡洛，LRU 缓存 |
 | Agent | `src/agents/` | `AgentView`（公平信息）、RLCard 适配器、`ProjectBot`（73 维 / 10 动作） |
 | 训练 | `src/training/` | `ProjectHeadsUpEnv`（本项目规则）、73 维观测、10 动作抽象、终端奖励 |
 | LLM | `src/llm/` | Provider/模型元数据、SSE 客户端、Prompt、工具循环 |
@@ -85,13 +85,15 @@ python scripts/eval_llm_vs_llm.py --hands 100 --workers 5  # LLM vs LLM 工具�
 - 每次行动：追加一条 `【牌局更新】` 用户消息，保留完整历史。
 - 工具：
   1. `estimate_hand_probabilities(iterations?)`：返回最终牌型分布（不是胜率）
-  2. `get_random_number()`：返回 `[0, 1)` 均匀随机数；只在分析后仍难以取舍时用于打破僵局，每次调用重新抽取，不能替代估算
-  3. `apply_action(action, amount?)`：`amount` 是 raise-to 总额
+  2. `estimate_equity()`：返回当前摊牌 equity（`胜率 + 平局率/2`），默认对手随机手牌；河牌/转牌精确枚举，翻牌/翻前 20000 次蒙特卡洛
+  3. `get_random_number()`：返回 `[0, 1)` 均匀随机数；只在分析后仍难以取舍时用于打破僵局，每次调用重新抽取，不能替代估算
+  4. `call_ev(equity?)`：用当前底池、跟注额和筹码计算静态跟注 EV；`equity` 省略时自动估算；短码全下用有效底池 `P + 2C - T` 扣除退款
+  5. `apply_action(action, amount?)`：`amount` 是 raise-to 总额
 - 每回合必须调用 `apply_action` 恰好一次；非法则把错误 + 约束 + 合法动作作为 tool 消息回传，让模型重试。
 - 估算工具是可选辅助，默认不强制（`require_estimate_first: false`）。系统提示词和工具描述只说明用途与可选性，不引导也不劝阻调用，由模型自行判断。打开开关后只会在每条街第一次 `apply_action` 前软提醒一次，不计入三次失败；`get_random_number` 不能满足这个开关。
-- 估算工具单回合默认最多 2 次、总采样 50000 次（`config/game.json`），避免阻塞游戏线程。
+- 估算工具单回合默认最多 2 次、总采样 50000 次；equity 工具同样默认 2 次、50000 次（`config/game.json`），避免阻塞游戏线程。`call_ev` 内部估算也计入 equity 预算。
 - `LLMAgent` 支持按座位传入 `tools` 与 `system_prompt`；`select_tools` 只暴露指定工具，未暴露的工具调用会按未知工具拒绝。`require_estimate_each_turn` 要求每次行动前估算一次，`skip_estimate_on_complete_board` 让河牌圈免于该要求。
-- `scripts/eval_llm_vs_llm.py` 做 LLM 对 LLM 的工具使用对照：对照组只有 `apply_action`，工具组有估算/随机/行动并要求河牌前逐回合估算；输出在 `tmp/llm_vs_llm/`。
+- `scripts/eval_llm_vs_llm.py` 做 LLM 对 LLM 的工具使用对照：对照组只有 `apply_action`，工具组按 `ALL_TOOL_NAMES` 提供牌型分布/胜率/随机/跟注 EV/行动，并要求河牌前逐回合估算；输出在 `tmp/llm_vs_llm/`。
 - 上下文预算会计入 `reasoning_content`、工具名、参数和 tool id；每轮模型调用前都会重新检查并裁剪。
 - `LLMAgent.cancel()` 会设置取消标记，客户端在每次流式读取前检查，旧比赛不会继续烧模型调用。
 - 厂商 4xx 文本在进入 `LLMError` 前会脱敏，`last_error`、状态快照和 `/api/llm/test` 都不能包含 Key。
@@ -147,7 +149,7 @@ python scripts/eval_llm_vs_llm.py --hands 100 --workers 5  # LLM vs LLM 工具�
 ## 测试 / 质量
 
 - 引擎随机 60 手筹码守恒在 `tests/test_engine.py`。
-- 牌型分布精确/蒙特卡洛在 `tests/test_analysis.py`。
+- 牌型分布精确/蒙特卡洛在 `tests/test_analysis.py`；equity 与 `call_ev` 在 `tests/test_equity.py`、`tests/test_pot_odds.py`。
 - LLM vs Bot 离线评测：`scripts/eval_llm_vs_bot.py`，每手独立、可并发、同牌换座，输出到 `tmp/llm_eval/`。默认对手是 `nlh_dqn_project.pth`（20k 手矩阵里最强的项目 Bot）。
 - LLM 工具循环用 `FakeClient`，不要依赖真实 API Key。
 - LLM 客户端流式解析、脱敏、降级、断线和取消在 `tests/test_llm_client.py`，不发起真实请求。
@@ -167,7 +169,7 @@ python scripts/eval_llm_vs_llm.py --hands 100 --workers 5  # LLM vs LLM 工具�
 ## 当前取舍
 
 - 单桌、内存态；不做账号/持久化/多房间。
-- 只做牌型分布一个可视化；胜率/EV/范围推断留到后续。
+- 可视化保留牌型分布，加上胜率/跟注 EV 工具卡；对手范围推断留到后续。equity 默认对随机手牌，结果必须标明这个假设。
 - RLCard 默认 RandomAgent；模型需要用户训练。短训练 DQN 可能退化为全下，不要把它当作“强 Bot”。
 - 不做人类 vs 人类；UI 会阻止。
 - 前端构建产物不入库，`start.bat` / README 会提示构建。

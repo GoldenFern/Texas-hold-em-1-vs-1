@@ -24,6 +24,8 @@
     "skip_estimate_on_complete_board": false,
     "max_estimate_calls_per_turn": 2,
     "max_estimate_iterations": 50000,
+    "max_equity_calls_per_turn": 2,
+    "max_equity_iterations": 50000,
     "max_context_tokens_estimate": 220000,
     "request_timeout_seconds": 300,
     "connect_timeout_seconds": 20

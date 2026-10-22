@@ -7,8 +7,10 @@ import type { ToolView } from "../types";
 const props = defineProps<{ tool: ToolView }>();
 
 const isEstimate = computed(() => props.tool.name === "estimate_hand_probabilities");
+const isEquity = computed(() => props.tool.name === "estimate_equity");
 const isAction = computed(() => props.tool.name === "apply_action");
 const isRandom = computed(() => props.tool.name === "get_random_number");
+const isCallEv = computed(() => props.tool.name === "call_ev");
 const parsed = computed<Record<string, unknown>>(() => {
   if (props.tool.parsed) return props.tool.parsed;
   try {
@@ -36,6 +38,26 @@ const method = computed(() => result.value.method || "");
 const samples = computed(() => Number(result.value.total || result.value.samples || 0));
 const elapsed = computed(() => Number(result.value.elapsed_ms || 0));
 const bestKey = computed(() => currentBest.value?.category || "");
+const equityRate = computed(() => Number(result.value.equity || 0));
+const winRate = computed(() => Number(result.value.win || 0));
+const tieRate = computed(() => Number(result.value.tie || 0));
+const loseRate = computed(() => Number(result.value.lose || 0));
+const stdError = computed(() => Number(result.value.std_error || 0));
+const evCall = computed(() => Number(result.value.ev_call || 0));
+const breakeven = computed(() => Number(result.value.breakeven_equity || 0));
+const callAmount = computed(() => Number(result.value.call_amount || 0));
+const effectivePot = computed(() => Number(result.value.effective_pot || 0));
+const equitySource = computed(() => String(result.value.equity_source || "internal"));
+const equityMethod = computed(() => String(result.value.equity_method || result.value.method || ""));
+const streetLabel = computed(() => {
+  const labels: Record<string, string> = {
+    preflop: "翻前",
+    flop: "翻牌",
+    turn: "转牌",
+    river: "河牌",
+  };
+  return labels[String(result.value.street || "")] || "";
+});
 const action = computed(() => String(parsed.value.action || result.value.action || ""));
 const amount = computed(() => Number(parsed.value.amount || result.value.amount || 0));
 const errorText = computed(() => String(result.value.error || props.tool.summary || ""));
@@ -54,14 +76,40 @@ const statusLabel = computed(() => {
   if (props.tool.status === "error") return "失败";
   return "完成";
 });
+const variant = computed(() => {
+  if (isEstimate.value) return "estimate";
+  if (isEquity.value) return "equity";
+  if (isAction.value) return "action";
+  if (isRandom.value) return "random";
+  if (isCallEv.value) return "call-ev";
+  return "generic";
+});
 const icon = computed(() =>
-  isEstimate.value ? "chart" : isAction.value ? "zap" : isRandom.value ? "dice" : "wrench",
+  isEstimate.value || isEquity.value
+    ? "chart"
+    : isAction.value
+      ? "zap"
+      : isRandom.value
+        ? "dice"
+        : isCallEv.value
+          ? "coins"
+          : "wrench",
 );
 const title = computed(() =>
-  isEstimate.value ? "牌型概率" : isAction.value ? "执行动作" : isRandom.value ? "随机数" : props.tool.name || "工具",
+  isEstimate.value
+    ? "牌型概率"
+    : isEquity.value
+      ? "胜率估算"
+      : isAction.value
+        ? "执行动作"
+        : isRandom.value
+          ? "随机数"
+          : isCallEv.value
+            ? "跟注 EV"
+            : props.tool.name || "工具",
 );
 const detail = computed(() => {
-  if (isEstimate.value) {
+  if (isEstimate.value || isEquity.value) {
     if (method.value === "exact") return `精确枚举 · ${samples.value.toLocaleString()} 种`;
     if (method.value === "monte_carlo") return `蒙特卡洛 · ${samples.value.toLocaleString()} 次`;
     return "计算中…";
@@ -72,6 +120,10 @@ const detail = computed(() => {
   }
   if (isRandom.value) {
     return randomValue.value !== null ? randomValue.value.toFixed(4) : "0 ≤ x < 1";
+  }
+  if (isCallEv.value) {
+    if (result.value.applicable === false) return "当前不适用";
+    return `EV ${evCall.value > 0 ? "+" : ""}${evCall.value.toFixed(1)}`;
   }
   return props.tool.name || "";
 });
@@ -111,10 +163,20 @@ function barWidth(item: any): string {
   const value = Number(item?.probability || 0);
   return `${Math.max(value > 0 ? 2 : 0, Math.min(100, value * 100))}%`;
 }
+
+function pctWidth(value: number): string {
+  if (!Number.isFinite(value)) return "0%";
+  return `${Math.max(0, Math.min(100, value * 100))}%`;
+}
+
+function percent(value: number): string {
+  if (!Number.isFinite(value)) return "—";
+  return `${(value * 100).toFixed(1)}%`;
+}
 </script>
 
 <template>
-  <details class="tool-card" :class="[isEstimate ? 'estimate' : isAction ? 'action' : isRandom ? 'random' : 'generic', tool.status]" open>
+  <details class="tool-card" :class="[variant, tool.status]" open>
     <summary class="tool-head">
       <span class="tool-icon"><AppIcon :name="icon" :size="13" /></span>
       <span class="tool-title">{{ title }}</span>
@@ -171,6 +233,89 @@ function barWidth(item: any): string {
           </div>
         </div>
         <div v-else class="empty-result">没有可展示的分布。</div>
+      </div>
+
+      <!-- Equity result -->
+      <div v-else-if="isEquity" class="equity-block">
+        <div v-if="tool.status === 'error'" class="generic-error">
+          <AppIcon name="alert" :size="13" />
+          {{ errorText || "胜率计算失败" }}
+        </div>
+        <template v-else>
+          <div class="equity-readout">
+            <div class="equity-main">
+              <span class="equity-value mono">{{ percent(equityRate) }}</span>
+              <span class="equity-caption">摊牌 equity</span>
+            </div>
+            <div class="equity-meta">
+              <span class="chip gold">{{ method === "exact" ? "精确枚举" : method === "monte_carlo" ? "蒙特卡洛" : "计算中" }}</span>
+              <span v-if="samples" class="mono faint">{{ samples.toLocaleString() }} {{ method === "exact" ? "种" : "次" }}</span>
+              <span v-if="result.cached" class="chip">缓存</span>
+            </div>
+          </div>
+          <div class="equity-bar">
+            <span class="equity-seg win" :style="{ width: pctWidth(winRate) }"></span>
+            <span class="equity-seg tie" :style="{ width: pctWidth(tieRate) }"></span>
+            <span class="equity-seg lose" :style="{ width: pctWidth(loseRate) }"></span>
+          </div>
+          <div class="equity-legend">
+            <span><i class="dot win"></i>胜 {{ percent(winRate) }}</span>
+            <span><i class="dot tie"></i>平 {{ percent(tieRate) }}</span>
+            <span><i class="dot lose"></i>负 {{ percent(loseRate) }}</span>
+            <span class="faint">对手随机 · {{ streetLabel }}</span>
+          </div>
+          <div v-if="stdError > 0" class="equity-note">
+            采样误差约 ±{{ percent(stdError * 1.96) }}（95%）
+          </div>
+        </template>
+      </div>
+
+      <!-- Call EV result -->
+      <div v-else-if="isCallEv" class="callev-block">
+        <div v-if="tool.status === 'error'" class="generic-error">
+          <AppIcon name="alert" :size="13" />
+          {{ errorText || "跟注 EV 计算失败" }}
+        </div>
+        <div v-else-if="result.applicable === false" class="callev-na">
+          <AppIcon name="alert" :size="13" />
+          <span>{{ result.reason || "当前不适用" }}</span>
+        </div>
+        <template v-else>
+          <div class="callev-readout">
+            <span class="callev-value mono" :class="{ positive: evCall > 0, negative: evCall < 0 }">
+              {{ evCall > 0 ? "+" : "" }}{{ evCall.toFixed(1) }}
+            </span>
+            <span class="callev-caption">跟注 EV</span>
+            <span class="chip" :class="evCall > 0 ? 'gold' : evCall < 0 ? 'red' : ''">
+              {{ evCall > 0 ? "正期望" : evCall < 0 ? "负期望" : "盈亏平衡" }}
+            </span>
+            <span class="chip">{{ equitySource === "model" ? "模型传入" : "内部估算" }}</span>
+            <span v-if="streetLabel" class="chip">{{ streetLabel }}</span>
+          </div>
+          <div class="callev-grid">
+            <span>底池 <strong class="mono">{{ chips(Number(result.pot || 0)) }}</strong></span>
+            <span>跟注 <strong class="mono">{{ chips(Number(callAmount)) }}</strong></span>
+            <span>有效底池 <strong class="mono">{{ chips(Number(effectivePot)) }}</strong></span>
+            <span>临界胜率 <strong class="mono">{{ percent(breakeven) }}</strong></span>
+            <span>你的胜率 <strong class="mono">{{ percent(equityRate) }}</strong></span>
+            <span>底池赔率 <strong class="mono">{{ result.pot_to_call_ratio ? `${Number(result.pot_to_call_ratio).toFixed(2)} : 1` : "—" }}</strong></span>
+          </div>
+          <div class="callev-compare">
+            <div class="compare-track">
+              <span class="compare-fill" :style="{ width: pctWidth(equityRate) }"></span>
+              <span class="compare-marker" :style="{ left: pctWidth(breakeven) }"></span>
+            </div>
+            <div class="compare-scale mono">
+              <span>0</span>
+              <span>临界 {{ percent(breakeven) }}</span>
+              <span>100%</span>
+            </div>
+          </div>
+          <div v-if="equityMethod && equityMethod !== 'model'" class="callev-note mono">
+            {{ equityMethod === "exact" ? "精确" : "采样" }} {{ Number(result.equity_samples || 0).toLocaleString() }}
+          </div>
+          <div class="callev-note">{{ result.note || "静态跟注 EV，假设后续不再下注。" }}</div>
+        </template>
       </div>
 
       <!-- Action result -->
@@ -272,8 +417,10 @@ function barWidth(item: any): string {
 }
 
 .tool-card.estimate { border-left-color: rgba(232, 195, 122, 0.55); }
+.tool-card.equity { border-left-color: rgba(232, 195, 122, 0.55); }
 .tool-card.action { border-left-color: rgba(84, 214, 168, 0.5); }
 .tool-card.random { border-left-color: rgba(121, 169, 255, 0.55); }
+.tool-card.call-ev { border-left-color: rgba(121, 169, 255, 0.55); }
 .tool-card.action.error { border-left-color: rgba(226, 112, 95, 0.6); }
 .tool-card.running { border-left-color: rgba(121, 169, 255, 0.55); }
 .tool-card:hover { background: rgba(255, 255, 255, 0.035); }
@@ -296,9 +443,11 @@ function barWidth(item: any): string {
   flex: none;
 }
 
-.tool-card.estimate .tool-icon { color: var(--gold); }
+.tool-card.estimate .tool-icon,
+.tool-card.equity .tool-icon { color: var(--gold); }
 .tool-card.action .tool-icon { color: var(--emerald); }
-.tool-card.random .tool-icon { color: var(--blue); }
+.tool-card.random .tool-icon,
+.tool-card.call-ev .tool-icon { color: var(--blue); }
 .tool-card.action.error .tool-icon { color: var(--red); }
 
 .tool-title {
@@ -476,6 +625,169 @@ function barWidth(item: any): string {
   padding: 0 1px;
   font-size: calc(8px * var(--type-scale));
   color: var(--faint);
+}
+
+.equity-block,
+.callev-block {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 4px 0 1px;
+}
+
+.equity-readout,
+.callev-readout {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.equity-value {
+  font-size: calc(22px * var(--type-scale));
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.01em;
+  line-height: 1.05;
+}
+
+.equity-caption,
+.callev-caption {
+  font-size: calc(9px * var(--type-scale));
+  color: var(--faint);
+}
+
+.equity-meta {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: calc(8.5px * var(--type-scale));
+}
+
+.equity-meta .chip {
+  padding: 2px 6px;
+  font-size: calc(8px * var(--type-scale));
+}
+
+.equity-bar {
+  display: flex;
+  height: 6px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.equity-seg {
+  height: 100%;
+  transition: width 0.45s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+.equity-seg.win { background: var(--emerald); }
+.equity-seg.tie { background: var(--gold); }
+.equity-seg.lose { background: rgba(226, 112, 95, 0.75); }
+
+.equity-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  font-size: calc(9px * var(--type-scale));
+  color: var(--muted);
+}
+
+.equity-legend .dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  margin-right: 3px;
+  vertical-align: middle;
+}
+
+.dot.win { background: var(--emerald); }
+.dot.tie { background: var(--gold); }
+.dot.lose { background: rgba(226, 112, 95, 0.75); }
+
+.equity-note,
+.callev-note {
+  font-size: calc(8.5px * var(--type-scale));
+  color: var(--faint);
+  line-height: 1.45;
+}
+
+.callev-value {
+  font-size: calc(22px * var(--type-scale));
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.01em;
+  line-height: 1.05;
+}
+
+.callev-value.positive { color: var(--emerald); }
+.callev-value.negative { color: var(--red); }
+
+.callev-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: calc(9px * var(--type-scale));
+  color: var(--faint);
+}
+
+.callev-grid strong {
+  color: var(--text-soft);
+  font-weight: 600;
+}
+
+.callev-compare {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 1px;
+}
+
+.compare-track {
+  position: relative;
+  height: 5px;
+  margin: 2px 4px 0;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.compare-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 99px;
+  background: rgba(84, 214, 168, 0.55);
+}
+
+.compare-marker {
+  position: absolute;
+  top: 50%;
+  width: 3px;
+  height: 11px;
+  border-radius: 2px;
+  background: var(--gold);
+  box-shadow: 0 0 6px rgba(232, 195, 122, 0.55);
+  transform: translate(-50%, -50%);
+}
+
+.compare-scale {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 1px;
+  font-size: calc(8px * var(--type-scale));
+  color: var(--faint);
+}
+
+.callev-na {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: calc(10.5px * var(--type-scale));
+  color: var(--gold);
+  line-height: 1.5;
 }
 
 .action-ok {

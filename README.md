@@ -3,8 +3,8 @@
 一个专门为 **单挑（Heads-Up）无限注德州扑克** 做的实验台：人类、LLM、RLCard 三者任选其二上桌。它把重点放在把 LLM 的**思考、工具调用、参数与结果**完整地摊开在牌桌旁边。
 
 - 游戏引擎：严格双人规则，Treys 牌力评估
-- Agent：每次行动发一条新的牌局消息，保留上下文；三个工具：牌型概率 + 随机数 + 执行动作
-- 可视化：实时思考流、工具卡片、Token/延迟、最终牌型分布
+- Agent：每次行动发一条新的牌局消息，保留上下文；五个工具：牌型概率 + 胜率 + 随机数 + 跟注 EV + 执行动作
+- 可视化：实时思考流、工具卡片、Token/延迟、最终牌型分布、胜率/跟注 EV
 - 上帝视角：双方底牌、烧牌、完整牌堆
 - LLM：DeepSeek / 火山引擎 / MiniMax / Qwen / 智谱 GLM / Kimi / LongCat
 - Bot：RLCard（RandomAgent 开箱可用，支持加载 DQN/NFSP/DMC checkpoint）
@@ -97,13 +97,15 @@ cd frontend && npm run dev     # 终端 2，:5173，代理到 :5050
 
 1. 追加一条新的 `【牌局更新】` 用户消息，包含底牌、公共牌、底池、双方筹码、需跟注、最小/最大加注、合法动作、本手行动历史、最近几手结果。
 2. Agent 保留之前的完整对话（跨手牌、跨街道）。上下文过长时按“回合边界”压缩最早的回合，保留系统提示与最近回合。
-3. `estimate_hand_probabilities` 是可选工具。默认不强制；打开 `require_estimate_first` 后，每条街第一次 `apply_action` 前会软提醒一次（不计入失败）。
-4. 如果分析后仍难以在几个接近的方案中取舍，Agent 可以调用 `get_random_number` 抽一个 `[0, 1)` 随机数。它只是打破僵局的备选方案，不能替代分析。
-5. `apply_action` 合法就进入下一回合；不合法会把错误、最新约束和合法动作回传给模型，让它重试。
-6. 连续三次无效动作：自动 **call**；无法 call 则 **fold**。网络/超时等非动作失败则优先 check/call，避免无意义弃牌。
-7. 厂商要求回传 `reasoning_content` 的（DeepSeek / Qwen / MiniMax / Kimi / GLM 等）会原样回传；不支持的可选参数在 400 时会自动降级重试。
+3. `estimate_hand_probabilities` 是可选工具，返回最终牌型分布。默认不强制；打开 `require_estimate_first` 后，每条街第一次 `apply_action` 前会软提醒一次（不计入失败）。
+4. `estimate_equity` 返回当前摊牌 equity（`胜率 + 平局率/2`），默认假设对手随机手牌。河牌和转牌精确枚举，翻牌和翻前各 20000 次蒙特卡洛，并走 LRU 缓存。
+5. `call_ev` 用当前底池、跟注额和筹码计算静态跟注 EV。`equity` 参数可以省略，省略时自动估算；短码全下会先扣掉对手匹配不上的退款。
+6. 如果分析后仍难以在几个接近的方案中取舍，Agent 可以调用 `get_random_number` 抽一个 `[0, 1)` 随机数。它只是打破僵局的备选方案，不能替代分析。
+7. `apply_action` 合法就进入下一回合；不合法会把错误、最新约束和合法动作回传给模型，让它重试。
+8. 连续三次无效动作：自动 **call**；无法 call 则 **fold**。网络/超时等非动作失败则优先 check/call，避免无意义弃牌。
+9. 厂商要求回传 `reasoning_content` 的（DeepSeek / Qwen / MiniMax / Kimi / GLM 等）会原样回传；不支持的可选参数在 400 时会自动降级重试。
 
-三个工具的协议见 [`docs/protocol.md`](docs/protocol.md)。
+五个工具的协议见 [`docs/protocol.md`](docs/protocol.md)。
 
 ### 离线 LLM 对 LLM 评测
 
@@ -113,11 +115,11 @@ cd frontend && npm run dev     # 终端 2，:5173，代理到 :5050
 python scripts/eval_llm_vs_llm.py --hands 100 --workers 5
 ```
 
-默认对照组只有 `apply_action`，工具组额外有 `estimate_hand_probabilities` 与 `get_random_number`，并要求公共牌少于五张时每次行动前至少估算一次。每手独立重置筹码，同牌换座，结果写到 `tmp/llm_vs_llm/`。
+默认对照组只有 `apply_action`，工具组按 `ALL_TOOL_NAMES` 提供 `estimate_hand_probabilities`、`estimate_equity`、`get_random_number`、`call_ev` 与 `apply_action`，并要求公共牌少于五张时每次行动前至少估算一次。每手独立重置筹码，同牌换座，结果写到 `tmp/llm_vs_llm/`。
 
 ### 数据分析
 
-目前只做一个可视化：**最终最佳五张牌的牌型分布**（皇家同花顺、同花顺、四条、葫芦、同花、顺子、三条、两对、一对、高牌）。
+牌型分布工具显示**最终最佳五张牌的牌型分布**（皇家同花顺、同花顺、四条、葫芦、同花、顺子、三条、两对、一对、高牌）；胜率工具显示胜/平/负和采样误差，跟注 EV 工具显示 EV、盈亏平衡胜率和有效底池。
 
 - 翻牌前：蒙特卡洛（默认 30,000 次）
 - 翻牌：精确枚举 C(47,2)=1,081 种
