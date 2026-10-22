@@ -178,11 +178,12 @@ def test_table_talk_records_event_and_delivers_once() -> None:
         receiver = 1 - sender
         result = session._record_table_talk(0, sender, "  我这次\n不会再让你便宜看牌。  ", "turn-1")
         assert result["ok"] is True
-        assert result["remaining_hand"] == 5
+        assert result["remaining_turn"] == 0
         entry = result["entry"]
         assert entry["text"] == "我这次 不会再让你便宜看牌。"
         assert entry["seat"] == sender
         assert entry["hand_id"] == game.hand_id
+        assert entry["kind"] == "turn"
 
         talk_events = [
             args[1]
@@ -205,19 +206,36 @@ def test_table_talk_records_event_and_delivers_once() -> None:
         session.shutdown()
 
 
-def test_table_talk_rejects_non_actor_and_enforces_hand_quota() -> None:
+def test_table_talk_rejects_non_actor_and_enforces_turn_quota() -> None:
     session, game = make_table_talk_session()
     try:
         sender = game.actor
         assert sender is not None
-        for _ in range(6):
-            assert session._record_table_talk(0, sender, "施压。", "turn")["ok"] is True
-        blocked = session._record_table_talk(0, sender, "再说一句。", "turn")
+        assert session._record_table_talk(0, sender, "施压。", "turn-1")["ok"] is True
+        blocked = session._record_table_talk(0, sender, "再说一句。", "turn-1")
         assert blocked["ok"] is False
         assert "上限" in blocked["error"]
-        wrong_turn = session._record_table_talk(0, 1 - sender, "抢话。", "turn")
+        assert session._record_table_talk(0, sender, "下一回合。", "turn-2")["ok"] is True
+        wrong_turn = session._record_table_talk(0, 1 - sender, "抢话。", "turn-1")
         assert wrong_turn["ok"] is False
         assert "没有轮到" in wrong_turn["error"]
+    finally:
+        session.shutdown()
+
+
+def test_final_table_talk_is_one_per_seat_and_marked() -> None:
+    session, game = make_table_talk_session()
+    try:
+        sender = game.actor
+        assert sender is not None
+        game.match_over = True
+        result = session._record_final_table_talk(0, sender, "这局打得不错，下次可没这么好运。")
+        assert result["ok"] is True
+        assert result["entry"]["kind"] == "final"
+        assert result["entry"]["street"] == "finished"
+        assert session._record_final_table_talk(0, sender, "再说一句。")["ok"] is False
+        snapshot = session._snapshot_locked()
+        assert snapshot["table_talk"][-1]["kind"] == "final"
     finally:
         session.shutdown()
 

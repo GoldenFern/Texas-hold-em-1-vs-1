@@ -26,6 +26,7 @@ from .client import LLMClient, LLMError, ToolCall, estimate_tokens
 from .prompt import (
     SYSTEM_PROMPT,
     TABLE_TALK_TOOL_NAME,
+    build_final_table_talk_message,
     build_hand_result_message,
     build_nudge_message,
     build_system_prompt,
@@ -148,11 +149,12 @@ TABLE_TALK_TOOL = {
     "function": {
         "name": TABLE_TALK_TOOL_NAME,
         "description": (
-            "向对手发送一条桌边喊话（心理战），用于施压、误导、试探或掩饰策略。"
+            "每个行动回合必须先调用一次，再调用 apply_action；"
+            "没有喊话的 apply_action 会被系统拒绝。"
+            "向对手说一到两句话，用于施压、误导、试探或掩饰策略。"
             "发送喊话不会结束本回合，之后仍然必须调用 apply_action。"
             "不要主动交代自己的真实底牌；对手无法验证你的话，可以故意诈唬。"
-            "对手的喊话默认不可信。每回合和每手有次数上限，"
-            "工具结果会返回剩余额度。"
+            "对手的喊话默认不可信。每回合最多一条。"
         ),
         "parameters": {
             "type": "object",
@@ -262,9 +264,9 @@ class LLMAgent(BaseAgent):
         self.max_equity_calls = int(runtime.get("max_equity_calls_per_turn", 2))
         self.max_equity_iterations = int(runtime.get("max_equity_iterations", 50000))
         self.table_talk_limits = TableTalkLimits.from_runtime(runtime)
-        self.table_talk_max_per_turn = self.table_talk_limits.max_per_turn
         self.tools = list(tools) if tools is not None else list(TOOLS)
         self.tool_names = {tool["function"]["name"] for tool in self.tools}
+        self.table_talk_required = TABLE_TALK_TOOL_NAME in self.tool_names
         if self.require_estimate_each_turn and "estimate_hand_probabilities" not in self.tool_names:
             raise ValueError("启用每回合估算要求时必须提供 estimate_hand_probabilities 工具")
         self.submit_table_talk = submit_table_talk
@@ -278,7 +280,6 @@ class LLMAgent(BaseAgent):
                 require_estimate_each_turn=self.require_estimate_each_turn,
                 table_talk_max_chars=self.table_talk_limits.max_chars,
                 table_talk_max_per_turn=self.table_talk_limits.max_per_turn,
-                table_talk_max_per_hand=self.table_talk_limits.max_per_hand,
             )
         else:
             self.system_prompt = SYSTEM_PROMPT
@@ -291,7 +292,7 @@ class LLMAgent(BaseAgent):
         self._estimate_iterations_this_turn = 0
         self._equity_calls_this_turn = 0
         self._equity_iterations_this_turn = 0
-        self._talk_calls_this_turn = 0
+        self._talk_count_this_turn = 0
         self._tools_tokens = estimate_tokens(json.dumps(self.tools, ensure_ascii=False))
         self.total_usage = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
         self.last_error = ""
@@ -315,7 +316,7 @@ class LLMAgent(BaseAgent):
         self._estimate_iterations_this_turn = 0
         self._equity_calls_this_turn = 0
         self._equity_iterations_this_turn = 0
-        self._talk_calls_this_turn = 0
+        self._talk_count_this_turn = 0
         self._cancel_event.clear()
 
     def cancel(self) -> None:
@@ -327,6 +328,141 @@ class LLMAgent(BaseAgent):
             return
         text = build_hand_result_message(result, self.seat, self.name)
         self.messages.append({"role": "user", "content": text})
+
+    def final_table_talk(
+        self,
+        result: Optional[dict],
+        submit: Callable[[str], dict],
+        emit,
+    ) -> None:
+        """Ask the model for one optional post-match table-talk message."""
+        if not self.table_talk_required or self._cancel_event.is_set():
+            return
+        prompt = build_final_table_talk_message(result, self.seat, self.name)
+        self.messages.append({"role": "user", "content": prompt})
+        self._trim_context(emit)
+        tools = [TABLE_TALK_TOOL]
+        for attempt in range(2):
+            if self._cancel_event.is_set():
+                return
+            try:
+                response = self.client.stream(
+                    self.spec,
+                    self.messages,
+                    tools,
+                    self.params,
+                    lambda _event: None,
+                    cancel=self._cancel_event.is_set,
+                )
+            except LLMError as exc:
+                emit(
+                    {
+                        "type": "note",
+                        "level": "warn",
+                        "text": f"赛后喊话没有生成：{exc.kind}",
+                    }
+                )
+                return
+            except Exception as exc:  # noqa: BLE001
+                emit(
+                    {
+                        "type": "note",
+                        "level": "warn",
+                        "text": f"赛后喊话失败：{type(exc).__name__}: {exc}",
+                    }
+                )
+                return
+            self.last_error = ""
+            for key in self.total_usage:
+                self.total_usage[key] += int(response.usage.get(key, 0))
+            self.messages.append(
+                response.assistant_message(
+                    bool(self.spec.request.get("reasoning_echo", False))
+                )
+            )
+            talk_call: Optional[ToolCall] = None
+            for item in response.tool_calls:
+                if item.name == TABLE_TALK_TOOL_NAME and talk_call is None:
+                    talk_call = item
+                    continue
+                self.messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": item.id,
+                        "name": item.name,
+                        "content": json.dumps(
+                            {
+                                "ok": False,
+                                "error": "赛后只接受一次 send_table_message，"
+                                "不要调用其他工具。",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    }
+                )
+            if talk_call is not None:
+                parsed = talk_call.parsed_arguments()
+                raw_text = (
+                    parsed.get("text", parsed.get("message"))
+                    if isinstance(parsed, dict)
+                    else None
+                )
+                if isinstance(raw_text, str):
+                    try:
+                        submitted = submit(raw_text)
+                    except Exception as exc:  # noqa: BLE001
+                        submitted = {
+                            "ok": False,
+                            "error": f"{type(exc).__name__}: {exc}",
+                        }
+                    self.messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": talk_call.id,
+                            "name": talk_call.name,
+                            "content": json.dumps(submitted, ensure_ascii=False),
+                        }
+                    )
+                    if submitted.get("ok"):
+                        return
+                    self.messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                f"赛后喊话被拒绝：{submitted.get('error', '未知原因')}。"
+                                "请修正后只调用 send_table_message 一次。"
+                            ),
+                        }
+                    )
+                    continue
+                self.messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": talk_call.id,
+                        "name": talk_call.name,
+                        "content": json.dumps(
+                            {"ok": False, "error": "text 必须是字符串"},
+                            ensure_ascii=False,
+                        ),
+                    }
+                )
+            if attempt == 0:
+                self.messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "请只调用 send_table_message 一次，说一句赛后的话；"
+                            "这是赛后发言，不需要调用 apply_action。"
+                        ),
+                    }
+                )
+        emit(
+            {
+                "type": "note",
+                "level": "warn",
+                "text": "赛后喊话没有生成成功。",
+            }
+        )
 
     def describe(self) -> dict:
         return {
@@ -359,7 +495,7 @@ class LLMAgent(BaseAgent):
         self._estimate_iterations_this_turn = 0
         self._equity_calls_this_turn = 0
         self._equity_iterations_this_turn = 0
-        self._talk_calls_this_turn = 0
+        self._talk_count_this_turn = 0
         if self._cancel_event.is_set():
             return Action(view.seat, ActionType.FOLD, source="llm", auto=True)
 
@@ -379,7 +515,10 @@ class LLMAgent(BaseAgent):
                 "table_talk_received": len(view.table_talk),
             }
         )
-        turn_message = build_turn_message(view)
+        turn_message = build_turn_message(
+            view,
+            require_table_talk=self.table_talk_required,
+        )
         self.messages.append({"role": "user", "content": turn_message})
         emit({"type": "turn_state", "turn_id": turn_id, "text": turn_message})
         self._trim_context(emit)
@@ -562,7 +701,12 @@ class LLMAgent(BaseAgent):
                         usage_total,
                         reason="连续多次没有提交动作",
                     )
-                self.messages.append({"role": "user", "content": build_nudge_message()})
+                self.messages.append(
+                    {
+                        "role": "user",
+                        "content": build_nudge_message(self.table_talk_required),
+                    }
+                )
                 continue
 
             chosen: Optional[Action] = None
@@ -706,6 +850,18 @@ class LLMAgent(BaseAgent):
                                 usage_total,
                                 reason="连续三次无效动作",
                             )
+                        continue
+
+                    if self.table_talk_required and self._talk_count_this_turn == 0:
+                        self._append_tool_error(
+                            call,
+                            "本回合必须先调用 send_table_message 至少一次，"
+                            "再调用 apply_action。没有喊话的动作会被拒绝。",
+                            emit,
+                            turn_id,
+                            index,
+                            extra={"required_tool": TABLE_TALK_TOOL_NAME},
+                        )
                         continue
 
                     street_key = (view.hand_id, view.street)
@@ -1202,7 +1358,7 @@ class LLMAgent(BaseAgent):
         index: int,
         started: float,
     ) -> bool:
-        """Handle one optional table-talk call without blocking the action."""
+        """Handle the mandatory per-turn table-talk call."""
         if self.submit_table_talk is None:
             self._append_tool_error(
                 call,
@@ -1212,20 +1368,16 @@ class LLMAgent(BaseAgent):
                 index,
             )
             return True
-        if self._talk_calls_this_turn >= self.table_talk_max_per_turn:
+        if self._talk_count_this_turn >= self.table_talk_limits.max_per_turn:
             self._append_tool_error(
                 call,
-                f"本回合喊话次数已达上限（{self.table_talk_max_per_turn} 次），"
-                "请直接提交 apply_action。",
+                f"本回合喊话次数已达上限（{self.table_talk_limits.max_per_turn} 条），"
+                "请直接调用 apply_action。",
                 emit,
                 turn_id,
                 index,
-                extra={"remaining_turn": 0, "max_chars": self.table_talk_limits.max_chars},
             )
             return True
-
-        self._talk_calls_this_turn += 1
-        remaining_turn = max(0, self.table_talk_max_per_turn - self._talk_calls_this_turn)
         if parsed is None or not isinstance(parsed, dict):
             self._append_tool_error(
                 call,
@@ -1233,18 +1385,16 @@ class LLMAgent(BaseAgent):
                 emit,
                 turn_id,
                 index,
-                extra={"remaining_turn": remaining_turn},
             )
             return True
         raw_text = parsed.get("text", parsed.get("message"))
         if not isinstance(raw_text, str):
             self._append_tool_error(
                 call,
-                "text 必须是字符串，例如 {\"text\": \"我这次不会再让你便宜看牌。\"}",
+                "text 必须是字符串，例如 {\"text\": \"这手我可不会轻易让你看牌。\"}",
                 emit,
                 turn_id,
                 index,
-                extra={"remaining_turn": remaining_turn},
             )
             return True
 
@@ -1257,7 +1407,6 @@ class LLMAgent(BaseAgent):
                 emit,
                 turn_id,
                 index,
-                extra={"remaining_turn": remaining_turn},
             )
             return True
         if not isinstance(result, dict):
@@ -1270,19 +1419,14 @@ class LLMAgent(BaseAgent):
                 turn_id,
                 index,
                 extra={
-                    "remaining_turn": remaining_turn,
-                    "remaining_hand": result.get("remaining_hand"),
+                    "remaining_turn": result.get("remaining_turn"),
                     "max_chars": self.table_talk_limits.max_chars,
                 },
             )
             return True
 
+        self._talk_count_this_turn += 1
         payload = dict(result)
-        payload["remaining_turn"] = remaining_turn
-        remaining_hand = payload.get("remaining_hand")
-        summary = f"已喊话 · 本回合剩 {remaining_turn} 条"
-        if remaining_hand is not None:
-            summary += f" · 本手剩 {remaining_hand} 条"
         self._append_tool_result(
             call,
             payload,
@@ -1291,7 +1435,7 @@ class LLMAgent(BaseAgent):
             index,
             started,
             ui_result=payload,
-            summary=summary,
+            summary="已喊话 · 本回合硬性要求已完成",
         )
         return True
 
@@ -1509,3 +1653,4 @@ __all__ = [
     "TOOL_SCHEMAS",
     "select_tools",
 ]
+

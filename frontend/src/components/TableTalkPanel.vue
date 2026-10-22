@@ -50,7 +50,7 @@ function seatIcon(entry: TableTalkEntry): string {
     <div v-if="!entries.length" class="talk-empty">
       <div class="talk-empty-orb"><AppIcon name="message" :size="22" /></div>
       <strong>还没有人喊话</strong>
-      <p>双方 LLM 可以在自己的回合向对手发一句话，用于施压、误导或掩饰策略。</p>
+      <p>双方 LLM 每个行动回合都会先喊话一次，比赛结束后还会再说一句。</p>
     </div>
 
     <section v-for="group in groups" :key="group.handId" class="talk-group">
@@ -70,7 +70,8 @@ function seatIcon(entry: TableTalkEntry): string {
         <div class="talk-content">
           <div class="talk-meta">
             <strong>{{ seatName(entry) }}</strong>
-            <span class="mono">{{ streetLabel(entry.street) }}</span>
+            <span v-if="entry.kind === 'final'" class="talk-final">赛后</span>
+            <span v-else class="mono">{{ streetLabel(entry.street) }}</span>
           </div>
           <div class="talk-bubble">{{ entry.text }}</div>
         </div>
@@ -221,6 +222,17 @@ function seatIcon(entry: TableTalkEntry): string {
   font-size: calc(9.5px * var(--type-scale));
   color: var(--text-soft);
   font-weight: 700;
+}
+
+.talk-final {
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid rgba(232, 195, 122, 0.34);
+  background: rgba(232, 195, 122, 0.1);
+  color: var(--gold);
+  font-size: calc(7.5px * var(--type-scale));
+  font-weight: 700;
+  letter-spacing: 0.06em;
 }
 
 .talk-bubble {

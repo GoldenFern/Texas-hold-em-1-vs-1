@@ -18,8 +18,7 @@ class TableTalkLimits:
     """Per-match table-talk limits derived from ``config/game.json``."""
 
     max_chars: int = 160
-    max_per_turn: int = 2
-    max_per_hand: int = 6
+    max_per_turn: int = 1
     history_limit: int = 6
     snapshot_limit: int = 40
 
@@ -37,8 +36,7 @@ class TableTalkLimits:
 
         return cls(
             max_chars=value("table_talk_max_chars", 160, 1000),
-            max_per_turn=value("table_talk_max_per_turn", 2, 20),
-            max_per_hand=value("table_talk_max_per_hand", 6, 100),
+            max_per_turn=value("table_talk_max_per_turn", 1, 20),
             history_limit=value("table_talk_history_limit", 6, 30),
             snapshot_limit=value("table_talk_snapshot_limit", 40, 300),
         )

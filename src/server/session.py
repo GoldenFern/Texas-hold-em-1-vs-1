@@ -92,7 +92,8 @@ class GameSession:
         )
         self._table_talk_seq = 0
         self._table_talk_cursors: Dict[int, int] = {0: 0, 1: 0}
-        self._table_talk_hand_counts: Dict[tuple[int, int], int] = {}
+        self._table_talk_turn_counts: Dict[tuple[int, str], int] = {}
+        self._final_talk_sent: Dict[int, bool] = {0: False, 1: False}
 
     # ------------------------------------------------------------------
     # Config
@@ -309,7 +310,6 @@ class GameSession:
                 ),
                 table_talk_max_chars=self._table_talk_limits.max_chars,
                 table_talk_max_per_turn=self._table_talk_limits.max_per_turn,
-                table_talk_max_per_hand=self._table_talk_limits.max_per_hand,
             )
             for seat_index, seat in enumerate(seats):
                 if seat.kind == "llm":
@@ -374,7 +374,8 @@ class GameSession:
                 self.table_talk = []
                 self._table_talk_seq = 0
                 self._table_talk_cursors = {0: 0, 1: 0}
-                self._table_talk_hand_counts = {}
+                self._table_talk_turn_counts = {}
+                self._final_talk_sent = {0: False, 1: False}
                 self.event_seq = 0
                 self.state_seq = 0
                 self.match_error = ""
@@ -434,18 +435,21 @@ class GameSession:
             if self.game.actor != seat:
                 return {"ok": False, "error": "还没有轮到你行动，不能喊话"}
 
-            hand_id = self.game.hand_id
-            key = (seat, hand_id)
-            used = self._table_talk_hand_counts.get(key, 0)
-            remaining_before = max(0, self._table_talk_limits.max_per_hand - used)
-            if remaining_before <= 0:
+            turn_key = (seat, str(turn_id or ""))
+            used_turn = self._table_talk_turn_counts.get(turn_key, 0)
+            remaining_turn = max(
+                0,
+                self._table_talk_limits.max_per_turn - used_turn,
+            )
+            if remaining_turn <= 0:
                 return {
                     "ok": False,
                     "error": (
-                        "本手喊话次数已达上限"
-                        f"（{self._table_talk_limits.max_per_hand} 条），不要再喊话。"
+                        "本回合喊话次数已达上限"
+                        f"（{self._table_talk_limits.max_per_turn} 条），"
+                        "请直接调用 apply_action。"
                     ),
-                    "remaining_hand": 0,
+                    "remaining_turn": 0,
                 }
 
             try:
@@ -457,7 +461,7 @@ class GameSession:
                 return {
                     "ok": False,
                     "error": str(exc),
-                    "remaining_hand": remaining_before,
+                    "remaining_turn": remaining_turn,
                 }
 
             player = self.game.players[seat]
@@ -465,24 +469,70 @@ class GameSession:
             entry = {
                 "id": uuid.uuid4().hex[:10],
                 "seq": self._table_talk_seq,
-                "hand_id": hand_id,
+                "hand_id": self.game.hand_id,
                 "street": self.game.street.value,
                 "seat": seat,
                 "name": player.name,
                 "text": normalized,
                 "turn_id": str(turn_id or ""),
                 "created_at": time.time(),
+                "kind": "turn",
             }
             self.table_talk.append(entry)
             if len(self.table_talk) > 500:
                 del self.table_talk[:100]
-            self._table_talk_hand_counts[key] = used + 1
+            self._table_talk_turn_counts[turn_key] = used_turn + 1
             self._emit({"type": "table_talk", **entry})
             return {
                 "ok": True,
                 "entry": entry,
-                "remaining_hand": remaining_before - 1,
+                "remaining_turn": remaining_turn - 1,
             }
+
+    def _record_final_table_talk(
+        self,
+        generation: int,
+        seat: int,
+        text: str,
+    ) -> dict:
+        """Store one optional post-match message from a seat."""
+        with self.lock:
+            if not self._alive(generation) or not self.game:
+                return {"ok": False, "error": "比赛已经结束或被重置"}
+            if not self.table_talk_enabled:
+                return {"ok": False, "error": "本局没有启用桌边喊话"}
+            if not self.game.match_over:
+                return {"ok": False, "error": "比赛还没有结束"}
+            if self._final_talk_sent.get(seat):
+                return {"ok": False, "error": "本局已经发过赛后喊话"}
+            try:
+                normalized = normalize_table_talk(
+                    text,
+                    self._table_talk_limits.max_chars,
+                )
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+
+            player = self.game.players[seat]
+            self._table_talk_seq += 1
+            entry = {
+                "id": uuid.uuid4().hex[:10],
+                "seq": self._table_talk_seq,
+                "hand_id": self.game.hand_id,
+                "street": "finished",
+                "seat": seat,
+                "name": player.name,
+                "text": normalized,
+                "turn_id": "",
+                "created_at": time.time(),
+                "kind": "final",
+            }
+            self.table_talk.append(entry)
+            if len(self.table_talk) > 500:
+                del self.table_talk[:100]
+            self._final_talk_sent[seat] = True
+            self._emit({"type": "table_talk", **entry})
+            return {"ok": True, "entry": entry}
 
     def _pending_table_talk(self, seat: int) -> List[dict]:
         """Return unread messages for one seat and advance its cursor."""
@@ -492,7 +542,9 @@ class GameSession:
         pending = [
             item
             for item in self.table_talk
-            if int(item.get("seq", 0)) > cursor and int(item.get("seat", -1)) != seat
+            if int(item.get("seq", 0)) > cursor
+            and int(item.get("seat", -1)) != seat
+            and item.get("kind") != "final"
         ]
         if not pending:
             return []
@@ -601,6 +653,7 @@ class GameSession:
                                 "text": "比赛结束。",
                             }
                         )
+                        self._run_final_table_talk(generation)
                         return
                     while self._alive(generation) and not self._next_hand_event.wait(0.4):
                         pass
@@ -644,6 +697,36 @@ class GameSession:
                     self._broadcast_state()
             except Exception:
                 pass
+
+    def _run_final_table_talk(self, generation: int) -> None:
+        """Let every LLM seat add one optional message after the match ends."""
+        if not self.table_talk_enabled:
+            return
+        with self.lock:
+            if not self._alive(generation) or not self.game:
+                return
+            result = self.game.result
+        for seat in (0, 1):
+            agent = self.agents.get(seat)
+            if not isinstance(agent, LLMAgent):
+                continue
+            emit = self._make_emit(generation, seat)
+
+            def submit(text: str, seat: int = seat) -> dict:
+                return self._record_final_table_talk(generation, seat, text)
+
+            try:
+                agent.final_table_talk(result, submit, emit)
+            except Exception as exc:  # noqa: BLE001
+                emit(
+                    {
+                        "type": "note",
+                        "level": "warn",
+                        "text": f"赛后喊话失败：{type(exc).__name__}: {exc}",
+                    }
+                )
+            if not self._alive(generation):
+                return
 
     def _wait_bot_delay(self, generation: int, seconds: float) -> bool:
         """Pause before a bot acts; returns False when the match was reset."""

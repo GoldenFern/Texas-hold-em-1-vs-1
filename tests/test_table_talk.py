@@ -37,14 +37,12 @@ def test_limits_read_from_runtime_and_clamp() -> None:
         {
             "table_talk_max_chars": 120,
             "table_talk_max_per_turn": 3,
-            "table_talk_max_per_hand": 8,
             "table_talk_history_limit": 4,
             "table_talk_snapshot_limit": 20,
         }
     )
     assert limits.max_chars == 120
     assert limits.max_per_turn == 3
-    assert limits.max_per_hand == 8
     assert limits.history_limit == 4
     assert limits.snapshot_limit == 20
 
@@ -52,9 +50,7 @@ def test_limits_read_from_runtime_and_clamp() -> None:
         {
             "table_talk_max_chars": "many",
             "table_talk_max_per_turn": -3,
-            "table_talk_max_per_hand": 0,
         }
     )
     assert fallback.max_chars == 160
     assert fallback.max_per_turn == 1
-    assert fallback.max_per_hand == 1

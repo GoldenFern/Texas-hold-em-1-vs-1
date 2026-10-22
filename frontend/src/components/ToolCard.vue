@@ -69,14 +69,6 @@ const talkText = computed(() => String(
   || "",
 ));
 const talkAccepted = computed(() => props.tool.status !== "error" && result.value.ok !== false);
-const remainingTurn = computed(() => {
-  const value = result.value.remaining_turn;
-  return value === undefined || value === null ? -1 : Number(value);
-});
-const remainingHand = computed(() => {
-  const value = result.value.remaining_hand;
-  return value === undefined || value === null ? -1 : Number(value);
-});
 const constraint = computed(() => {
   if (!isAction.value || !result.value || result.value.ok !== false) return null;
   if (result.value.legal_actions === undefined && result.value.to_call === undefined) return null;
@@ -405,9 +397,11 @@ function percent(value: number): string {
         <template v-else>
           <div class="talk-quote">「{{ talkText || "空消息" }}」</div>
           <div class="talk-meta-row">
-            <span class="chip gold">对手下一次决策时看到</span>
-            <span v-if="remainingTurn >= 0" class="chip">本回合剩 {{ remainingTurn }} 条</span>
-            <span v-if="remainingHand >= 0" class="chip">本手剩 {{ remainingHand }} 条</span>
+            <span v-if="tool.status === 'running'" class="chip">发送中</span>
+            <template v-else>
+              <span class="chip gold">本回合喊话完成</span>
+              <span class="chip">对手下一次决策时看到</span>
+            </template>
           </div>
         </template>
       </div>

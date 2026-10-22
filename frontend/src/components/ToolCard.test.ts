@@ -15,8 +15,7 @@ function talkTool(overrides: Partial<ToolView> = {}): ToolView {
     result: {
       ok: true,
       entry: { text: "我这次不会再让你便宜看牌。" },
-      remaining_turn: 1,
-      remaining_hand: 5,
+      remaining_turn: 0,
     },
     summary: "已喊话",
     durationMs: 2,
@@ -29,8 +28,7 @@ describe("ToolCard table talk", () => {
     const wrapper = mount(ToolCard, { props: { tool: talkTool() } });
     expect(wrapper.text()).toContain("桌边喊话");
     expect(wrapper.text()).toContain("我这次不会再让你便宜看牌。");
-    expect(wrapper.text()).toContain("本回合剩 1 条");
-    expect(wrapper.text()).toContain("本手剩 5 条");
+    expect(wrapper.text()).toContain("本回合喊话完成");
     wrapper.unmount();
   });
 

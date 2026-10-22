@@ -141,6 +141,7 @@ export interface TableTalkEntry {
   text: string;
   turn_id?: string;
   created_at?: number;
+  kind?: "turn" | "final";
 }
 
 export interface MatchState {

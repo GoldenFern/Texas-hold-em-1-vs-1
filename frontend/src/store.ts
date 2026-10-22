@@ -447,6 +447,7 @@ function tableTalkFromEvent(event: AgentEvent): TableTalkEntry {
     text: String(event.text || ""),
     turn_id: event.turn_id ? String(event.turn_id) : undefined,
     created_at: Number(event.created_at || 0) || undefined,
+    kind: event.kind === "final" ? "final" : "turn",
   };
 }
 

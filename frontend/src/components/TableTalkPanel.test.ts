@@ -16,7 +16,7 @@ describe("TableTalkPanel", () => {
         entries: [
           { id: "a", seq: 1, hand_id: 1, street: "preflop", seat: 0, name: "Agent A", text: "第一句" },
           { id: "b", seq: 2, hand_id: 1, street: "flop", seat: 1, name: "Agent B", text: "第二句" },
-          { id: "c", seq: 3, hand_id: 2, street: "preflop", seat: 0, name: "Agent A", text: "下一手" },
+          { id: "c", seq: 3, hand_id: 2, street: "finished", seat: 0, name: "Agent A", text: "下一手", kind: "final" },
         ],
       },
     });
@@ -27,6 +27,7 @@ describe("TableTalkPanel", () => {
     expect(wrapper.text()).toContain("第二句");
     expect(wrapper.text()).toContain("下一手");
     expect(wrapper.text()).toContain("翻牌");
+    expect(wrapper.text()).toContain("赛后");
     wrapper.unmount();
   });
 

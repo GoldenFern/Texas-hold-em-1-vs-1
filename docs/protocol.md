@@ -235,7 +235,8 @@ Bot 座位：
       "name": "DeepSeek",
       "text": "我这次不会再让你便宜看牌。",
       "turn_id": "1d3e...",
-      "created_at": 1760000000.0
+      "created_at": 1760000000.0,
+      "kind": "turn"
     }
   ],
   "match": {
@@ -420,14 +421,13 @@ Socket.IO 事件 `agent_event` 的 payload。所有事件带：
   "entry": {
     "id": "7f3a...", "seq": 1, "hand_id": 3, "street": "flop",
     "seat": 0, "name": "DeepSeek", "text": "我这次不会再让你便宜看牌。",
-    "turn_id": "1d3e...", "created_at": 1760000000.0
+    "turn_id": "1d3e...", "created_at": 1760000000.0, "kind": "turn"
   },
-  "remaining_hand": 5,
-  "remaining_turn": 1
+  "remaining_turn": 0
 }
 ```
 
-被拒绝时返回 `{"ok": false, "error": "...", "remaining_hand": 5, "remaining_turn": 1}`。喊话失败不计入连续三次非法动作。
+每个行动回合必须先成功调用一次 `send_table_message`，否则 `apply_action` 返回错误，要求先喊话。被拒绝时返回 `{"ok": false, "error": "...", "remaining_turn": 0}`。喊话失败不计入连续三次非法动作。
 
 ### `table_talk`
 
@@ -439,11 +439,13 @@ Socket.IO 事件 `agent_event` 的 payload。所有事件带：
   "match_id": "ab12...", "seat": 0, "event_id": 124,
   "id": "7f3a...", "seq": 1, "hand_id": 3, "street": "flop",
   "name": "DeepSeek", "text": "我这次不会再让你便宜看牌。",
-  "turn_id": "1d3e...", "created_at": 1760000000.0
+  "turn_id": "1d3e...", "created_at": 1760000000.0, "kind": "turn"
 }
 ```
 
 对手不会立刻收到；它会在下一次 `turn_state` 的`【牌局更新】`里看到未读喊话。服务端只做文本规范化、长度和频率校验，不扫描真实底牌或牌力，也不核查真伪；前端必须按普通文本渲染，不要使用 `v-html`。
+
+比赛结束后，每个 LLM 还会收到一次只暴露 `send_table_message` 的赛后请求。赛后消息的 `kind` 为 `"final"`，`street` 为 `"finished"`，每个座位最多一条。
 
 ### `message_end`
 
