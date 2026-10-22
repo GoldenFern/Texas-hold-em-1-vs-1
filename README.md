@@ -12,6 +12,34 @@
 
 ---
 
+## 界面预览
+
+### 牌桌与 Agent 观测台
+
+左侧是单挑牌桌、公共牌、底池和行动记录；右侧是 Agent 观测台，实时展开思考流、工具卡片、日志和桌边喊话。
+
+[![牌桌与 Agent 观测台](docs/screenshots/table.png)](docs/screenshots/table.png)
+
+### 对局配置
+
+人类、LLM、RLCard 任选其二，按座位选择 Provider、模型和推理参数。
+
+[![对局配置](docs/screenshots/setup.png)](docs/screenshots/setup.png)
+
+### 思考与工具调用
+
+每次行动都能看到模型思考、跟注 EV、胜率估算和工具返回，不需要打开调试器。
+
+[![思考与工具调用](docs/screenshots/agent-console.png)](docs/screenshots/agent-console.png)
+
+### 牌型分布
+
+最终牌型分布按当前最大概率归一化，并标出样本数、耗时和估算方法。
+
+[![牌型分布](docs/screenshots/analysis.png)](docs/screenshots/analysis.png)
+
+---
+
 ## 快速开始
 
 ### 1. Python 依赖
@@ -253,6 +281,8 @@ cd frontend && npm run typecheck && npm test && npm run build
 
 - [Treys](https://github.com/ihendley/treys)：TwoPlusTwo 查表牌力评估
 - [RLCard](https://github.com/datamllab/rlcard)：强化学习扑克环境与 agent
+- [DeepSeek V4.1 Flash](https://www.deepseek.com)：本项目的 AI 开发助手，参与代码、调试与文档撰写
+- [OpenCode](https://opencode.ai)：提供 AI Agent 运行环境与开发工具支持
 - Flask / Flask-SocketIO / Vue 3 / Vite / TypeScript
 - Provider 图标是各厂商的品牌标识，仅用于界面识别，版权归各自厂商所有
 
