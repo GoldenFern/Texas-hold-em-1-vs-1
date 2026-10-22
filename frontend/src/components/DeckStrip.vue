@@ -10,8 +10,9 @@ const props = withDefaults(
     burned: CardInfo[];
     visible: boolean;
     count: number;
+    dealing?: boolean;
   }>(),
-  { remaining: () => [], burned: () => [], visible: false, count: 0 },
+  { remaining: () => [], burned: () => [], visible: false, count: 0, dealing: false },
 );
 
 const shown = computed(() => props.remaining.slice(0, 10));
@@ -24,16 +25,23 @@ const extra = computed(() => Math.max(0, props.count - shown.value.length));
       <div class="deck-title">
         <AppIcon name="cards" :size="14" />
         <span>牌堆</span>
-        <span class="mono deck-count">{{ count }} 张</span>
+        <span v-if="dealing" class="mono deck-count">发牌中</span>
+        <span v-else class="mono deck-count">{{ count }} 张</span>
       </div>
-      <span v-if="visible" class="deck-hint">按发出顺序排列 · 下一张在左</span>
+      <span v-if="dealing" class="deck-hint">底牌落桌后更新牌堆</span>
+      <span v-else-if="visible" class="deck-hint">按发出顺序排列 · 下一张在左</span>
       <button v-else class="deck-locked" disabled>
         <AppIcon name="eyeOff" :size="13" />
         上帝视角关闭
       </button>
     </div>
 
-    <div v-if="visible" class="deck-body">
+    <div v-if="dealing" class="deck-placeholder">
+      <span>正在发牌…</span>
+      <span class="mono">公共牌会按顺序展示</span>
+    </div>
+
+    <div v-else-if="visible" class="deck-body">
       <div class="deck-row">
         <div v-for="(card, index) in shown" :key="`${card.code}-${index}`" class="deck-card" :class="{ next: index === 0 }">
           <PlayingCard :card="card" size="mini" :index="index" />

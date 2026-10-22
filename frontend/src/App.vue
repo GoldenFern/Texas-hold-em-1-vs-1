@@ -8,6 +8,7 @@ import SetupModal from "./components/SetupModal.vue";
 import TableView from "./components/TableView.vue";
 import ToastHost from "./components/ToastHost.vue";
 import TopBar from "./components/TopBar.vue";
+import { board, boardLocked } from "./boardReveal";
 import { boot, game, refreshAnalysis } from "./store";
 
 const analysisTimer = ref(0);
@@ -22,14 +23,15 @@ onMounted(async () => {
 watch(
   () => [
     game.snapshot?.hand_id,
-    game.snapshot?.street,
-    game.snapshot?.community?.length,
+    board.community.length,
     game.selectedAnalysisSeat,
     game.godView,
+    boardLocked.value,
   ],
   () => {
     if (!game.snapshot?.has_match) return;
     window.clearTimeout(analysisTimer.value);
+    if (boardLocked.value) return;
     analysisTimer.value = window.setTimeout(() => void refreshAnalysis(), 320);
   },
 );

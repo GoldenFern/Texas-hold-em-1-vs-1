@@ -1,16 +1,20 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import ActionBar from "./ActionBar.vue";
 import AnimatedNumber from "./AnimatedNumber.vue";
 import DeckStrip from "./DeckStrip.vue";
+import FlipCard from "./FlipCard.vue";
 import PlayingCard from "./PlayingCard.vue";
 import SeatPod from "./SeatPod.vue";
 import AppIcon from "./AppIcon.vue";
 import { chips, streetLabel } from "../format";
+import { board, prefersReducedMotion, streetForCommunity } from "../boardReveal";
 import { game, openSetup } from "../store";
 import type { CardInfo, PlayerState } from "../types";
 
-const snapshot = computed(() => game.snapshot);
+const snapshot = computed(() => (
+  (board.busy || board.holeHold) && board.baseSnapshot ? board.baseSnapshot : game.snapshot
+));
 const match = computed(() => snapshot.value?.match || null);
 const players = computed(() => snapshot.value?.players || []);
 const seats = computed(() => match.value?.seats || []);
@@ -35,14 +39,21 @@ function showCardsAt(seat: number): boolean {
   return Boolean(player && !player.hole_hidden);
 }
 
-const community = computed<CardInfo[]>(() => snapshot.value?.community || []);
+const community = computed<CardInfo[]>(() => board.community);
 const boardSlots = computed(() => Array.from({ length: 5 }, (_, index) => community.value[index] || null));
 const pot = computed(() => Number(snapshot.value?.pot || 0));
 const currentBet = computed(() => Number(snapshot.value?.current_bet || 0));
 const toCall = computed(() => Number(snapshot.value?.to_call || 0));
-const street = computed(() => snapshot.value?.street || "waiting");
+const street = computed(() => {
+  if (board.busy) return streetForCommunity(community.value.length);
+  if (board.holeHold) return "preflop";
+  return snapshot.value?.street || "waiting";
+});
 const buttonSeat = computed(() => snapshot.value?.button ?? 0);
-const result = computed(() => (game.lastResult?.hand_id === snapshot.value?.hand_id ? game.lastResult : null));
+const rawResult = computed(() => (
+  game.lastResult?.hand_id === game.snapshot?.hand_id ? game.lastResult : null
+));
+const result = computed(() => ((board.busy || board.holeHold) ? null : rawResult.value));
 const winnerSeats = computed(() => result.value?.winner_seats || []);
 const deckVisible = computed(() => Boolean(game.godView && match.value));
 const deckRemaining = computed(() => snapshot.value?.deck_remaining || []);
@@ -69,6 +80,7 @@ function phaseState(index: number): "done" | "active" | "todo" {
 }
 
 const boardCaption = computed(() => {
+  if ((board.holeHold || board.busy) && community.value.length === 0) return "发牌中";
   if (street.value === "finished" || street.value === "showdown") {
     return result.value?.reason === "fold" ? "弃牌结束" : "摊牌";
   }
@@ -87,6 +99,10 @@ const potChips = computed(() => {
 });
 
 const tableHint = computed(() => {
+  if (board.holeHold) return "发牌中";
+  if (board.busy) {
+    return community.value.length ? `翻牌中 · ${streetLabel(street.value)}` : "发牌中";
+  }
   if (!match.value) return "配置两个玩家，开始一局单挑";
   if (match.value.match_over) return "比赛结束";
   if (street.value === "finished") return "本手结束";
@@ -97,6 +113,88 @@ const tableHint = computed(() => {
 const dealerStyle = computed(() => {
   if (buttonSeat.value === topSeat.value) return { top: "22%", left: "71%" };
   return { bottom: "21%", left: "71%" };
+});
+
+const feltInner = ref<HTMLElement | null>(null);
+const deckOrigin = ref<HTMLElement | null>(null);
+const dealing = ref(false);
+let lastDealNonce = board.dealNonce;
+let dealTimer = 0;
+let dealToken = 0;
+let dealAnimations: Animation[] = [];
+
+function centerOf(rect: DOMRect): { x: number; y: number } {
+  return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+}
+
+function clearDealAnimations(): void {
+  for (const animation of dealAnimations) {
+    try {
+      animation.cancel();
+    } catch {
+      // The element may already be gone; cancelling is best effort.
+    }
+  }
+  dealAnimations = [];
+}
+
+async function playHoleDeal(): Promise<void> {
+  const token = ++dealToken;
+  if (!game.snapshot?.match || prefersReducedMotion()) return;
+  await nextTick();
+  if (token !== dealToken) return;
+  const root = feltInner.value;
+  if (!root) return;
+  const targets = Array.from(root.querySelectorAll<HTMLElement>("[data-deal-card]"));
+  if (!targets.length) return;
+  const deckRect = deckOrigin.value?.getBoundingClientRect();
+  const origin = deckRect && deckRect.width > 0
+    ? centerOf(deckRect)
+    : centerOf(root.getBoundingClientRect());
+  clearDealAnimations();
+  dealing.value = true;
+  window.clearTimeout(dealTimer);
+  dealTimer = window.setTimeout(() => {
+    dealing.value = false;
+  }, 1100);
+  for (const element of targets) {
+    if (typeof element.animate !== "function") continue;
+    const rect = element.getBoundingClientRect();
+    if (!rect.width || !rect.height) continue;
+    const target = centerOf(rect);
+    const dx = origin.x - target.x;
+    const dy = origin.y - target.y;
+    const order = Number(element.dataset.dealOrder || 0);
+    const animation = element.animate(
+      [
+        {
+          transform: `translate(${dx}px, ${dy}px) rotate(${-8 + order * 3}deg) scale(0.82)`,
+          opacity: 0,
+        },
+        { opacity: 1, offset: 0.12 },
+        { transform: "translate(0, 0) rotate(0deg) scale(1)", opacity: 1 },
+      ],
+      {
+        duration: 400,
+        delay: order * 95,
+        easing: "cubic-bezier(0.16, 0.9, 0.3, 1)",
+        fill: "both",
+      },
+    );
+    dealAnimations.push(animation);
+  }
+}
+
+watch(() => board.dealNonce, (nonce) => {
+  if (nonce === lastDealNonce) return;
+  lastDealNonce = nonce;
+  void playHoleDeal();
+});
+
+onUnmounted(() => {
+  dealToken += 1;
+  window.clearTimeout(dealTimer);
+  clearDealAnimations();
 });
 </script>
 
@@ -120,11 +218,11 @@ const dealerStyle = computed(() => {
           <span class="meta-key">底池</span>
           <strong class="mono gold">{{ chips(pot) }}</strong>
         </span>
-        <span class="chip" v-if="currentBet > 0">
+        <span class="chip" v-if="currentBet > 0 && !board.busy && !board.holeHold">
           <span class="meta-key">当前注</span>
           <strong class="mono">{{ chips(currentBet) }}</strong>
         </span>
-        <span class="chip red" v-if="toCall > 0">
+        <span class="chip red" v-if="toCall > 0 && !board.busy && !board.holeHold">
           <span class="meta-key">需跟</span>
           <strong class="mono">{{ chips(toCall) }}</strong>
         </span>
@@ -138,28 +236,49 @@ const dealerStyle = computed(() => {
     <div class="felt-wrap">
       <div class="felt">
         <div class="felt-ring"></div>
-        <div class="felt-inner">
+        <div ref="feltInner" class="felt-inner">
           <div class="felt-watermark">♠</div>
           <div class="felt-brand">HEADS-UP <span>LAB</span></div>
 
           <template v-if="match">
+            <div
+              ref="deckOrigin"
+              class="deal-deck"
+              :class="{ active: dealing }"
+              aria-hidden="true"
+            >
+              <PlayingCard class="deck-layer deck-layer-1" :face-down="true" size="mini" />
+              <PlayingCard class="deck-layer deck-layer-2" :face-down="true" size="mini" />
+              <PlayingCard class="deck-layer deck-layer-3" :face-down="true" size="mini" />
+            </div>
+
+            <div v-if="board.banner" :key="board.banner.key" class="street-banner">
+              {{ board.banner.label }}
+            </div>
+
             <SeatPod
               :player="playerAt(topSeat)"
               :seat-info="seatInfoAt(topSeat)"
               position="top"
-              :active="snapshot?.acting_seat === topSeat && street !== 'finished'"
+              :active="snapshot?.acting_seat === topSeat && street !== 'finished' && !board.busy && !board.holeHold"
               :god-view="game.godView"
               :result="result"
               :show-cards="showCardsAt(topSeat)"
+              :deal-nonce="board.dealNonce"
+              :hole-hold="board.holeHold"
+              :hold-assessment="board.busy"
             />
             <SeatPod
               :player="playerAt(bottomSeat)"
               :seat-info="seatInfoAt(bottomSeat)"
               position="bottom"
-              :active="snapshot?.acting_seat === bottomSeat && street !== 'finished'"
+              :active="snapshot?.acting_seat === bottomSeat && street !== 'finished' && !board.busy && !board.holeHold"
               :god-view="game.godView"
               :result="result"
               :show-cards="showCardsAt(bottomSeat)"
+              :deal-nonce="board.dealNonce"
+              :hole-hold="board.holeHold"
+              :hold-assessment="board.busy"
             />
 
             <div class="pot-display">
@@ -167,7 +286,9 @@ const dealerStyle = computed(() => {
                 <span>POT</span>
                 <span v-if="result" class="pot-result-label">{{ result.reason === "fold" ? "弃牌" : "摊牌" }}</span>
               </div>
-              <div class="pot-value"><AnimatedNumber :value="pot" /></div>
+              <div class="pot-value">
+                <AnimatedNumber :key="`pot-${snapshot?.hand_id || 0}-${board.dealNonce}`" :value="pot" />
+              </div>
               <div class="pot-chips" v-if="potChips">
                 <span v-for="n in potChips" :key="n" class="pot-chip" :style="{ '--i': n }"></span>
               </div>
@@ -175,13 +296,16 @@ const dealerStyle = computed(() => {
 
             <div class="board-block">
               <div class="board">
-                <PlayingCard
+                <FlipCard
                   v-for="(card, index) in boardSlots"
                   :key="card?.code || `slot-${index}`"
                   :card="card"
+                  :face-down="Boolean(card)"
                   :index="index"
-                  :animate="Boolean(card)"
                   :size="'community'"
+                  :auto-reveal="true"
+                  :flip-delay="50"
+                  :instant="board.hydrated"
                   :dim="street === 'finished' && winnerSeats.length === 0"
                 />
               </div>
@@ -196,7 +320,10 @@ const dealerStyle = computed(() => {
             </div>
 
             <div v-if="tableHint" class="table-hint">
-              <span class="dot" :class="{ live: snapshot?.acting_kind === 'human' }"></span>
+              <span
+                class="dot"
+                :class="{ live: snapshot?.acting_kind === 'human' && !board.busy && !board.holeHold }"
+              ></span>
               {{ tableHint }}
             </div>
           </template>
@@ -225,6 +352,7 @@ const dealerStyle = computed(() => {
       :burned="burned"
       :visible="deckVisible"
       :count="deckCount"
+      :dealing="board.holeHold"
     />
 
     <ActionBar />
@@ -407,6 +535,69 @@ const dealerStyle = computed(() => {
 }
 
 .felt-brand span { color: rgba(232, 195, 122, 0.42); }
+
+.deal-deck {
+  position: absolute;
+  right: 4.5%;
+  top: 50%;
+  z-index: 3;
+  width: 30px;
+  height: 42px;
+  transform: translateY(-50%) rotate(-7deg);
+  pointer-events: none;
+  opacity: 0.68;
+  transition: opacity 0.2s ease, filter 0.2s ease;
+}
+
+.deal-deck.active {
+  opacity: 1;
+  filter: drop-shadow(0 0 12px rgba(232, 195, 122, 0.24));
+}
+
+.deck-layer {
+  position: absolute;
+  inset: 0;
+}
+
+.deck-layer-1 {
+  transform: translate(-3px, -3px) rotate(-4deg);
+  opacity: 0.5;
+}
+
+.deck-layer-2 {
+  transform: translate(-1.5px, -1.5px) rotate(-2deg);
+  opacity: 0.74;
+}
+
+.street-banner {
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  z-index: 5;
+  transform: translate(-50%, -50%);
+  font-family: var(--font-mono);
+  font-size: clamp(calc(34px * var(--type-scale)), 6vw, calc(72px * var(--type-scale)));
+  font-weight: 800;
+  letter-spacing: 0.3em;
+  color: rgba(232, 195, 122, 0.12);
+  white-space: nowrap;
+  pointer-events: none;
+  animation: street-banner 1s ease-out both;
+}
+
+@keyframes street-banner {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.12);
+  }
+  18% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
 
 .pot-display {
   position: absolute;
@@ -609,6 +800,8 @@ const dealerStyle = computed(() => {
   .felt-inner { height: 100%; border-radius: 42% / 46%; }
   .board { gap: 4px; }
   .board-block { top: 45%; }
+  .deal-deck { display: none; }
+  .street-banner { top: 46%; letter-spacing: 0.2em; }
   .pot-display { top: 33%; min-width: 100px; padding: 5px 12px 6px; }
   .table-hint { left: 5%; bottom: 8%; }
   .felt-brand { top: 8%; }

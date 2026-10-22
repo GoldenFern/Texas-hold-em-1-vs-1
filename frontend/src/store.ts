@@ -1,6 +1,12 @@
-import { computed, reactive } from "vue";
+import { computed, reactive, watch } from "vue";
 import { io, type Socket } from "socket.io-client";
 import { api, ApiError } from "./api";
+import {
+  board,
+  boardLocked,
+  ingestSnapshot,
+  resetBoardReveal,
+} from "./boardReveal";
 import type {
   ActionEntry,
   AgentEvent,
@@ -46,6 +52,7 @@ interface StoreState {
   lastResult: HandResult | null;
   lastResultHandId: number | null;
   dismissedResultHandId: number | null;
+  pendingResultHandId: number | null;
   godView: boolean;
   godViewBusy: boolean;
   busy: boolean;
@@ -78,6 +85,7 @@ const state = reactive<StoreState>({
   lastResult: null,
   lastResultHandId: null,
   dismissedResultHandId: null,
+  pendingResultHandId: null,
   godView: true,
   godViewBusy: false,
   busy: false,
@@ -91,6 +99,7 @@ let bufferDepth = 0;
 let transcriptEpoch = 0;
 let analysisSeq = 0;
 let lastErrorToastAt = 0;
+let resultWatchdog: ReturnType<typeof setTimeout> | null = null;
 
 export const game = state;
 
@@ -117,7 +126,13 @@ export const isHumanTurn = computed(() => {
 
 export const canAct = computed(() => {
   const snap = state.snapshot;
-  return Boolean(snap?.has_match && snap.match && !snap.match.match_over && isHumanTurn.value);
+  return Boolean(
+    snap?.has_match
+      && snap.match
+      && !snap.match.match_over
+      && isHumanTurn.value
+      && !boardLocked.value,
+  );
 });
 
 export function selectedTurns(): Array<TurnView | BotDecisionView> {
@@ -294,6 +309,7 @@ function connectSocket(): void {
 // ---------------------------------------------------------------------
 
 function applySnapshot(snapshot: GameSnapshot): void {
+  const previousSnapshot = state.snapshot;
   const previousMatchId = state.matchId;
   const nextMatchId = snapshot.match?.id || null;
   const sameMatch = Boolean(nextMatchId && nextMatchId === previousMatchId);
@@ -321,6 +337,7 @@ function applySnapshot(snapshot: GameSnapshot): void {
     resetMatchLocalState();
     state.matchId = nextMatchId;
   }
+  ingestSnapshot(snapshot, previousSnapshot, sameMatch);
   state.snapshot = snapshot;
   state.godView = Boolean(snapshot.match?.god_view ?? true);
 
@@ -338,12 +355,14 @@ function applySnapshot(snapshot: GameSnapshot): void {
     if (snapshot.match.last_result && snapshot.match.last_result.hand_id !== state.lastResultHandId) {
       state.lastResult = snapshot.match.last_result;
       state.lastResultHandId = snapshot.match.last_result.hand_id;
-      if (state.dismissedResultHandId !== snapshot.match.last_result.hand_id) {
-        if (!state.setupOpen) state.resultOpen = true;
-      }
+    }
+    if (snapshot.match.last_result) {
+      maybeOpenResult();
     }
     if (!snapshot.match.last_result && snapshot.street !== "finished") {
       state.resultOpen = false;
+      state.pendingResultHandId = null;
+      clearResultWatchdog();
     }
     if (snapshot.match.error && snapshot.match.error !== state.fatalError) {
       state.fatalError = snapshot.match.error;
@@ -357,6 +376,64 @@ function applySnapshot(snapshot: GameSnapshot): void {
   addActions(snapshot);
   followActingSeat(snapshot);
 }
+
+function clearResultWatchdog(): void {
+  if (resultWatchdog !== null) {
+    clearTimeout(resultWatchdog);
+    resultWatchdog = null;
+  }
+}
+
+function scheduleResultWatchdog(handId: number): void {
+  if (resultWatchdog !== null) return;
+  resultWatchdog = setTimeout(() => {
+    resultWatchdog = null;
+    if (state.pendingResultHandId !== handId) return;
+    if (state.setupOpen || state.dismissedResultHandId === handId) return;
+    state.pendingResultHandId = null;
+    state.resultOpen = true;
+  }, 6000);
+}
+
+function maybeOpenResult(): void {
+  const result = state.lastResult;
+  if (!result) return;
+  if (state.setupOpen) {
+    state.pendingResultHandId = result.hand_id;
+    scheduleResultWatchdog(result.hand_id);
+    return;
+  }
+  if (state.dismissedResultHandId === result.hand_id) {
+    state.pendingResultHandId = null;
+    clearResultWatchdog();
+    return;
+  }
+  const expectedBoard = Array.isArray(result.board) ? result.board.length : 0;
+  if (boardLocked.value || board.community.length < expectedBoard) {
+    state.pendingResultHandId = result.hand_id;
+    scheduleResultWatchdog(result.hand_id);
+    return;
+  }
+  state.pendingResultHandId = null;
+  clearResultWatchdog();
+  state.resultOpen = true;
+}
+
+watch([boardLocked, () => board.community.length], () => {
+  if (state.pendingResultHandId !== null) maybeOpenResult();
+});
+
+watch(() => state.setupOpen, (open) => {
+  if (!open && state.pendingResultHandId !== null) maybeOpenResult();
+});
+
+watch(boardLocked, (locked) => {
+  if (!locked) return;
+  // An analysis response that lands mid-reveal would describe cards the user
+  // has not seen yet. Drop it and let App.vue request a fresh one afterwards.
+  analysisSeq += 1;
+  state.analysisLoading = false;
+});
 
 function followActingSeat(snapshot: GameSnapshot): void {
   if (state.pinned) return;
@@ -410,7 +487,10 @@ function resetMatchLocalState(): void {
   state.lastResult = null;
   state.lastResultHandId = null;
   state.dismissedResultHandId = null;
+  state.pendingResultHandId = null;
   state.resultOpen = false;
+  clearResultWatchdog();
+  resetBoardReveal();
   state.fatalError = "";
   state.selectedSeat = null;
   state.pinned = false;
@@ -814,7 +894,7 @@ function onHandResultEvent(event: AgentEvent): void {
   if (result.hand_id === state.lastResultHandId) return;
   state.lastResult = result;
   state.lastResultHandId = result.hand_id;
-  if (!state.setupOpen && state.dismissedResultHandId !== result.hand_id) state.resultOpen = true;
+  maybeOpenResult();
 }
 
 // ---------------------------------------------------------------------
@@ -827,9 +907,15 @@ export async function startMatch(payload: MatchSetupPayload): Promise<boolean> {
   try {
     const response = await api.newGame(payload);
     saveSetup(payload);
-    applySnapshot(response.state);
-    await refreshTranscripts();
+    // Close the setup sheet before applying the first snapshot. Some fast
+    // bot-vs-bot hands finish before the response returns; if setupOpen were
+    // still true, the deferred result would be dropped and never reopened.
     state.setupOpen = false;
+    applySnapshot(response.state);
+    // The socket may have applied a newer state while new_game was still in
+    // flight. Re-check the result even if the REST snapshot itself was stale.
+    maybeOpenResult();
+    await refreshTranscripts();
     state.dismissedResultHandId = null;
     for (const seat of response.state.match?.seats || []) {
       if (seat.agent?.warning) {
@@ -866,7 +952,7 @@ export async function humanAction(action: string, amount = 0): Promise<void> {
 }
 
 export async function nextHand(): Promise<void> {
-  if (state.busy) return;
+  if (state.busy || boardLocked.value) return;
   state.busy = true;
   // Close the previous result first; if the next hand finishes before the
   // response returns, applySnapshot is still allowed to open the new result.
@@ -912,6 +998,8 @@ export function closeSetup(): void {
 
 export function dismissResult(): void {
   state.resultOpen = false;
+  state.pendingResultHandId = null;
+  clearResultWatchdog();
   if (state.lastResultHandId !== null) state.dismissedResultHandId = state.lastResultHandId;
 }
 
@@ -942,7 +1030,7 @@ export function selectAnalysisSeat(seat: number): void {
 
 export async function refreshAnalysis(force = false): Promise<void> {
   const snap = state.snapshot;
-  if (!snap?.has_match) return;
+  if (!snap?.has_match || boardLocked.value) return;
   const seat = state.selectedAnalysisSeat;
   if (seat === null || seat === undefined) return;
   const player = snap.players?.find((item) => item.seat === seat);

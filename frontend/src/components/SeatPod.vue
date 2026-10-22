@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import AppIcon from "./AppIcon.vue";
-import PlayingCard from "./PlayingCard.vue";
+import FlipCard from "./FlipCard.vue";
 import { iconUrl } from "../api";
 import { chips, shortName, statusLabel } from "../format";
 import type { HandResult, PlayerState, SeatInfo } from "../types";
@@ -15,8 +15,19 @@ const props = withDefaults(
     godView?: boolean;
     result?: HandResult | null;
     showCards?: boolean;
+    dealNonce?: number;
+    holeHold?: boolean;
+    holdAssessment?: boolean;
   }>(),
-  { active: false, godView: false, result: null, showCards: false },
+  {
+    active: false,
+    godView: false,
+    result: null,
+    showCards: false,
+    dealNonce: 0,
+    holeHold: false,
+    holdAssessment: false,
+  },
 );
 
 const name = computed(() => props.player?.name || props.seatInfo?.name || "等待入座");
@@ -31,11 +42,7 @@ const winnerAmount = computed(() => {
   return Number(props.result.awarded?.[key] || 0);
 });
 const cards = computed(() => props.player?.hole_cards || []);
-const faceDown = computed(() => {
-  if (props.showCards) return false;
-  if (!props.player) return true;
-  return props.player.hole_hidden;
-});
+const faceDown = computed(() => props.holeHold || !props.showCards);
 const avatarIcon = computed(() => {
   if (kind.value === "llm") return "sparkles";
   if (kind.value === "bot") return "bot";
@@ -57,26 +64,49 @@ const actionText = computed(() => {
   if (action.value.type === "call") return `${base} ${chips(action.value.amount)}`;
   return base;
 });
-const assessment = computed(() => props.player?.assessment?.category_name || "");
+const assessment = computed(() => {
+  if (props.holdAssessment) return "";
+  return props.player?.assessment?.category_name || "";
+});
+
+function dealOrder(index: number): number {
+  return props.position === "top" ? index * 2 : index * 2 + 1;
+}
 </script>
 
 <template>
   <div class="seat" :class="[position, { active, folded: isFolded, winner: isWinner, 'all-in': isAllIn }]">
     <div class="seat-cards" v-if="position === 'bottom'">
       <div class="card-wrap" v-if="cards.length || player">
-        <PlayingCard
+        <FlipCard
           v-for="(card, index) in cards"
-          :key="card.code"
+          :key="`${dealNonce}-${card.code}`"
           :card="card"
           :face-down="faceDown"
           size="hole"
           :index="index"
           :dim="isFolded"
           :highlight="isWinner && !faceDown"
+          :data-deal-card="index"
+          :data-deal-order="dealOrder(index)"
         />
         <template v-if="!cards.length">
-          <PlayingCard :face-down="true" size="hole" :index="0" />
-          <PlayingCard :face-down="true" size="hole" :index="1" />
+          <FlipCard
+            :key="`${dealNonce}-placeholder-0`"
+            :face-down="true"
+            size="hole"
+            :index="0"
+            :data-deal-card="0"
+            :data-deal-order="dealOrder(0)"
+          />
+          <FlipCard
+            :key="`${dealNonce}-placeholder-1`"
+            :face-down="true"
+            size="hole"
+            :index="1"
+            :data-deal-card="1"
+            :data-deal-order="dealOrder(1)"
+          />
         </template>
       </div>
       <span v-if="assessment" class="assess">{{ assessment }}</span>
@@ -116,26 +146,42 @@ const assessment = computed(() => props.player?.assessment?.category_name || "")
 
     <div class="seat-cards" v-if="position === 'top'">
       <div class="card-wrap" v-if="cards.length || player">
-        <PlayingCard
+        <FlipCard
           v-for="(card, index) in cards"
-          :key="card.code"
+          :key="`${dealNonce}-${card.code}`"
           :card="card"
           :face-down="faceDown"
           size="hole"
           :index="index"
           :dim="isFolded"
           :highlight="isWinner && !faceDown"
+          :data-deal-card="index"
+          :data-deal-order="dealOrder(index)"
         />
         <template v-if="!cards.length">
-          <PlayingCard :face-down="true" size="hole" :index="0" />
-          <PlayingCard :face-down="true" size="hole" :index="1" />
+          <FlipCard
+            :key="`${dealNonce}-placeholder-0`"
+            :face-down="true"
+            size="hole"
+            :index="0"
+            :data-deal-card="0"
+            :data-deal-order="dealOrder(0)"
+          />
+          <FlipCard
+            :key="`${dealNonce}-placeholder-1`"
+            :face-down="true"
+            size="hole"
+            :index="1"
+            :data-deal-card="1"
+            :data-deal-order="dealOrder(1)"
+          />
         </template>
       </div>
       <span v-if="assessment" class="assess">{{ assessment }}</span>
     </div>
 
-    <transition name="action-pop">
-      <div v-if="actionText" class="action-badge" :class="action?.type">
+    <transition name="action-pop" :css="!holeHold">
+      <div v-if="actionText && !holeHold" class="action-badge" :class="action?.type">
         {{ actionText }}
         <span v-if="action?.auto" class="auto-tag">AUTO</span>
       </div>

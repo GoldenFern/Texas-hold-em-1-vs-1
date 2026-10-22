@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import AppIcon from "./AppIcon.vue";
 import { chips, percent, streetLabel } from "../format";
+import { board, boardLocked, streetForCommunity } from "../boardReveal";
 import {
   game,
   humanAction,
@@ -17,15 +18,23 @@ const raiseDraft = ref("0");
 const raiseInput = ref<HTMLInputElement | null>(null);
 const quickFraction = ref<string>("");
 
-const snapshot = computed(() => game.snapshot);
+const snapshot = computed(() => (
+  (board.busy || board.holeHold) && board.baseSnapshot ? board.baseSnapshot : game.snapshot
+));
 const match = computed(() => snapshot.value?.match || null);
 const legal = computed(() => snapshot.value?.legal_actions || []);
+const displayStreet = computed(() => {
+  if (board.busy) return streetForCommunity(board.community.length);
+  if (board.holeHold) return "preflop";
+  return snapshot.value?.street || "waiting";
+});
 const canAct = computed(
   () =>
     Boolean(snapshot.value?.has_match) &&
     snapshot.value?.acting_kind === "human" &&
     snapshot.value?.street !== "finished" &&
-    !game.busy,
+    !game.busy &&
+    !boardLocked.value,
 );
 const isRaise = computed(() => legal.value.includes("bet") || legal.value.includes("raise"));
 const canCheck = computed(() => legal.value.includes("check"));
@@ -66,6 +75,10 @@ const winnerNames = computed(() => {
     .join(" · ");
 });
 const phaseText = computed(() => {
+  if (board.holeHold) return "发牌中";
+  if (board.busy) {
+    return board.community.length ? `翻牌中 · ${streetLabel(displayStreet.value)}` : "发牌中";
+  }
   if (game.busy) return "正在提交动作";
   if (!match.value) return "尚未开局";
   if (match.value.match_over) return "比赛结束";
@@ -141,7 +154,7 @@ watch(
 );
 
 async function act(action: string, amount = 0): Promise<void> {
-  if (game.busy) return;
+  if (game.busy || boardLocked.value) return;
   await humanAction(action, amount);
 }
 
@@ -186,8 +199,11 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
         <span v-else-if="snapshot?.street === 'finished' || match?.match_over" class="dot"></span>
         <span v-else class="spinner"></span>
         <span class="status-text">{{ phaseText }}</span>
-        <span v-if="snapshot?.street && snapshot.street !== 'finished'" class="chip mono street-chip">
-          {{ streetLabel(snapshot.street) }}
+        <span
+          v-if="displayStreet && displayStreet !== 'finished' && !(board.busy && board.community.length === 0)"
+          class="chip mono street-chip"
+        >
+          {{ streetLabel(displayStreet) }}
         </span>
       </div>
       <div class="status-sub">
@@ -195,7 +211,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
           <span>底池 <strong class="mono gold">{{ chips(pot) }}</strong></span>
           <span v-if="canAct && toCall > 0">需跟注 <strong class="mono">{{ chips(toCall) }}</strong></span>
           <span v-if="canAct && toCall > 0" class="pot-odds">底池赔率 <strong class="mono">{{ percent(potOdds, 0) }}</strong></span>
-          <span v-if="assessment" class="chip gold">{{ assessment.category_name }}</span>
+          <span v-if="assessment && !boardLocked" class="chip gold">{{ assessment.category_name }}</span>
         </template>
         <template v-else>
           <span>选择两个玩家，开始一局单挑。</span>
@@ -203,12 +219,12 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
       </div>
     </div>
 
-    <div v-if="match && snapshot?.street === 'finished'" class="end-actions">
+    <div v-if="match && displayStreet === 'finished'" class="end-actions">
       <div class="winner-line">
         <AppIcon name="sparkles" :size="14" />
         <span>{{ winnerNames || "本手结束" }} 赢下底池 <strong class="mono gold">{{ chips(game.lastResult?.pot || 0) }}</strong></span>
       </div>
-      <button v-if="match.can_next_hand" class="btn btn-primary" :disabled="game.busy" @click="nextHand">
+      <button v-if="match.can_next_hand" class="btn btn-primary" :disabled="game.busy || boardLocked" @click="nextHand">
         下一手
         <AppIcon name="arrowRight" :size="15" />
       </button>

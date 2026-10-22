@@ -3,6 +3,7 @@ import { computed } from "vue";
 import AppIcon from "./AppIcon.vue";
 import PlayingCard from "./PlayingCard.vue";
 import { compactPercent } from "../format";
+import { boardLocked } from "../boardReveal";
 import {
   game,
   humanSeat,
@@ -127,11 +128,15 @@ function reload(): void {
           <span class="hero-key">还需公共牌</span>
           <strong class="mono">{{ analysis.needed_board_cards }} 张</strong>
         </div>
-        <span v-if="stale" class="chip gold stale-chip">
+        <span v-if="boardLocked" class="chip gold stale-chip">
+          <span class="spinner"></span>
+          发牌中
+        </span>
+        <span v-else-if="stale" class="chip gold stale-chip">
           <span class="spinner"></span>
           牌面更新，重算中
         </span>
-        <span v-if="analysis && !stale" class="chip emerald">
+        <span v-else-if="analysis" class="chip emerald">
           <AppIcon name="check" :size="10" />
           已同步
         </span>
@@ -148,7 +153,7 @@ function reload(): void {
         <button class="btn btn-sm" @click="reload">重试</button>
       </div>
 
-      <div v-else-if="distribution.length" class="chart" :class="{ stale }">
+      <div v-else-if="distribution.length" class="chart" :class="{ stale, locked: boardLocked }">
         <div
           v-for="(item, index) in distribution"
           :key="item.key"
@@ -283,7 +288,8 @@ function reload(): void {
   transition: opacity 0.2s ease;
 }
 
-.chart.stale { opacity: 0.55; }
+.chart.stale,
+.chart.locked { opacity: 0.55; }
 
 .chart-row {
   display: flex;

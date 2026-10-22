@@ -106,6 +106,13 @@ function turnEvent(eventId: number, turnId: string, handId = 1) {
 }
 
 beforeEach(async () => {
+  game.snapshot = null;
+  game.matchId = null;
+  game.resultOpen = false;
+  game.pendingResultHandId = null;
+  game.lastResult = null;
+  game.lastResultHandId = null;
+  game.dismissedResultHandId = null;
   game.turns = {};
   game.currentTurns = {};
   game.seenEvents = {};
@@ -148,6 +155,54 @@ describe("transcript resync", () => {
     const ids = (game.turns[0] || []).map((turn) => turn.id);
     expect(ids).toContain("snapshot-turn");
     expect(ids).toContain("live-turn");
+  });
+});
+
+describe("board reveal buffers the result", () => {
+  it("keeps the result hidden until every community card is shown", async () => {
+    vi.useFakeTimers();
+    const boardCodes = ["2c", "7d", "Th", "Jh", "As"];
+    const flopState = snapshot({
+      seq: 2,
+      street: "flop",
+      community: boardCodes.slice(0, 3).map((code) => ({ code })),
+    });
+    socketMock.handlers.state?.(flopState);
+
+    const result = {
+      hand_id: 1,
+      reason: "showdown",
+      winner_seats: [0],
+      awarded: { "0": 100 },
+      pot: 100,
+      refunds: {},
+      board: boardCodes,
+      players: [],
+      showdown: [],
+      match_over: false,
+    };
+    const finishedState = snapshot({
+      seq: 3,
+      street: "finished",
+      community: boardCodes.map((code) => ({ code })),
+      result,
+      match: {
+        ...snapshot().match,
+        can_next_hand: true,
+        last_result: result,
+      },
+    });
+    socketMock.handlers.state?.(finishedState);
+
+    expect(game.resultOpen).toBe(false);
+    expect(game.pendingResultHandId).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(2600);
+    await Promise.resolve();
+
+    expect(game.resultOpen).toBe(true);
+    expect(game.pendingResultHandId).toBeNull();
+    vi.useRealTimers();
   });
 });
 

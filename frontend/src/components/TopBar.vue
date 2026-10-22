@@ -1,18 +1,30 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import AppIcon from "./AppIcon.vue";
+import { board, streetForCommunity } from "../boardReveal";
 import { game, openSetup, toggleGodView } from "../store";
 import { chips, shortName, streetLabel } from "../format";
 
-const match = computed(() => game.snapshot?.match || null);
+const snapshot = computed(() => (
+  (board.busy || board.holeHold) && board.baseSnapshot ? board.baseSnapshot : game.snapshot
+));
+const match = computed(() => snapshot.value?.match || null);
 const seats = computed(() => match.value?.seats || []);
 const matchup = computed(() => {
   if (seats.value.length !== 2) return "";
   return `${shortName(seats.value[0].name, 16)}  vs  ${shortName(seats.value[1].name, 16)}`;
 });
-const street = computed(() => game.snapshot?.street || "");
-const pot = computed(() => game.snapshot?.pot || 0);
-const handId = computed(() => game.snapshot?.hand_id || 0);
+const street = computed(() => {
+  if (board.busy) return streetForCommunity(board.community.length);
+  if (board.holeHold) return "preflop";
+  return snapshot.value?.street || "";
+});
+const pot = computed(() => snapshot.value?.pot || 0);
+const handId = computed(() => snapshot.value?.hand_id || 0);
+const streetText = computed(() => {
+  if (board.busy && board.community.length === 0) return "发牌中";
+  return match.value?.match_over ? "比赛结束" : streetLabel(street.value);
+});
 </script>
 
 <template>
@@ -29,7 +41,7 @@ const handId = computed(() => game.snapshot?.hand_id || 0);
       <span class="matchup">{{ matchup }}</span>
       <span class="chip mono">#{{ handId }}</span>
       <span class="chip mono">{{ match.rules.small_blind }}/{{ match.rules.big_blind }}</span>
-      <span class="chip gold">{{ match.match_over ? "比赛结束" : streetLabel(street) }}</span>
+      <span class="chip gold">{{ streetText }}</span>
       <span class="chip mono pot-chip"><AppIcon name="coins" :size="12" /> {{ chips(pot) }}</span>
     </div>
     <div class="top-info" v-else>

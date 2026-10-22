@@ -126,6 +126,16 @@ python scripts/eval_llm_vs_llm.py --hands 100 --workers 5  # LLM vs LLM 工具�
 - 前端 transcript 只做增量 reducer；不要在每个 delta 上做全量 JSON 深拷贝/排序。
 - Socket.IO 客户端必须 polling 优先（`transports: ["polling", "websocket"]`）。直连 WebSocket 时 engine.io 在连接结束返回空迭代器且不调用 `start_response`，Werkzeug 3.1 会报 `write() before start_response`。
 
+## 发牌 / 翻牌展示队列
+
+- `frontend/src/boardReveal.ts` 是牌桌展示层：`board.community` 是已经展示的公共牌，`board.busy` 表示逐张翻牌中，`board.holeHold` 表示开局底牌还没落桌翻开。
+- 服务端状态可能在一帧内从翻牌前跳到河牌，牌桌不要直接渲染 `game.snapshot.community`。用 `board.community`，队列会按翻牌圈、转牌、河牌拆开播放。
+- 展示期间 `board.baseSnapshot` 冻结底池、筹码、操作徽章、评估和牌堆。`TableView`、`TopBar`、`ActionBar` 都从这份快照取数；不要只改其中一个，否则其他位置会提前泄露结果。
+- 结果弹窗、胜者高亮、AnalysisPanel 刷新都等 `boardLocked`（`busy || holeHold`）结束。`maybeOpenResult()` 会同时检查展示牌数和结果里的 `board` 长度。
+- `startMatch` 必须先关闭 `setupOpen` 再应用首个快照。Bot 对 Bot 的首手可能在 `new_game` 返回前就结束，顺序反了会把结果丢掉。
+- `FlipCard.vue` 负责 3D 翻面，`PlayingCard.vue` 只负责牌面。底牌飞行用 Web Animations API 从桌内牌堆测量偏移。
+- `prefers-reduced-motion` 下队列直接展示最终牌面，底牌 hold 也跳过。
+
 ## 前端约定
 
 - 设计语言：深翡翠 + 暖金 + 象牙白；牌桌是椭圆绒面，Agent 控制台是深色“观测站”。
