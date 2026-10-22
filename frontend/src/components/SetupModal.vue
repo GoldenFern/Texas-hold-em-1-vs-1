@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import AppIcon from "./AppIcon.vue";
 import { iconUrl } from "../api";
 import {
@@ -41,6 +41,7 @@ const providers = computed<ProviderInfo[]>(() => boot.value?.providers || []);
 const rlcard = computed(() => boot.value?.rlcard || null);
 const limits = computed(() => boot.value?.game?.limits || {});
 const busy = computed(() => game.busy);
+const modalRef = ref<HTMLElement | null>(null);
 
 function deepCopy<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -57,10 +58,42 @@ function resetSetup(): void {
 watch(
   () => game.setupOpen,
   (open) => {
-    if (open) resetSetup();
+    if (open) {
+      resetSetup();
+      void nextTick(() => modalRef.value?.focus());
+    }
   },
   { immediate: true },
 );
+
+function onGlobalKeydown(event: KeyboardEvent): void {
+  if (!game.setupOpen) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    close();
+    return;
+  }
+  if (event.key !== "Tab" || !modalRef.value) return;
+  const focusable = Array.from(
+    modalRef.value.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((element) => element.getClientRects().length > 0);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement as HTMLElement | null;
+  if (event.shiftKey && (active === first || active === modalRef.value)) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && active === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+onMounted(() => window.addEventListener("keydown", onGlobalKeydown));
+onUnmounted(() => window.removeEventListener("keydown", onGlobalKeydown));
 
 function seat(index: number): SeatSetup {
   return setup.seats[index];
@@ -71,11 +104,12 @@ function otherSeat(index: number): SeatSetup {
 }
 
 function setKind(index: number, kind: SeatSetup["kind"]): void {
+  const current = seat(index);
+  if (current.kind === kind) return;
   if (kind === "human" && otherSeat(index).kind === "human") {
     pushToast("warn", "不能同时选择两个人类玩家", "请把另一个座位改成 LLM 或 RLCard。");
     return;
   }
-  const current = seat(index);
   if (kind === "human") {
     setup.seats[index] = { kind: "human", name: "你" };
   } else if (kind === "bot") {
@@ -96,6 +130,8 @@ function currentModel(index: number): ProviderModel | null {
 }
 
 function selectProvider(index: number, provider: ProviderInfo): void {
+  const current = seat(index);
+  if (current.kind === "llm" && current.provider_id === provider.id) return;
   const model = provider.models[0];
   if (!model) return;
   setup.seats[index] = {
@@ -127,11 +163,12 @@ function paramsOf(index: number): Record<string, any> {
 
 function setParam(index: number, key: string, value: unknown): void {
   paramsOf(index)[key] = value;
+  const model = currentModel(index);
+  if (model) delete game.testResults[testKey(index, model)];
 }
 
 function setBotType(index: number, agentType: string): void {
   const current = seat(index).bot || { agent_type: "random", model_path: null };
-  const models = rlcard.value?.models || [];
   const preferred: Record<string, string> = {
     dqn: "nlh_dqn.pth",
     nfsp: "nlh_nfsp.pth",
@@ -139,10 +176,12 @@ function setBotType(index: number, agentType: string): void {
     project_dqn: "nlh_dqn_project.pth",
     project_nfsp: "nlh_nfsp_project.pth",
   };
+  const candidates = botModels(agentType);
+  const preferredName = preferred[agentType];
   const chosen =
-    models.find((model) => model.name === preferred[agentType]) ||
-    models.find((model) => model.name.includes("_project") === agentType.startsWith("project_")) ||
-    models[0];
+    candidates.find((model) => model.name === preferredName) ||
+    candidates[0] ||
+    null;
   setup.seats[index] = {
     ...seat(index),
     kind: "bot",
@@ -160,7 +199,8 @@ function botModels(agentType: string) {
   return models.filter((model) => model.name.includes("_project") === project);
 }
 
-function setBotModel(index: number, path: string): void {  const bot = seat(index).bot || { agent_type: "random", model_path: null };
+function setBotModel(index: number, path: string): void {
+  const bot = seat(index).bot || { agent_type: "random", model_path: null };
   setup.seats[index] = {
     ...seat(index),
     kind: "bot",
@@ -197,6 +237,16 @@ function setBlinds(small: number, big: number): void {
   setRule("big_blind", big);
 }
 
+function limitError(key: string, label: string): string {
+  const limit = limits.value[key];
+  if (!limit) return "";
+  const value = numericRule(key as keyof SetupDraft["rules"]);
+  if (value < limit.min || value > limit.max) {
+    return `${label}必须在 ${limit.min} 到 ${limit.max} 之间。`;
+  }
+  return "";
+}
+
 const validation = computed(() => {
   if (setup.seats.filter((item) => item.kind === "human").length >= 2) return "不能同时选择两个人类玩家。";
   for (const config of setup.seats) {
@@ -208,10 +258,22 @@ const validation = computed(() => {
     if (config.kind === "bot") {
       const agentType = config.bot?.agent_type || "random";
       if (agentType !== "random" && !config.bot?.model_path) {
-        return `RLCard ${agentType.toUpperCase()} 需要选择模型文件。`;
+        return `${agentType.startsWith("project_") ? "Project" : "RLCard"} ${agentType.toUpperCase()} 需要选择模型文件。`;
       }
-      if (rlcard.value && !rlcard.value.available) return "rlcard 未安装，无法使用 RLCard Bot。";
+      if (!agentType.startsWith("project_") && rlcard.value && !rlcard.value.available) {
+        return "rlcard 未安装，无法使用 RLCard Bot。";
+      }
     }
+  }
+  for (const [key, label] of [
+    ["starting_chips", "起始筹码"],
+    ["small_blind", "小盲"],
+    ["big_blind", "大盲"],
+    ["rebuy_amount", "重购筹码"],
+    ["max_hands", "最大手数"],
+  ] as const) {
+    const error = limitError(key, label);
+    if (error) return error;
   }
   if (numericRule("starting_chips") < numericRule("big_blind")) return "起始筹码不能低于大盲。";
   if (numericRule("small_blind") <= 0 || numericRule("big_blind") <= 0) return "盲注必须大于 0。";
@@ -235,16 +297,20 @@ function applyPreset(kind: "human_deepseek" | "deepseek_glm" | "human_bot"): voi
   }
 }
 
+function testKey(index: number, model: ProviderModel): string {
+  return `${index}:${model.provider_id}:${model.id}`;
+}
+
 function testConnection(index: number): void {
   const model = currentModel(index);
   if (!model) return;
-  void testProvider(model, paramsOf(index));
+  void testProvider(model, paramsOf(index), testKey(index, model));
 }
 
 function testResult(index: number) {
   const model = currentModel(index);
   if (!model) return null;
-  return game.testResults[`${model.provider_id}:${model.id}`] || null;
+  return game.testResults[testKey(index, model)] || null;
 }
 
 function isTesting(index: number): boolean {
@@ -286,7 +352,7 @@ function close(): void {
 
 <template>
   <div v-if="game.setupOpen" class="modal-backdrop" @click.self="close" @keydown.esc="close">
-    <div class="modal setup-modal" role="dialog" aria-modal="true" aria-label="配置对局">
+    <div ref="modalRef" class="modal setup-modal" role="dialog" aria-modal="true" aria-label="配置对局" tabindex="-1">
       <header class="modal-header">
         <div>
           <div class="eyebrow">MATCH SETUP</div>

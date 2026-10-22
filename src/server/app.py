@@ -26,6 +26,45 @@ MODELS_DIR = PROJECT_ROOT / "models" / "rlcard"
 logger = logging.getLogger("hu.server")
 
 
+def _allowed_origins() -> list[str]:
+    raw = os.environ.get("HU_ALLOWED_ORIGINS", "").strip()
+    if raw:
+        return [item.strip() for item in raw.split(",") if item.strip()]
+    return [
+        "http://127.0.0.1:5050",
+        "http://localhost:5050",
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+        "http://[::1]:5050",
+        "http://[::1]:5173",
+    ]
+
+
+def _json_object() -> dict:
+    """Return a JSON object body, rejecting arrays and malformed JSON."""
+    payload = request.get_json(silent=True)
+    if payload is None:
+        if request.get_data(cache=True):
+            raise ValueError("请求体必须是合法的 JSON 对象")
+        return {}
+    if not isinstance(payload, dict):
+        raise ValueError("请求体必须是 JSON 对象")
+    return payload
+
+
+def _bool_field(payload: dict, key: str, default: bool) -> bool:
+    value = payload.get(key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ("true", "1", "yes", "on"):
+            return True
+        if lowered in ("false", "0", "no", "off"):
+            return False
+    raise ValueError(f"{key} 必须是布尔值")
+
+
 def create_app() -> tuple[Flask, SocketIO, GameSession]:
     load_dotenv(PROJECT_ROOT / ".env")
     logging.basicConfig(
@@ -47,22 +86,26 @@ def create_app() -> tuple[Flask, SocketIO, GameSession]:
     socketio = SocketIO(
         app,
         async_mode="threading",
-        cors_allowed_origins="*",
+        cors_allowed_origins=_allowed_origins(),
         logger=False,
         engineio_logger=False,
     )
 
     registry = ProviderRegistry()
+    with GAME_CONFIG_PATH.open("r", encoding="utf-8") as handle:
+        game_config = json.load(handle)
+    runtime = game_config.get("llm_runtime", {})
     client = LLMClient(
         registry,
-        connect_timeout=float(os.environ.get("HU_CONNECT_TIMEOUT", "20")),
-        read_timeout=float(os.environ.get("HU_READ_TIMEOUT", "300")),
+        connect_timeout=float(
+            os.environ.get("HU_CONNECT_TIMEOUT", runtime.get("connect_timeout_seconds", 20))
+        ),
+        read_timeout=float(
+            os.environ.get("HU_READ_TIMEOUT", runtime.get("request_timeout_seconds", 300))
+        ),
     )
     analyzer = HandDistributionAnalyzer()
     session = GameSession(socketio, registry, client, analyzer)
-
-    with GAME_CONFIG_PATH.open("r", encoding="utf-8") as handle:
-        game_config = json.load(handle)
 
     # ------------------------------------------------------------------
     # Pages
@@ -119,20 +162,20 @@ def create_app() -> tuple[Flask, SocketIO, GameSession]:
 
     @app.post("/api/game/new")
     def game_new():
-        payload = request.get_json(silent=True) or {}
         try:
+            payload = _json_object()
             state = session.start_match(payload)
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logger.exception("start_match failed")
-            return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 500
+            return jsonify({"ok": False, "error": "服务器内部错误，请查看日志"}), 500
         return jsonify({"ok": True, "state": state})
 
     @app.post("/api/game/action")
     def game_action():
-        payload = request.get_json(silent=True) or {}
         try:
+            payload = _json_object()
             result = session.human_action(payload)
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
@@ -150,14 +193,18 @@ def create_app() -> tuple[Flask, SocketIO, GameSession]:
 
     @app.post("/api/game/god-view")
     def game_god_view():
-        payload = request.get_json(silent=True) or {}
-        state = session.set_god_view(bool(payload.get("enabled", True)))
+        try:
+            payload = _json_object()
+            enabled = _bool_field(payload, "enabled", True)
+            state = session.set_god_view(enabled)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
         return jsonify({"ok": True, "state": state})
 
     @app.post("/api/game/analyze")
     def game_analyze():
-        payload = request.get_json(silent=True) or {}
         try:
+            payload = _json_object()
             seat = int(payload.get("seat", 0))
             iterations = int(payload.get("iterations", 30000))
             result = session.analyze(seat, iterations)
@@ -171,7 +218,10 @@ def create_app() -> tuple[Flask, SocketIO, GameSession]:
 
     @app.post("/api/llm/test")
     def llm_test():
-        payload = request.get_json(silent=True) or {}
+        try:
+            payload = _json_object()
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
         provider_id = str(payload.get("provider_id") or "")
         model_id = str(payload.get("model_id") or "")
         params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
@@ -181,8 +231,9 @@ def create_app() -> tuple[Flask, SocketIO, GameSession]:
             return jsonify({"ok": False, "error": str(exc)}), 400
         except LLMError as exc:
             return jsonify({"ok": False, "error": exc.detail, "kind": exc.kind}), 400
-        except Exception as exc:  # noqa: BLE001
-            return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 500
+        except Exception:  # noqa: BLE001
+            logger.exception("llm test failed")
+            return jsonify({"ok": False, "error": "服务器内部错误，请查看日志"}), 500
         return jsonify(result)
 
     @app.get("/api/health")
@@ -195,15 +246,15 @@ def create_app() -> tuple[Flask, SocketIO, GameSession]:
 
     @socketio.on("connect")
     def on_connect():
-        socketio.emit("state", session.get_state())
+        socketio.emit("state", session.get_state(), to=request.sid)
 
     @socketio.on("request_state")
     def on_request_state():
-        socketio.emit("state", session.get_state())
+        socketio.emit("state", session.get_state(), to=request.sid)
 
     @socketio.on("request_transcripts")
     def on_request_transcripts():
-        socketio.emit("transcripts", session.get_transcripts())
+        socketio.emit("transcripts", session.get_transcripts(), to=request.sid)
 
     # ------------------------------------------------------------------
     # Errors

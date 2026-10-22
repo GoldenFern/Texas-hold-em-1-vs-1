@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import random
+import threading
 import time
 import uuid
 from typing import Callable, List, Optional
@@ -39,8 +40,8 @@ TOOLS = [
                     "iterations": {
                         "type": "integer",
                         "minimum": 2000,
-                        "maximum": 200000,
-                        "description": "蒙特卡洛采样次数；翻牌前建议 20000-50000，翻牌后引擎会自动精确枚举。",
+                        "maximum": 50000,
+                        "description": "蒙特卡洛采样次数；翻牌前建议 20000-50000，翻牌后引擎会自动精确枚举。单回合总采样有上限。",
                     }
                 },
                 "required": [],
@@ -133,14 +134,25 @@ class LLMAgent(BaseAgent):
         self.max_steps = int(runtime.get("max_steps_per_turn", 12))
         self.max_failures = int(runtime.get("max_consecutive_failures", 3))
         self.require_estimate_first = bool(runtime.get("require_estimate_first", False))
-        self.max_context_tokens = int(runtime.get("max_context_tokens_estimate", 220000))
+        runtime_budget = int(runtime.get("max_context_tokens_estimate", 220000))
+        reserved_output = int(self.params.get("max_tokens", 32768))
+        context_window = int(getattr(spec, "context_window", 0) or 0)
+        if context_window > 0:
+            runtime_budget = min(runtime_budget, context_window - reserved_output - 2048)
+        self.max_context_tokens = max(8000, runtime_budget)
+        self.max_estimate_calls = int(runtime.get("max_estimate_calls_per_turn", 2))
+        self.max_estimate_iterations = int(runtime.get("max_estimate_iterations", 50000))
         self.messages: List[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
         self.turn_count = 0
         self._estimated_keys: set[tuple[int, str]] = set()
         self._nudged_keys: set[tuple[int, str]] = set()
+        self._estimate_calls_this_turn = 0
+        self._estimate_iterations_this_turn = 0
+        self._tools_tokens = estimate_tokens(json.dumps(TOOLS, ensure_ascii=False))
         self.total_usage = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
         self.last_error = ""
         self._trimmed = False
+        self._cancel_event = threading.Event()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -154,6 +166,13 @@ class LLMAgent(BaseAgent):
         self._trimmed = False
         self._estimated_keys.clear()
         self._nudged_keys.clear()
+        self._estimate_calls_this_turn = 0
+        self._estimate_iterations_this_turn = 0
+        self._cancel_event.clear()
+
+    def cancel(self) -> None:
+        """Ask an in-flight decision loop to stop making model calls."""
+        self._cancel_event.set()
 
     def on_hand_finished(self, result: Optional[dict]) -> None:
         if not result:
@@ -186,6 +205,10 @@ class LLMAgent(BaseAgent):
         steps = 0
         failures = 0
         self.turn_count += 1
+        self._estimate_calls_this_turn = 0
+        self._estimate_iterations_this_turn = 0
+        if self._cancel_event.is_set():
+            return Action(view.seat, ActionType.FOLD, source="llm", auto=True)
 
         emit(
             {
@@ -208,7 +231,10 @@ class LLMAgent(BaseAgent):
         self._trim_context(emit)
 
         while steps < self.max_steps:
+            if self._cancel_event.is_set():
+                return Action(view.seat, ActionType.FOLD, source="llm", auto=True)
             steps += 1
+            self._trim_context(emit)
             message_id = uuid.uuid4().hex[:12]
             emit(
                 {
@@ -241,8 +267,30 @@ class LLMAgent(BaseAgent):
                     TOOLS,
                     self.params,
                     on_stream,
+                    cancel=self._cancel_event.is_set,
                 )
+                self.last_error = ""
             except LLMError as exc:
+                if exc.kind == "cancelled":
+                    return Action(view.seat, ActionType.FOLD, source="llm", auto=True)
+                if exc.kind == "context_length":
+                    before = len(self.messages)
+                    self._trim_context(emit, force=True)
+                    if len(self.messages) < before and steps < self.max_steps:
+                        self.last_error = str(exc)
+                        emit(
+                            {
+                                "type": "message_end",
+                                "turn_id": turn_id,
+                                "message_id": message_id,
+                                "error": True,
+                                "content": "",
+                                "reasoning": "",
+                                "tool_calls": [],
+                                "estimated_usage": False,
+                            }
+                        )
+                        continue
                 self.last_error = str(exc)
                 emit(
                     {
@@ -322,6 +370,7 @@ class LLMAgent(BaseAgent):
                     "reasoning": result.reasoning,
                     "finish_reason": result.finish_reason,
                     "usage": dict(result.usage),
+                    "estimated_usage": bool(result.estimated_usage),
                     "latency_ms": round(result.latency_ms, 1),
                     "tool_calls": [
                         {
@@ -391,11 +440,33 @@ class LLMAgent(BaseAgent):
                 )
 
                 if call.name == "estimate_hand_probabilities":
-                    self._handle_estimate(view, call, parsed, emit, turn_id, index, tool_started)
+                    if not self._handle_estimate(view, call, parsed, emit, turn_id, index, tool_started):
+                        failures += 1
+                        if failures >= self.max_failures:
+                            return self._fallback(
+                                view,
+                                emit,
+                                turn_id,
+                                started,
+                                steps,
+                                usage_total,
+                                reason="连续三次无效动作",
+                            )
                     continue
 
                 if call.name == "get_random_number":
-                    self._handle_random(call, emit, turn_id, index, tool_started)
+                    if not self._handle_random(call, parsed, emit, turn_id, index, tool_started):
+                        failures += 1
+                        if failures >= self.max_failures:
+                            return self._fallback(
+                                view,
+                                emit,
+                                turn_id,
+                                started,
+                                steps,
+                                usage_total,
+                                reason="连续三次无效动作",
+                            )
                     continue
 
                 if call.name == "apply_action":
@@ -463,7 +534,10 @@ class LLMAgent(BaseAgent):
                             )
                         continue
 
-                    validation_error = self.validate_action(action)
+                    try:
+                        validation_error = self.validate_action(action)
+                    except Exception as exc:  # noqa: BLE001
+                        validation_error = f"动作校验失败：{type(exc).__name__}: {exc}"
                     if validation_error:
                         failures += 1
                         self._append_tool_error(
@@ -555,8 +629,8 @@ class LLMAgent(BaseAgent):
         turn_id: str,
         index: int,
         started: float,
-    ) -> None:
-        if parsed is None:
+    ) -> bool:
+        if parsed is None or not isinstance(parsed, dict):
             self._append_tool_error(
                 call,
                 f"工具参数不是合法 JSON：{call.arguments[:300]}",
@@ -564,12 +638,43 @@ class LLMAgent(BaseAgent):
                 turn_id,
                 index,
             )
-            return
+            return False
+        if self._estimate_calls_this_turn >= self.max_estimate_calls:
+            self._append_tool_error(
+                call,
+                f"本回合调用 estimate_hand_probabilities 的次数已达上限 "
+                f"（{self.max_estimate_calls} 次），请直接提交 apply_action。",
+                emit,
+                turn_id,
+                index,
+            )
+            return False
+        remaining = self.max_estimate_iterations - self._estimate_iterations_this_turn
+        if remaining <= 0:
+            self._append_tool_error(
+                call,
+                "本回合的估算采样预算已用完，请直接提交 apply_action。",
+                emit,
+                turn_id,
+                index,
+            )
+            return False
+        if remaining < 2000:
+            self._append_tool_error(
+                call,
+                "本回合剩余估算采样次数不足，请直接提交 apply_action。",
+                emit,
+                turn_id,
+                index,
+            )
+            return False
         iterations = parsed.get("iterations", 30000)
         try:
             iterations = int(iterations)
         except (TypeError, ValueError):
             iterations = 30000
+        iterations = max(2000, min(iterations, remaining))
+        self._estimate_calls_this_turn += 1
         try:
             hole = [Card.from_str(code) for code in view.hole_cards]
             community = [Card.from_str(code) for code in view.community]
@@ -587,8 +692,9 @@ class LLMAgent(BaseAgent):
                 turn_id,
                 index,
             )
-            return
+            return True
 
+        self._estimate_iterations_this_turn += iterations
         self._estimated_keys.add((view.hand_id, view.street))
         payload = {"ok": True, **result.to_llm_dict()}
         top = sorted(
@@ -607,16 +713,27 @@ class LLMAgent(BaseAgent):
             ui_result={"ok": True, **result.to_dict()},
             summary=summary,
         )
+        return True
 
     def _handle_random(
         self,
         call: ToolCall,
+        parsed: Optional[dict],
         emit,
         turn_id: str,
         index: int,
         started: float,
-    ) -> None:
-        value = round(random.random(), 4)
+    ) -> bool:
+        if parsed is None or not isinstance(parsed, dict):
+            self._append_tool_error(
+                call,
+                f"工具参数不是合法 JSON：{call.arguments[:300]}",
+                emit,
+                turn_id,
+                index,
+            )
+            return False
+        value = random.random()
         payload = {"ok": True, "value": value}
         self._append_tool_result(
             call,
@@ -627,12 +744,19 @@ class LLMAgent(BaseAgent):
             started,
             summary=f"{value:.4f}",
         )
+        return True
 
     def _build_action(self, view: AgentView, parsed: dict) -> tuple[Optional[Action], str]:
         raw = str(parsed.get("action", "")).strip().lower()
         action_type = _ACTION_ALIASES.get(raw, raw)
         if action_type not in {item.value for item in ActionType}:
             return None, f"未知动作 {raw!r}。允许的动作：{', '.join(view.legal_actions)}"
+        # The engine distinguishes an opening bet (BB option included) from a
+        # raise. Accept either spelling from the model and normalize it.
+        if action_type == "raise" and "raise" not in view.legal_actions and "bet" in view.legal_actions:
+            action_type = "bet"
+        elif action_type == "bet" and "bet" not in view.legal_actions and "raise" in view.legal_actions:
+            action_type = "raise"
         if action_type not in view.legal_actions:
             return (
                 None,
@@ -783,21 +907,28 @@ class LLMAgent(BaseAgent):
         return action
 
     def _context_tokens(self) -> int:
-        total = 0
+        total = self._tools_tokens
         for message in self.messages:
             total += 6
             content = message.get("content")
             if isinstance(content, str):
                 total += estimate_tokens(content)
+            reasoning = message.get("reasoning_content")
+            if isinstance(reasoning, str):
+                total += estimate_tokens(reasoning)
+            tool_call_id = message.get("tool_call_id")
+            if isinstance(tool_call_id, str):
+                total += estimate_tokens(tool_call_id)
             for call in message.get("tool_calls") or []:
+                total += estimate_tokens(str(call.get("id") or ""))
                 function = call.get("function") or {}
                 total += estimate_tokens(str(function.get("name") or ""))
                 total += estimate_tokens(str(function.get("arguments") or ""))
         return total
 
-    def _trim_context(self, emit) -> None:
+    def _trim_context(self, emit, force: bool = False) -> None:
         removed = 0
-        while self._context_tokens() > self.max_context_tokens:
+        while self._context_tokens() > self.max_context_tokens or (force and removed == 0):
             turn_starts = [
                 index
                 for index, message in enumerate(self.messages)
@@ -810,6 +941,7 @@ class LLMAgent(BaseAgent):
             cut = turn_starts[1]
             removed += cut - 1
             self.messages = [self.messages[0]] + self.messages[cut:]
+            force = False
         if removed and not self._trimmed:
             self._trimmed = True
             emit(

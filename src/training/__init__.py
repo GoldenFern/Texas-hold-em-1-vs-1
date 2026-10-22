@@ -2,12 +2,13 @@
 
 from .actions import ACTION_LABELS, NUM_ACTIONS, action_from_view, legal_action_mask
 from .env import ProjectHeadsUpEnv
-from .obs import OBS_DIM, encode_observation
+from .obs import OBS_DIM, OBS_VERSION, encode_observation
 
 __all__ = [
     "ACTION_LABELS",
     "NUM_ACTIONS",
     "OBS_DIM",
+    "OBS_VERSION",
     "ProjectHeadsUpEnv",
     "action_from_view",
     "encode_observation",

@@ -103,7 +103,10 @@ def build_hand_result_message(result: Optional[dict], seat: int, name: str) -> s
         )
     if result.get("reason") == "fold":
         lines.append("这手牌以弃牌结束。")
-    lines.append("下一手即将开始，请继续保持专注。")
+    if result.get("match_over"):
+        lines.append("比赛已经结束，感谢你的参与。")
+    else:
+        lines.append("下一手即将开始，请继续保持专注。")
     return "\n".join(lines)
 
 

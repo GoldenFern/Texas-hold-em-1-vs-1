@@ -70,6 +70,20 @@ def test_preflop_mask_and_min_raise() -> None:
     assert fraction_action.amount <= view.max_raise_to
 
 
+def test_big_blind_option_uses_bet_not_raise() -> None:
+    env = ProjectHeadsUpEnv(seed=5)
+    env.reset(button=0)
+    env.step(ACTION_CALL)  # SB limps, BB has the option.
+    view = env.build_view(1)
+    assert "bet" in view.legal_actions
+    assert "raise" not in view.legal_actions
+    action = action_from_view(view, ACTION_MIN_RAISE)
+    assert action.type.value == "bet"
+    assert action.amount >= view.min_raise_to
+    result = env.game.apply(action)  # type: ignore[union-attr]
+    assert result.ok, result.error
+
+
 def test_postflop_check_slot() -> None:
     env = ProjectHeadsUpEnv(seed=5)
     env.reset(button=0)
@@ -115,6 +129,25 @@ def test_fold_refund_and_reward_scale() -> None:
     assert env.payoffs() == pytest.approx([-0.025, 0.025])
 
 
+def test_observation_version_keeps_legacy_size_feature() -> None:
+    env = ProjectHeadsUpEnv(seed=9)
+    env.reset(button=0)
+    view = env.build_view(0)
+    view.action_history = [
+        {
+            "seat": 0,
+            "type": "raise",
+            "amount": 40,
+            "added": 30,
+            "pot_after": 60,
+        }
+    ]
+    legacy = encode_observation(view, 10, 1)
+    current = encode_observation(view, 10, 2)
+    assert legacy[70] == pytest.approx(40 / 60)
+    assert current[70] == pytest.approx(30 / 60)
+
+
 def test_project_bot_checkpoint_roundtrip(tmp_path) -> None:
     env = ProjectHeadsUpEnv(seed=8)
     env.reset(button=0)
@@ -140,4 +173,30 @@ def test_project_bot_checkpoint_roundtrip(tmp_path) -> None:
     payload = torch.load(path, map_location="cpu", weights_only=True)
     assert payload["format"] == "project-bot-v1"
     assert payload["obs_dim"] == OBS_DIM
+    assert payload["obs_version"] == 2
     assert payload["num_actions"] == NUM_ACTIONS
+    assert bot.sample is False
+
+
+def test_nfsp_checkpoint_defaults_to_sampling(tmp_path) -> None:
+    from rlcard.agents import NFSPAgent
+
+    agent = NFSPAgent(
+        num_actions=NUM_ACTIONS,
+        state_shape=[OBS_DIM],
+        hidden_layers_sizes=[32],
+        q_mlp_layers=[32],
+        device="cpu",
+        evaluate_with="average_policy",
+    )
+    path = save_project_checkpoint(
+        tmp_path / "nfsp.pth",
+        algorithm="nfsp",
+        state_dict=agent.policy_network.state_dict(),
+        mlp_layers=list(agent.policy_network.mlp_layers),
+    )
+    bot = ProjectBot("nfsp", path)
+    assert bot.algorithm == "nfsp"
+    assert bot.sample is True
+    with pytest.raises(ValueError):
+        ProjectBot("wrong", path, algorithm="dqn")

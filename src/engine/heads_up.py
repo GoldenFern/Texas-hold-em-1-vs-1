@@ -112,18 +112,46 @@ class HeadsUpGame:
         seed: Optional[int] = None,
         max_hands: int = 0,
     ) -> None:
-        if starting_chips <= 0:
-            raise ValueError("starting_chips 必须为正")
-        if small_blind <= 0 or big_blind <= 0:
-            raise ValueError("盲注必须为正")
+        def positive_int(value: object, label: str) -> int:
+            if isinstance(value, bool):
+                raise ValueError(f"{label} 必须为正整数")
+            if isinstance(value, float) and not value.is_integer():
+                raise ValueError(f"{label} 必须为正整数")
+            try:
+                number = int(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{label} 必须为正整数") from exc
+            if number <= 0:
+                raise ValueError(f"{label} 必须为正")
+            return number
+
+        starting_chips = positive_int(starting_chips, "starting_chips")
+        small_blind = positive_int(small_blind, "small_blind")
+        big_blind = positive_int(big_blind, "big_blind")
         if big_blind < small_blind:
             raise ValueError("大盲必须不小于小盲")
+        if starting_chips < big_blind:
+            raise ValueError("起始筹码不能低于大盲")
+        if isinstance(max_hands, bool):
+            raise ValueError("max_hands 必须为非负整数")
+        if isinstance(max_hands, float) and not max_hands.is_integer():
+            raise ValueError("max_hands 必须为非负整数")
+        try:
+            max_hands = int(max_hands or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("max_hands 必须为非负整数") from exc
+        if max_hands < 0:
+            raise ValueError("max_hands 必须为非负整数")
+        rebuy_amount = positive_int(
+            starting_chips if rebuy_amount is None else rebuy_amount,
+            "rebuy_amount",
+        )
 
         self.starting_chips = int(starting_chips)
         self.small_blind = int(small_blind)
         self.big_blind = int(big_blind)
         self.auto_rebuy = bool(auto_rebuy)
-        self.rebuy_amount = int(rebuy_amount or starting_chips)
+        self.rebuy_amount = int(rebuy_amount)
         self.max_hands = int(max_hands or 0)
         self.seed = seed
 
@@ -159,14 +187,20 @@ class HeadsUpGame:
 
     @property
     def can_start_hand(self) -> bool:
+        if self.street not in (Street.WAITING, Street.FINISHED):
+            return False
         if self.match_over:
             return False
         if self.max_hands and self.hands_played >= self.max_hands:
             return False
+        if not self.auto_rebuy and any(player.chips <= 0 for player in self.players):
+            return False
         return True
 
     def start_hand(self) -> None:
-        """Deal a new hand. Raises when the match is over."""
+        """Deal a new hand. Raises when the match is over or a hand is active."""
+        if self.street not in (Street.WAITING, Street.FINISHED):
+            raise RuntimeError("当前手牌尚未结束")
         if self.match_over:
             raise RuntimeError("比赛已结束")
         if self.max_hands and self.hands_played >= self.max_hands:
@@ -265,6 +299,10 @@ class HeadsUpGame:
             return False
         if not player.raise_allowed:
             return False
+        opponent = self.players[1 - seat]
+        if opponent.status == PlayerStatus.ALL_IN:
+            # There is nobody left to call a raise.
+            return False
         return player.chips > self.to_call(seat)
 
     def legal_actions(self, seat: Optional[int] = None) -> List[ActionType]:
@@ -299,7 +337,12 @@ class HeadsUpGame:
         player = self.get_player(seat)
         to_call = self.to_call(seat)
         max_raise_to = self.max_raise_to(seat)
-        if self.current_bet == 0:
+        can_raise = self.can_raise(seat)
+        if not can_raise:
+            # Do not advertise a raise-to range that is below the current bet.
+            min_raise_to = self.current_bet
+            max_raise_to = max(self.current_bet, max_raise_to)
+        elif self.current_bet == 0:
             min_raise_to = min(self.big_blind, max_raise_to)
         else:
             min_raise_to = min(self.current_bet + self.last_full_raise, max_raise_to)
@@ -311,7 +354,8 @@ class HeadsUpGame:
             "street_bet": player.street_bet,
             "min_raise_to": min_raise_to,
             "max_raise_to": max_raise_to,
-            "can_raise": self.can_raise(seat),
+            "can_raise": can_raise,
+            "raise_allowed": can_raise,
             "is_all_in_call": to_call >= player.chips,
             "pot": self.pot,
             "pot_before_action": self.pot,
@@ -431,12 +475,16 @@ class HeadsUpGame:
                 return ActionResult(False, action, "无需跟注，请使用过牌")
             added = min(to_call, player.chips)
             self._commit(player, added)
-            self._record(player, action, pot_after=self.pot, amount=added)
+            self._record(player, action, pot_after=self.pot, amount=added, added=added)
             player.acted_this_street = True
             player.raise_allowed = False
             return self._after_action(action, street_changed=False)
 
         # BET / RAISE / ALL_IN
+        if action_type == ActionType.BET and to_call > 0:
+            return ActionResult(False, action, f"面对下注 {to_call} 时请使用加注")
+        if action_type == ActionType.RAISE and to_call == 0:
+            return ActionResult(False, action, "当前无需跟注，请使用下注")
         if not self.can_raise(player.seat) and not (
             action_type == ActionType.ALL_IN and to_call >= player.chips
         ):
@@ -448,7 +496,7 @@ class HeadsUpGame:
             # All-in is only a call when the stack cannot cover the bet.
             added = player.chips
             self._commit(player, added)
-            self._record(player, action, pot_after=self.pot, amount=added)
+            self._record(player, action, pot_after=self.pot, amount=added, added=added)
             player.acted_this_street = True
             player.raise_allowed = False
             return self._after_action(action, street_changed=False)
@@ -459,7 +507,7 @@ class HeadsUpGame:
         else:
             target = action.amount
 
-        if not isinstance(target, int):
+        if isinstance(target, bool) or not isinstance(target, int):
             return ActionResult(False, action, "加注金额必须是整数")
 
         if target <= player.street_bet:
@@ -508,7 +556,7 @@ class HeadsUpGame:
         self.min_raise_to = self.current_bet + self.last_full_raise
         player.acted_this_street = True
         player.raise_allowed = False
-        self._record(player, action, pot_after=self.pot, amount=target)
+        self._record(player, action, pot_after=self.pot, amount=target, added=added)
         return self._after_action(action, street_changed=False)
 
     def _commit(self, player: HeadsUpPlayer, added: int) -> None:
@@ -525,6 +573,7 @@ class HeadsUpGame:
         action: Action,
         pot_after: int,
         amount: int = 0,
+        added: int = 0,
     ) -> None:
         entry = {
             "hand_id": self.hand_id,
@@ -533,6 +582,7 @@ class HeadsUpGame:
             "type": action.type.value,
             "label": action.type.label,
             "amount": int(amount if action.type in (ActionType.BET, ActionType.RAISE, ActionType.CALL, ActionType.ALL_IN) else 0),
+            "added": int(added),
             "pot_after": pot_after,
             "chips_after": player.chips,
             "source": action.source,
@@ -790,6 +840,13 @@ class HeadsUpGame:
     def _close_hand(self) -> None:
         self.street = Street.FINISHED
         self.actor = None
+        self.current_bet = 0
+        self.last_full_raise = self.big_blind
+        self.min_raise_to = self.big_blind
+        for player in self.players:
+            player.street_bet = 0
+            player.acted_this_street = False
+            player.raise_allowed = True
         self.hands_played += 1
         if any(player.chips <= 0 for player in self.players):
             if not self.auto_rebuy:

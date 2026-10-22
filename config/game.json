@@ -20,10 +20,10 @@
     "max_steps_per_turn": 12,
     "max_consecutive_failures": 3,
     "require_estimate_first": false,
+    "max_estimate_calls_per_turn": 2,
+    "max_estimate_iterations": 50000,
     "max_context_tokens_estimate": 220000,
     "request_timeout_seconds": 300,
-    "connect_timeout_seconds": 20,
-    "temperature_default": 0.8,
-    "max_tokens_default": 32768
+    "connect_timeout_seconds": 20
   }
 }

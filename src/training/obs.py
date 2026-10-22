@@ -14,7 +14,7 @@ Layout
 60..63   street one-hot: preflop, flop, turn, river
 64       is_button
 65..69   last action type: fold, check, call, aggressive, none
-70       last action amount / pot after action
+70       last action size: v1 uses amount (raise-to), v2 uses chips added by the action
 71..72   last actor: hero, villain
 
 The vector is always from the acting player's point of view, so one network can
@@ -31,6 +31,7 @@ from src.agents.base import AgentView
 from src.engine.cards import Card
 
 OBS_DIM = 73
+OBS_VERSION = 2
 
 CARD_DIM = 52
 POT_INDEX = 52
@@ -75,7 +76,7 @@ def card_index(code: str) -> int:
     return suit * 13 + rank
 
 
-def encode_observation(view: AgentView, big_blind: int) -> np.ndarray:
+def encode_observation(view: AgentView, big_blind: int, obs_version: int = OBS_VERSION) -> np.ndarray:
     """Encode an ``AgentView`` into the 73-float vector."""
     obs = np.zeros(OBS_DIM, dtype=np.float32)
     for code in list(view.community) + list(view.hole_cards):
@@ -98,11 +99,16 @@ def encode_observation(view: AgentView, big_blind: int) -> np.ndarray:
     obs[IS_BUTTON_INDEX] = 1.0 if view.is_button else 0.0
 
     last = view.action_history[-1] if view.action_history else None
-    _encode_last_action(obs, last, int(view.seat))
+    _encode_last_action(obs, last, int(view.seat), obs_version)
     return obs
 
 
-def _encode_last_action(obs: np.ndarray, last: Optional[dict], hero_seat: int) -> None:
+def _encode_last_action(
+    obs: np.ndarray,
+    last: Optional[dict],
+    hero_seat: int,
+    obs_version: int = OBS_VERSION,
+) -> None:
     if not last:
         obs[LAST_TYPE_OFFSET + LAST_TYPE_NONE] = 1.0
         return
@@ -111,7 +117,10 @@ def _encode_last_action(obs: np.ndarray, last: Optional[dict], hero_seat: int) -
     type_index = _LAST_TYPE_INDEX.get(action_type, LAST_TYPE_NONE)
     obs[LAST_TYPE_OFFSET + type_index] = 1.0
 
-    amount = float(last.get("amount") or 0)
+    if obs_version >= 2:
+        amount = float(last.get("added", last.get("amount") or 0))
+    else:
+        amount = float(last.get("amount") or 0)
     pot_after = float(last.get("pot_after") or 0)
     obs[LAST_SIZE_INDEX] = min(2.0, amount / max(pot_after, 1.0))
 
@@ -135,6 +144,7 @@ __all__ = [
     "MY_CHIPS_INDEX",
     "MY_STREET_BET_INDEX",
     "OBS_DIM",
+    "OBS_VERSION",
     "OPPONENT_CHIPS_INDEX",
     "OPPONENT_STREET_BET_INDEX",
     "POT_INDEX",

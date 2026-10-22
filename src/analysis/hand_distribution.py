@@ -8,10 +8,12 @@ the hot loop free of per-sample combination extraction.
 
 from __future__ import annotations
 
+import copy
 import itertools
 import random
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence
 
@@ -52,9 +54,9 @@ class DistributionResult:
             "iterations": self.iterations,
             "elapsed_ms": round(self.elapsed_ms, 1),
             "total": self.total,
-            "distribution": self.distribution,
-            "current_best": self.current_best,
-            "known_cards": self.known_cards,
+            "distribution": copy.deepcopy(self.distribution),
+            "current_best": copy.deepcopy(self.current_best),
+            "known_cards": list(self.known_cards),
             "needed_board_cards": self.needed_board_cards,
         }
 
@@ -78,7 +80,7 @@ class HandDistributionAnalyzer:
     """Compute and cache final hand-category distributions."""
 
     def __init__(self) -> None:
-        self._cache: Dict[tuple, DistributionResult] = {}
+        self._cache: "OrderedDict[tuple, DistributionResult]" = OrderedDict()
         self._lock = threading.RLock()
 
     def analyze(
@@ -99,13 +101,16 @@ class HandDistributionAnalyzer:
         if len(set(codes)) != len(codes):
             raise ValueError("已知牌中存在重复牌")
         key = (
+            int(hero_seat),
             tuple(sorted(card.code for card in hero_hole)),
             tuple(card.code for card in community),
             iterations,
         )
         with self._lock:
-            if key in self._cache:
-                return self._cache[key]
+            cached = self._cache.get(key)
+            if cached is not None:
+                self._cache.move_to_end(key)
+                return cached
 
         start = time.perf_counter()
         needed = 5 - len(community)
@@ -171,9 +176,10 @@ class HandDistributionAnalyzer:
             needed_board_cards=needed,
         )
         with self._lock:
-            if len(self._cache) >= _CACHE_LIMIT:
-                self._cache.pop(next(iter(self._cache)))
             self._cache[key] = result
+            self._cache.move_to_end(key)
+            while len(self._cache) > _CACHE_LIMIT:
+                self._cache.popitem(last=False)
         return result
 
 

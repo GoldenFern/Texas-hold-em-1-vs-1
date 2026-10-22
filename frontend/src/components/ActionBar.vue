@@ -13,6 +13,7 @@ import {
 } from "../store";
 
 const raiseTo = ref(0);
+const raiseDraft = ref("0");
 const raiseInput = ref<HTMLInputElement | null>(null);
 const quickFraction = ref<string>("");
 
@@ -31,8 +32,6 @@ const canCheck = computed(() => legal.value.includes("check"));
 const canCall = computed(() => legal.value.includes("call"));
 const canFold = computed(() => legal.value.includes("fold"));
 const canAllIn = computed(() => legal.value.includes("all_in") && isRaise.value);
-const toCall = computed(() => Number(snapshot.value?.to_call || 0));
-const callAmount = computed(() => Number(snapshot.value?.call_amount || 0));
 const pot = computed(() => Number(snapshot.value?.pot || 0));
 const currentBet = computed(() => Number(snapshot.value?.current_bet || 0));
 const minRaise = computed(() => Number(snapshot.value?.min_raise_to || 0));
@@ -41,6 +40,12 @@ const humanPlayer = computed(() => {
   if (!humanSeat.value) return null;
   return snapshot.value?.players?.find((player) => player.seat === humanSeat.value?.seat) || null;
 });
+const toCall = computed(() => {
+  const player = humanPlayer.value;
+  const owed = currentBet.value - Number(player?.street_bet || 0);
+  return Math.max(0, owed);
+});
+const callAmount = computed(() => Math.min(toCall.value, Number(humanPlayer.value?.chips || 0)));
 const potOdds = computed(() => {
   if (toCall.value <= 0) return 0;
   return toCall.value / (pot.value + toCall.value);
@@ -93,10 +98,28 @@ function setRaise(value: number): void {
   raiseTo.value = clampRaise(value);
 }
 
+function onRaiseInput(event: Event): void {
+  const input = event.target as HTMLInputElement;
+  raiseDraft.value = input.value;
+  quickFraction.value = "";
+  const value = Number(input.value);
+  if (Number.isFinite(value)) raiseTo.value = clampRaise(value);
+}
+
+function onRaiseBlur(): void {
+  const clamped = clampRaise(Number(raiseDraft.value));
+  raiseTo.value = clamped;
+  raiseDraft.value = String(clamped);
+}
+
 const sliderPct = computed(() => {
   const span = maxRaise.value - minRaise.value;
   if (span <= 0) return 100;
   return Math.max(0, Math.min(100, ((raiseTo.value - minRaise.value) / span) * 100));
+});
+
+watch(raiseTo, (value) => {
+  raiseDraft.value = String(value);
 });
 
 watch(
@@ -111,6 +134,7 @@ watch(
   () => {
     if (!isRaise.value) return;
     raiseTo.value = clampRaise(minRaise.value);
+    raiseDraft.value = String(raiseTo.value);
     quickFraction.value = "";
   },
   { immediate: true },
@@ -123,11 +147,12 @@ async function act(action: string, amount = 0): Promise<void> {
 
 function raiseAction(): void {
   if (!isRaise.value) return;
-  const type = currentBet.value === 0 ? "bet" : "raise";
+  const type = legal.value.includes("bet") ? "bet" : "raise";
   void act(type, clampRaise(raiseTo.value));
 }
 
 function onKeydown(event: KeyboardEvent): void {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.repeat) return;
   if (game.setupOpen || game.resultOpen) return;
   const target = event.target as HTMLElement | null;
   if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
@@ -168,8 +193,8 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
       <div class="status-sub">
         <template v-if="match">
           <span>底池 <strong class="mono gold">{{ chips(pot) }}</strong></span>
-          <span v-if="toCall > 0">需跟注 <strong class="mono">{{ chips(toCall) }}</strong></span>
-          <span v-if="toCall > 0" class="pot-odds">底池赔率 <strong class="mono">{{ percent(potOdds, 0) }}</strong></span>
+          <span v-if="canAct && toCall > 0">需跟注 <strong class="mono">{{ chips(toCall) }}</strong></span>
+          <span v-if="canAct && toCall > 0" class="pot-odds">底池赔率 <strong class="mono">{{ percent(potOdds, 0) }}</strong></span>
           <span v-if="assessment" class="chip gold">{{ assessment.category_name }}</span>
         </template>
         <template v-else>
@@ -212,7 +237,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
         </button>
         <button v-if="isRaise" class="btn btn-primary action-btn main-action" @click="raiseAction" title="快捷键 R">
           <AppIcon name="zap" :size="15" />
-          {{ currentBet === 0 ? "下注" : "加注" }}到 {{ chips(raiseTo) }}
+          {{ legal.includes("bet") ? "下注" : "加注" }}到 {{ chips(raiseTo) }}
           <kbd>R</kbd>
         </button>
         <button v-if="canAllIn" class="btn allin-btn" @click="act('all_in')" title="快捷键 A">
@@ -249,15 +274,15 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
               type="number"
               :min="minRaise"
               :max="maxRaise"
-              :value="raiseTo"
-              @input="setRaise(Number(($event.target as HTMLInputElement).value))"
-              @blur="raiseTo = clampRaise(raiseTo)"
+              :value="raiseDraft"
+              @input="onRaiseInput"
+              @blur="onRaiseBlur"
             />
           </div>
         </div>
       </div>
       <div v-else class="raise-panel muted-note">
-        当前筹码不足以加注，只能跟注或弃牌。
+        当前不能加注，只能过牌、跟注或弃牌。
       </div>
     </div>
 
@@ -490,6 +515,18 @@ kbd {
 }
 
 .winner-line strong { color: var(--gold); }
+
+@media (max-width: 1520px) {
+  .controls { flex-wrap: wrap; }
+  .raise-panel {
+    flex: 1 1 100%;
+    max-width: none;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    padding-left: 0;
+    padding-top: 8px;
+  }
+}
 
 @media (max-width: 1180px) {
   .action-bar { flex-wrap: wrap; gap: 12px; }

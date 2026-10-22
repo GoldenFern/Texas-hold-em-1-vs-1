@@ -91,6 +91,7 @@ CSV_FIELDS = [
     "api_errors",
     "infra_error",
     "fatal_error",
+    "fallbacks",
     "duration_sec",
     "attempts",
 ]
@@ -162,6 +163,16 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         parser.error("blinds must satisfy 0 < sb <= bb")
     if args.retries < 0:
         parser.error("--retries cannot be negative")
+    if args.timeout <= 0 or args.connect_timeout <= 0:
+        parser.error("timeouts must be positive")
+    if args.max_steps is not None and args.max_steps <= 0:
+        parser.error("--max-steps must be positive")
+    if args.max_tokens is not None and args.max_tokens <= 0:
+        parser.error("--max-tokens must be positive")
+    if args.temperature is not None and not 0 <= args.temperature <= 2:
+        parser.error("--temperature must be between 0 and 2")
+    if args.top_p is not None and not 0 < args.top_p <= 1:
+        parser.error("--top-p must be in (0, 1]")
     args.workers = min(args.workers, args.hands)
     return args
 
@@ -206,8 +217,6 @@ def load_runtime(args: argparse.Namespace) -> dict:
     runtime = dict(config.get("llm_runtime", {}))
     if args.max_steps is not None:
         runtime["max_steps_per_turn"] = int(args.max_steps)
-    runtime["request_timeout_seconds"] = float(args.timeout)
-    runtime["connect_timeout_seconds"] = float(args.connect_timeout)
     return runtime
 
 
@@ -397,6 +406,11 @@ def play_hand(
             seat = game.actor
             if seat is None:
                 raise RuntimeError("actor is None before the hand finished")
+            action_count += 1
+            if action_count > MAX_ACTIONS_PER_HAND:
+                raise RuntimeError(
+                    f"hand exceeded {MAX_ACTIONS_PER_HAND} actions; possible loop"
+                )
             view = build_view(game, seat, task, args.hands)
             agent = llm if seat == llm_seat else bot
             action = agent.decide(view, emit)
@@ -407,11 +421,6 @@ def play_hand(
                 result = game.apply(action)
                 if not result.ok:
                     raise RuntimeError(f"fallback action rejected: {result.error}")
-            action_count += 1
-            if action_count > MAX_ACTIONS_PER_HAND:
-                raise RuntimeError(
-                    f"hand exceeded {MAX_ACTIONS_PER_HAND} actions; possible loop"
-                )
 
         if game.result is None:
             raise RuntimeError("hand finished without a result")
@@ -454,7 +463,7 @@ def play_hand(
             "auto_turns": auto_turns,
             "invalid_action_auto": invalid_auto,
             "api_errors": api_errors,
-            "infra_error": int(api_errors > 0),
+            "infra_error": 0,
             "fatal_error": "",
             "duration_sec": round(time.perf_counter() - started, 3),
             "fallbacks": fallbacks,
@@ -558,6 +567,18 @@ def summarize(rows: Sequence[dict], args: argparse.Namespace) -> dict:
     paired_means = [
         statistics.fmean(values) for values in by_deal.values() if len(values) == 2
     ]
+    paired_win_values = [
+        1.0 if sum(values) > 0 else 0.0
+        for values in by_deal.values()
+        if len(values) == 2
+    ]
+    paired_win_rate = statistics.fmean(paired_win_values) if paired_win_values else 0.0
+    paired_win_sd = statistics.pstdev(paired_win_values) if len(paired_win_values) > 1 else 0.0
+    paired_win_ci = (
+        1.96 * paired_win_sd / math.sqrt(len(paired_win_values)) * 100.0
+        if paired_win_values
+        else 0.0
+    )
     paired_mean = statistics.fmean(paired_means) if paired_means else 0.0
     paired_sd = statistics.pstdev(paired_means) if len(paired_means) > 1 else 0.0
     paired_ci = (
@@ -607,7 +628,9 @@ def summarize(rows: Sequence[dict], args: argparse.Namespace) -> dict:
         "ci95_net": round(ci95, 3),
         "ci95_bb100": round(ci95 / args.bb * 100.0, 3),
         "win_pct": round(win_rate * 100.0, 3),
-        "win_ci_pp": round(win_ci, 3),
+        "win_ci_pp": round(paired_win_ci if paired_win_values else win_ci, 3),
+        "win_ci_binomial_pp": round(win_ci, 3),
+        "paired_win_pct": round(paired_win_rate * 100.0, 3),
         "push_pct": round(pushes / n * 100.0, 3),
         "loss_pct": round((n - wins - pushes) / n * 100.0, 3),
         "paired_mean_net": round(paired_mean, 3),
@@ -625,7 +648,11 @@ def summarize(rows: Sequence[dict], args: argparse.Namespace) -> dict:
             * sum(
                 1
                 for row in valid
-                if any(item.get("type") == "all_in" for item in row.get("actions") or [])
+                if any(
+                    item.get("type") == "all_in"
+                    or int(item.get("chips_after", 1)) == 0
+                    for item in row.get("actions") or []
+                )
             )
             / n,
             3,
@@ -733,6 +760,16 @@ def write_report(path: Path, summary: dict, args: argparse.Namespace) -> None:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
+    tasks = build_tasks(args)
+    if args.dry_run:
+        for task in tasks:
+            print(
+                f"{task.index + 1:02d}: deal={task.deal_index + 1:02d} "
+                f"LLM seat={task.llm_seat} seed={task.seed}"
+            )
+        print(f"tasks={len(tasks)} workers={args.workers}")
+        return 0
+
     registry = ProviderRegistry()
     spec = registry.resolve(args.provider, args.model)
     bot_model = Path(args.bot_model)
@@ -750,17 +787,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"error: bot model not found: {bot_model}", file=sys.stderr)
         return 2
 
-    tasks = build_tasks(args)
-    if args.dry_run:
-        for task in tasks:
-            print(
-                f"{task.index + 1:02d}: deal={task.deal_index + 1:02d} "
-                f"LLM seat={task.llm_seat} seed={task.seed}"
-            )
-        print(f"tasks={len(tasks)} workers={args.workers}")
-        return 0
-
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
     output = args.output or (PROJECT_ROOT / "tmp" / "llm_eval" / timestamp)
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)

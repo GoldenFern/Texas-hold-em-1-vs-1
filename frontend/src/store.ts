@@ -87,6 +87,9 @@ const state = reactive<StoreState>({
 let socket: Socket | null = null;
 let toastSeq = 0;
 let eventBuffer: AgentEvent[] | null = null;
+let bufferDepth = 0;
+let transcriptEpoch = 0;
+let analysisSeq = 0;
 let lastErrorToastAt = 0;
 
 export const game = state;
@@ -333,7 +336,7 @@ function applySnapshot(snapshot: GameSnapshot): void {
       state.lastResult = snapshot.match.last_result;
       state.lastResultHandId = snapshot.match.last_result.hand_id;
       if (state.dismissedResultHandId !== snapshot.match.last_result.hand_id) {
-        state.resultOpen = true;
+        if (!state.setupOpen) state.resultOpen = true;
       }
     }
     if (!snapshot.match.last_result && snapshot.street !== "finished") {
@@ -383,9 +386,13 @@ function addActions(snapshot: GameSnapshot): void {
     });
   });
   if (state.actionFeed.length > 400) state.actionFeed.splice(0, state.actionFeed.length - 400);
+  if (state.actionKeys.size > 2000) {
+    state.actionKeys = new Set(state.actionFeed.map((item) => item.id));
+  }
 }
 
 function resetMatchLocalState(): void {
+  analysisSeq += 1;
   state.turns = {};
   state.currentTurns = {};
   state.seenEvents = {};
@@ -395,6 +402,8 @@ function resetMatchLocalState(): void {
   state.analysis = {};
   state.analysisKey = "";
   state.analysisError = "";
+  state.analysisLoading = false;
+  state.selectedAnalysisSeat = null;
   state.lastResult = null;
   state.lastResultHandId = null;
   state.dismissedResultHandId = null;
@@ -410,12 +419,27 @@ function resetMatchLocalState(): void {
 
 export async function refreshTranscripts(): Promise<void> {
   if (!state.snapshot?.has_match) return;
+  const epoch = ++transcriptEpoch;
+  beginEventBuffer();
   try {
     const payload = await api.transcripts();
+    if (epoch !== transcriptEpoch) return;
     applyTranscripts(payload);
   } catch (error) {
     console.warn("transcript refresh failed", errorText(error));
+  } finally {
+    endEventBuffer();
   }
+}
+
+function beginEventBuffer(): void {
+  bufferDepth += 1;
+  if (eventBuffer === null) eventBuffer = [];
+}
+
+function endEventBuffer(): void {
+  bufferDepth = Math.max(0, bufferDepth - 1);
+  if (bufferDepth === 0) eventBuffer = null;
 }
 
 function applyTranscripts(payload: { match_id: string; seats: Record<string, AgentEvent[]> }): void {
@@ -423,11 +447,10 @@ function applyTranscripts(payload: { match_id: string; seats: Record<string, Age
   resetTranscripts();
   for (const [seatKey, events] of Object.entries(payload.seats || {})) {
     const seat = Number(seatKey);
-    for (const event of events) handleAgentEvent(event, true);
+    for (const event of events) handleAgentEvent({ ...event, seat }, true);
   }
   if (eventBuffer) {
     for (const event of eventBuffer) handleAgentEvent(event, true);
-    eventBuffer = null;
   }
 }
 
@@ -449,6 +472,12 @@ function handleAgentEvent(event: AgentEvent, replay = false): void {
     const seen = (state.seenEvents[seat] ||= new Set<number>());
     if (seen.has(eventId)) return;
     seen.add(eventId);
+    if (seen.size > 20000) {
+      const cutoff = eventId - 20000;
+      for (const id of seen) {
+        if (id < cutoff) seen.delete(id);
+      }
+    }
     state.lastEventIds[seat] = Math.max(state.lastEventIds[seat] || 0, eventId);
   }
   if (!state.turns[seat]) state.turns[seat] = [];
@@ -782,7 +811,7 @@ function onHandResultEvent(event: AgentEvent): void {
   if (result.hand_id === state.lastResultHandId) return;
   state.lastResult = result;
   state.lastResultHandId = result.hand_id;
-  if (state.dismissedResultHandId !== result.hand_id) state.resultOpen = true;
+  if (!state.setupOpen && state.dismissedResultHandId !== result.hand_id) state.resultOpen = true;
 }
 
 // ---------------------------------------------------------------------
@@ -791,27 +820,31 @@ function onHandResultEvent(event: AgentEvent): void {
 
 export async function startMatch(payload: MatchSetupPayload): Promise<boolean> {
   state.busy = true;
-  eventBuffer = [];
+  beginEventBuffer();
   try {
     const response = await api.newGame(payload);
     saveSetup(payload);
     applySnapshot(response.state);
     await refreshTranscripts();
     state.setupOpen = false;
-    state.resultOpen = false;
     state.dismissedResultHandId = null;
     for (const seat of response.state.match?.seats || []) {
       if (seat.agent?.warning) {
         toast("warn", `${seat.name} 使用降级策略`, seat.agent.warning);
       }
     }
-    toast("success", "对局已开始", `盲注 ${payload.rules.small_blind}/${payload.rules.big_blind} · 起始筹码 ${payload.rules.starting_chips}`);
+    const actual = response.state.match?.rules || payload.rules;
+    toast(
+      "success",
+      "对局已开始",
+      `盲注 ${actual.small_blind}/${actual.big_blind} · 起始筹码 ${actual.starting_chips}`,
+    );
     return true;
   } catch (error) {
     toast("error", "无法开始对局", errorText(error));
     return false;
   } finally {
-    eventBuffer = null;
+    endEventBuffer();
     state.busy = false;
   }
 }
@@ -911,9 +944,11 @@ export async function refreshAnalysis(force = false): Promise<void> {
   if (seat === null || seat === undefined) return;
   const player = snap.players?.find((item) => item.seat === seat);
   if (player && player.kind !== "human" && !snap.match?.god_view) {
+    analysisSeq += 1;
     state.analysis[seat] = null;
     state.analysisError = "开启上帝视角后，才能分析该玩家的牌型分布。";
     state.analysisKey = "";
+    state.analysisLoading = false;
     return;
   }
   const key = `${snap.hand_id}:${snap.street}:${seat}:${snap.community?.length || 0}`;
@@ -921,18 +956,34 @@ export async function refreshAnalysis(force = false): Promise<void> {
   state.analysisKey = key;
   state.analysisLoading = true;
   state.analysisError = "";
+  const requestSeq = ++analysisSeq;
+  const requestMatchId = state.matchId;
   try {
     const response = await api.analyze(seat, 30000);
+    if (
+      requestSeq !== analysisSeq
+      || requestMatchId !== state.matchId
+      || key !== state.analysisKey
+    ) {
+      return;
+    }
     state.analysis[seat] = response.analysis;
   } catch (error) {
-    state.analysisError = errorText(error);
+    if (requestSeq === analysisSeq && requestMatchId === state.matchId) {
+      state.analysisError = errorText(error);
+    }
   } finally {
-    state.analysisLoading = false;
+    if (requestSeq === analysisSeq && requestMatchId === state.matchId) {
+      state.analysisLoading = false;
+    }
   }
 }
 
-export async function testProvider(model: ProviderModel, params: Record<string, unknown>): Promise<void> {
-  const key = `${model.provider_id}:${model.id}`;
+export async function testProvider(
+  model: ProviderModel,
+  params: Record<string, unknown>,
+  key = `${model.provider_id}:${model.id}`,
+): Promise<void> {
   state.testResults[key] = { status: "testing", text: "正在测试连接…" };
   try {
     const response = await api.testLLM({

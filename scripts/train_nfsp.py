@@ -36,7 +36,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hidden", type=int, nargs="+", default=[128, 128])
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--min-buffer", type=int, default=500)
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.episodes <= 0:
+        parser.error("--episodes 必须为正")
+    if args.chips <= 0:
+        parser.error("--chips 必须为正")
+    if args.log_every <= 0:
+        parser.error("--log-every 必须为正")
+    if args.batch_size <= 0:
+        parser.error("--batch-size 必须为正")
+    if args.min_buffer < 0:
+        parser.error("--min-buffer 不能为负")
+    if args.reward_scale <= 0:
+        parser.error("--reward-scale 必须为正")
+    if not args.hidden or any(size <= 0 for size in args.hidden):
+        parser.error("--hidden 每一层必须为正")
+    return args
 
 
 def main() -> int:

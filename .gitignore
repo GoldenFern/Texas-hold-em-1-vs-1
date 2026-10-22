@@ -10,8 +10,9 @@ venv/
 
 # Frontend
 frontend/node_modules/
-static/dist/
 frontend/dist/
+frontend/coverage/
+static/dist/
 *.tsbuildinfo
 
 # Local tooling / secrets

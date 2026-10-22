@@ -81,6 +81,27 @@ def test_random_bot_returns_legal_actions() -> None:
                 assert view.current_bet > view.my_street_bet
 
 
+def test_raise_from_big_blind_option_becomes_bet() -> None:
+    class FixedAgent:
+        def eval_step(self, state):
+            return 2, {}
+
+    bot = RLCardBot("Bot A", agent_type="random", seed=7)
+    bot._agent = FixedAgent()
+    view = make_view(
+        current_bet=10,
+        my_street_bet=10,
+        legal=["fold", "check", "bet", "all_in"],
+        min_raise_to=20,
+        max_raise_to=1000,
+        pot=15,
+    )
+    action = bot.decide(view, lambda event: None)
+    assert action.type.value in view.legal_actions
+    assert action.type.value in {"bet", "all_in"}
+    assert action.amount >= view.min_raise_to
+
+
 def test_observation_shape_and_card_mapping() -> None:
     import numpy as np
 

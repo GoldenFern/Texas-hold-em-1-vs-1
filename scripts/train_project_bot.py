@@ -92,10 +92,38 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         parser.error("筹码和盲注必须满足 chips > 0, 0 < sb <= bb")
     if args.eval_every <= 0:
         parser.error("--eval-every 必须为正")
+    if args.log_every <= 0:
+        parser.error("--log-every 必须为正")
+    if args.batch_size <= 0 or args.nfsp_batch <= 0 or args.nfsp_q_batch <= 0:
+        parser.error("--batch-size 和 NFSP batch 参数必须为正")
+    if args.replay_init < args.batch_size:
+        parser.error("--replay-init 不能小于 --batch-size")
+    if args.algorithm == "nfsp" and args.replay_init < args.nfsp_q_batch:
+        parser.error("--replay-init 不能小于 --nfsp-q-batch")
+    if args.target_update <= 0:
+        parser.error("--target-update 必须为正")
+    if args.epsilon_decay <= 0:
+        parser.error("--epsilon-decay 必须为正")
+    if not 0.0 <= args.epsilon_end <= args.epsilon_start <= 1.0:
+        parser.error("必须满足 0 <= epsilon_end <= epsilon_start <= 1")
+    if args.max_actions <= 0 or args.reservoir_size <= 0 or args.replay_size <= 0:
+        parser.error("--max-actions / --replay-size / --reservoir-size 必须为正")
+    if args.min_buffer < 0:
+        parser.error("--min-buffer 不能为负")
+    if not 0.0 <= args.random_prob <= 1.0:
+        parser.error("--random-prob 必须在 0 到 1 之间")
+    if not 0.0 <= args.anticipatory <= 1.0:
+        parser.error("--anticipatory 必须在 0 到 1 之间")
+    if not 0.0 < args.gamma <= 1.0:
+        parser.error("--gamma 必须在 (0, 1] 之间")
+    if args.learning_rate <= 0 or args.nfsp_q_lr <= 0 or args.nfsp_sl_lr <= 0:
+        parser.error("学习率必须为正")
+    if not args.mlp or any(size <= 0 for size in args.mlp):
+        parser.error("--mlp 每一层必须为正")
     if args.output is None:
         args.output = PROJECT_ROOT / "models" / "rlcard" / f"nlh_{args.algorithm}_project.pth"
     if args.log_dir is None:
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
         args.log_dir = PROJECT_ROOT / "tmp" / "training" / f"{args.algorithm}_{stamp}"
     return args
 
@@ -199,36 +227,41 @@ def evaluate_vs_random(
     deals = hands // 2
     pair_means: List[float] = []
     per_hand_nets: List[int] = []
+    deal_wins: List[float] = []
     wins = 0
     pushes = 0
 
-    for deal_index in range(deals):
-        deck_seed = (seed + 1_000_003 * (deal_index + 1)) & 0x7FFFFFFF
-        np.random.seed(deck_seed)
-        env.reset(seed=deck_seed, button=0)
-        env.play_hand([learner, random_agent], training=False)
-        net0 = int(env.raw_payoffs()[0])
+    # Evaluation must not consume or reseed the training RNG stream.
+    rng_state = np.random.get_state()
+    try:
+        for deal_index in range(deals):
+            deck_seed = (seed + 1_000_003 * (deal_index + 1)) & 0x7FFFFFFF
+            np.random.seed(deck_seed)
+            env.reset(seed=deck_seed, button=0)
+            env.play_hand([learner, random_agent], training=False)
+            net0 = int(env.raw_payoffs()[0])
 
-        np.random.seed(deck_seed)
-        env.reset(seed=deck_seed, button=0)
-        env.play_hand([random_agent, learner], training=False)
-        net1 = int(env.raw_payoffs()[1])
+            np.random.seed(deck_seed)
+            env.reset(seed=deck_seed, button=0)
+            env.play_hand([random_agent, learner], training=False)
+            net1 = int(env.raw_payoffs()[1])
 
-        pair_means.append((net0 + net1) / 2.0)
-        per_hand_nets.extend((net0, net1))
-        wins += int(net0 > 0) + int(net1 > 0)
-        pushes += int(net0 == 0) + int(net1 == 0)
+            pair_means.append((net0 + net1) / 2.0)
+            deal_wins.append(1.0 if net0 + net1 > 0 else 0.0)
+            per_hand_nets.extend((net0, net1))
+            wins += int(net0 > 0) + int(net1 > 0)
+            pushes += int(net0 == 0) + int(net1 == 0)
+    finally:
+        np.random.set_state(rng_state)
 
     mean_net = statistics.fmean(pair_means)
     sd = statistics.pstdev(pair_means) if len(pair_means) > 1 else 0.0
     ci = 1.96 * sd / math.sqrt(len(pair_means)) if pair_means else 0.0
     total_hands = len(per_hand_nets)
     win_rate = wins / total_hands if total_hands else 0.0
-    win_ci = (
-        1.96 * math.sqrt(win_rate * (1.0 - win_rate) / total_hands) * 100.0
-        if total_hands
-        else 0.0
-    )
+    deal_win_rate = statistics.fmean(deal_wins) if deal_wins else 0.0
+    deal_sd = statistics.pstdev(deal_wins) if len(deal_wins) > 1 else 0.0
+    win_ci = 1.96 * deal_sd / math.sqrt(len(deal_wins)) * 100.0 if deal_wins else 0.0
     return {
         "hands": total_hands,
         "deals": len(pair_means),
@@ -237,6 +270,7 @@ def evaluate_vs_random(
         "ci_net": ci,
         "ci_bb100": ci / max(1, bb) * 100.0,
         "win_pct": win_rate * 100.0,
+        "deal_win_pct": deal_win_rate * 100.0,
         "win_ci_pp": win_ci,
         "push_pct": pushes / total_hands * 100.0 if total_hands else 0.0,
     }
@@ -365,6 +399,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     "hand": hand,
                     "eval": metrics,
                     "evaluation": "duplicate_deals_vs_random",
+                    "learner_policy": "sample" if args.algorithm == "nfsp" else "argmax",
                 },
             )
             score = metrics["mean_bb100"] - metrics["ci_bb100"]

@@ -23,6 +23,7 @@ export interface ActionLog {
   type: string;
   label: string;
   amount: number;
+  added?: number;
   pot_after: number;
   chips_after: number;
   source: string;

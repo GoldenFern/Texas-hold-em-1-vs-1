@@ -43,7 +43,24 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--mlp", type=int, nargs="+", default=[128, 128])
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.episodes <= 0:
+        parser.error("--episodes 必须为正")
+    if args.chips <= 0:
+        parser.error("--chips 必须为正")
+    if args.log_every <= 0:
+        parser.error("--log-every 必须为正")
+    if args.batch_size <= 0:
+        parser.error("--batch-size 必须为正")
+    if args.epsilon_decay_steps <= 0:
+        parser.error("--epsilon-decay-steps 必须为正")
+    if args.reward_scale <= 0:
+        parser.error("--reward-scale 必须为正")
+    if args.learning_rate <= 0:
+        parser.error("--learning-rate 必须为正")
+    if not args.mlp or any(size <= 0 for size in args.mlp):
+        parser.error("--mlp 每一层必须为正")
+    return args
 
 
 def main() -> int:

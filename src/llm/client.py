@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import requests
 
@@ -16,11 +18,33 @@ from .providers import ModelSpec, ProviderRegistry
 logger = logging.getLogger("hu.llm")
 TRAFFIC = os.environ.get("HU_LLM_LOG_TRAFFIC", "").strip().lower() in ("1", "true", "yes", "on")
 
+_SECRET_PATTERNS = (
+    re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{6,}"),
+    re.compile(r"\bsk-[A-Za-z0-9._\-]{6,}\b"),
+    re.compile(r"(?i)(\b(?:api[_-]?key|access[_-]?token|secret)\b[\"'\s:=]+)[A-Za-z0-9._\-]{8,}"),
+)
+
+
+def redact_secrets(text: str, api_key: str = "") -> str:
+    """Remove credentials from provider error text before it leaves the client."""
+    cleaned = str(text or "")
+    if api_key and len(api_key) >= 4:
+        cleaned = cleaned.replace(api_key, "[REDACTED]")
+
+    def replacement(match: re.Match[str]) -> str:
+        prefix = match.group(1) if match.groups() else ""
+        return f"{prefix}[REDACTED]"
+
+    for pattern in _SECRET_PATTERNS:
+        cleaned = pattern.sub(replacement, cleaned)
+    return cleaned
+
 
 class LLMError(Exception):
     """Typed error surfaced to the UI."""
 
-    def __init__(self, kind: str, detail: str, status: int = 0) -> None:
+    def __init__(self, kind: str, detail: str, status: int = 0, api_key: str = "") -> None:
+        detail = redact_secrets(detail, api_key)
         super().__init__(f"[{kind}] {detail}")
         self.kind = kind
         self.detail = detail
@@ -122,16 +146,43 @@ def _usage_from(payload: dict) -> dict:
     }
 
 
-def classify_http(status: int, body: str) -> str:
-    text = (body or "").lower()
-    if status in (401, 403) or "invalid api key" in text or "authentication" in text:
+def _classify_text(text: str) -> Optional[str]:
+    lowered = (text or "").lower()
+    if "invalid api key" in lowered or "authentication" in lowered or "unauthorized" in lowered:
         return "auth"
-    if status == 429 or "rate limit" in text or "quota" in text:
+    if "rate limit" in lowered or "quota" in lowered or "too many requests" in lowered:
         return "rate_limit"
-    if status in (400, 404, 415, 422) or "invalid parameter" in text or "invalid_request" in text:
-        return "param"
+    if any(phrase in lowered for phrase in (
+        "context length",
+        "context_length",
+        "maximum context",
+        "too many tokens",
+        "prompt is too long",
+        "input is too long",
+    )):
+        return "context_length"
+    if "stream" in lowered and any(
+        phrase in lowered for phrase in ("not support", "unsupported", "not enabled", "disabled")
+    ):
+        return "stream_unsupported"
+    return None
+
+
+def classify_http(status: int, body: str) -> str:
+    """Classify an HTTP failure, preferring the status code over body text."""
+    if status in (401, 403):
+        return "auth"
+    if status == 429:
+        return "rate_limit"
+    if status == 408:
+        return "timeout"
     if status >= 500:
         return "server"
+    text_kind = _classify_text(body)
+    if text_kind:
+        return text_kind
+    if status in (400, 404, 415, 422) or "invalid parameter" in (body or "").lower():
+        return "param"
     return "http"
 
 
@@ -147,7 +198,33 @@ class LLMClient:
         self.registry = registry
         self.connect_timeout = connect_timeout
         self.read_timeout = read_timeout
-        self._session = requests.Session()
+        self._local = threading.local()
+        self._sessions: List[requests.Session] = []
+        self._session_lock = threading.Lock()
+        # Optional fields a provider has rejected for this model. Kept across
+        # requests so we do not pay for a failed request on every LLM turn.
+        self._degraded: Dict[str, Set[str]] = {}
+        self._degraded_lock = threading.Lock()
+
+    def _get_session(self) -> requests.Session:
+        session = getattr(self._local, "session", None)
+        if session is None:
+            session = requests.Session()
+            self._local.session = session
+            with self._session_lock:
+                self._sessions.append(session)
+        return session
+
+    def _degraded_fields(self, spec: ModelSpec) -> Set[str]:
+        with self._degraded_lock:
+            return set(self._degraded.get(f"{spec.provider_id}:{spec.id}", set()))
+
+    def _remember_degraded(self, spec: ModelSpec, fields: Set[str]) -> None:
+        if not fields:
+            return
+        with self._degraded_lock:
+            self._degraded.setdefault(f"{spec.provider_id}:{spec.id}", set()).update(fields)
+
 
     # ------------------------------------------------------------------
     # Public API
@@ -160,28 +237,37 @@ class LLMClient:
         tools: Optional[List[dict]],
         params: dict,
         on_event: Callable[[dict], None],
+        cancel: Optional[Callable[[], bool]] = None,
     ) -> ChatResult:
         api_key = ProviderRegistry.get_api_key(spec)
         payload = self.registry.build_payload(spec, messages, tools, params, stream=True)
+        dropped = self._degraded_fields(spec)
+        if dropped:
+            payload = _apply_payload_drops(payload, dropped)
         self._log_request(spec, payload)
 
         attempts = 0
         last_error: Optional[LLMError] = None
         while attempts < 3:
+            if cancel and cancel():
+                raise LLMError("cancelled", "请求已取消")
             attempts += 1
             try:
-                result = self._stream_once(spec, api_key, payload, on_event)
+                result = self._stream_once(spec, api_key, payload, on_event, cancel)
                 self._log_response(spec, result)
                 return result
             except LLMError as exc:
                 last_error = exc
+                if exc.kind == "cancelled":
+                    raise
                 if exc.kind == "rate_limit" and attempts == 1:
                     time.sleep(1.5)
                     continue
                 if exc.kind == "param" and attempts < 3:
                     reduced = self._reduce_payload(payload, exc.detail)
                     if reduced is not None:
-                        payload = reduced
+                        payload, removed = reduced
+                        self._remember_degraded(spec, removed)
                         on_event(
                             {
                                 "type": "note",
@@ -192,11 +278,11 @@ class LLMClient:
                         continue
                 raise
             except requests.Timeout as exc:
-                raise LLMError("timeout", f"请求超时: {exc}") from exc
+                raise LLMError("timeout", f"请求超时: {exc}", api_key=api_key) from exc
             except requests.ConnectionError as exc:
-                raise LLMError("network", f"网络连接失败: {exc}") from exc
+                raise LLMError("network", f"网络连接失败: {exc}", api_key=api_key) from exc
             except Exception as exc:  # noqa: BLE001
-                raise LLMError("unknown", f"{type(exc).__name__}: {exc}") from exc
+                raise LLMError("unknown", f"{type(exc).__name__}: {exc}", api_key=api_key) from exc
         if last_error:
             raise last_error
         raise LLMError("unknown", "未知错误")
@@ -211,9 +297,10 @@ class LLMClient:
         api_key: str,
         payload: dict,
         on_event: Callable[[dict], None],
+        cancel: Optional[Callable[[], bool]] = None,
     ) -> ChatResult:
         start = time.perf_counter()
-        response = self._session.post(
+        response = self._get_session().post(
             self.registry.endpoint(spec),
             headers={
                 "Authorization": f"Bearer {api_key}",
@@ -226,83 +313,148 @@ class LLMClient:
         )
         if response.status_code >= 400:
             body = response.text[:4000]
+            kind = classify_http(response.status_code, body)
+            response.close()
+            if kind == "stream_unsupported":
+                return self._non_stream_once(spec, api_key, payload, start, on_event, cancel)
             raise LLMError(
-                classify_http(response.status_code, body),
+                kind,
                 f"HTTP {response.status_code}: {body}",
                 response.status_code,
+                api_key=api_key,
             )
+
+        content_type = (response.headers.get("Content-Type") or "").lower()
+        if "application/json" in content_type:
+            try:
+                data = response.json()
+            except ValueError as exc:
+                raise LLMError("server", f"返回的 JSON 无效: {exc}", api_key=api_key) from exc
+            finally:
+                response.close()
+            return self._parse_completion(api_key, payload, data, start, on_event)
 
         content_parts: List[str] = []
         reasoning_parts: List[str] = []
         tool_calls: Dict[int, dict] = {}
+        id_map: Dict[str, int] = {}
+        index_map: Dict[int, int] = {}
         finish_reason = ""
         usage: dict = {}
         saw_event = False
+        bad_lines = 0
+        stream_error: Optional[requests.RequestException] = None
 
-        for raw_line in response.iter_lines(decode_unicode=False):
-            if raw_line is None:
-                continue
-            line = raw_line.decode("utf-8", errors="replace").strip() if isinstance(raw_line, bytes) else str(raw_line).strip()
-            if not line:
-                continue
-            if line.startswith("data:"):
-                data_text = line[5:].strip()
-            elif line.startswith("{"):
-                data_text = line
-            else:
-                continue
-            if data_text == "[DONE]":
-                break
-            try:
-                event = json.loads(data_text)
-            except json.JSONDecodeError:
-                continue
-            saw_event = True
-            if isinstance(event.get("error"), dict):
-                detail = event["error"].get("message") or json.dumps(event["error"], ensure_ascii=False)
-                raise LLMError("server", detail)
+        try:
+            for raw_line in response.iter_lines(decode_unicode=False):
+                if cancel and cancel():
+                    raise LLMError("cancelled", "请求已取消")
+                if raw_line is None:
+                    continue
+                line = raw_line.decode("utf-8", errors="replace").strip() if isinstance(raw_line, bytes) else str(raw_line).strip()
+                if not line:
+                    continue
+                if line.startswith("data:"):
+                    data_text = line[5:].strip()
+                elif line.startswith("{"):
+                    data_text = line
+                else:
+                    continue
+                if data_text == "[DONE]":
+                    break
+                try:
+                    event = json.loads(data_text)
+                except json.JSONDecodeError:
+                    bad_lines += 1
+                    continue
+                saw_event = True
+                if isinstance(event.get("error"), dict):
+                    error = event["error"]
+                    detail = error.get("message") or json.dumps(error, ensure_ascii=False)
+                    code = error.get("code") or error.get("status")
+                    try:
+                        status = int(code)
+                    except (TypeError, ValueError):
+                        status = 0
+                    raise LLMError(
+                        classify_http(status, str(detail)),
+                        str(detail),
+                        status,
+                        api_key=api_key,
+                    )
 
-            chunk_usage = _usage_from(event)
-            if chunk_usage:
-                usage = chunk_usage
+                chunk_usage = _usage_from(event)
+                if chunk_usage:
+                    usage = chunk_usage
 
-            choices = event.get("choices") or []
-            if not choices:
-                continue
-            choice = choices[0] or {}
-            if choice.get("finish_reason"):
-                finish_reason = str(choice["finish_reason"])
-            delta = choice.get("delta") or choice.get("message") or {}
+                choices = event.get("choices") or []
+                if not choices:
+                    continue
+                choice = choices[0] or {}
+                if choice.get("finish_reason"):
+                    finish_reason = str(choice["finish_reason"])
+                delta = choice.get("delta") or choice.get("message") or {}
 
-            reasoning = _normalize_text(delta.get("reasoning_content") or delta.get("reasoning"))
-            if reasoning:
-                reasoning_parts.append(reasoning)
-                on_event({"type": "reasoning_delta", "delta": reasoning})
+                reasoning = _normalize_text(delta.get("reasoning_content") or delta.get("reasoning"))
+                if reasoning:
+                    reasoning_parts.append(reasoning)
+                    on_event({"type": "reasoning_delta", "delta": reasoning})
 
-            text = _normalize_text(delta.get("content"))
-            if text:
-                content_parts.append(text)
-                on_event({"type": "content_delta", "delta": text})
+                text = _normalize_text(delta.get("content"))
+                if text:
+                    content_parts.append(text)
+                    on_event({"type": "content_delta", "delta": text})
 
-            calls = delta.get("tool_calls")
-            if isinstance(calls, list):
-                for raw_call in calls:
-                    self._accumulate_tool_call(tool_calls, raw_call, on_event)
-            legacy = delta.get("function_call")
-            if isinstance(legacy, dict):
-                self._accumulate_tool_call(
-                    tool_calls,
-                    {"index": 0, "function": legacy},
-                    on_event,
-                )
+                calls = delta.get("tool_calls")
+                if isinstance(calls, list):
+                    for raw_call in calls:
+                        self._accumulate_tool_call(tool_calls, raw_call, on_event, id_map, index_map)
+                legacy = delta.get("function_call")
+                if isinstance(legacy, dict):
+                    self._accumulate_tool_call(
+                        tool_calls,
+                        {"index": 0, "function": legacy},
+                        on_event,
+                        id_map,
+                        index_map,
+                    )
+        except LLMError:
+            raise
+        except requests.RequestException as exc:
+            stream_error = exc
+        finally:
+            response.close()
 
-        response.close()
+        if cancel and cancel():
+            raise LLMError("cancelled", "请求已取消")
         latency_ms = (time.perf_counter() - start) * 1000.0
 
         if not saw_event:
-            # Some gateways silently return an empty SSE stream. Fall back to
-            # a regular JSON completion once.
-            return self._non_stream_once(spec, api_key, payload, start, on_event)
+            if bad_lines:
+                on_event(
+                    {
+                        "type": "note",
+                        "level": "warn",
+                        "text": "流式响应格式异常，已尝试非流式重试。",
+                    }
+                )
+            # Some gateways silently return an empty SSE stream or pretty JSON.
+            return self._non_stream_once(spec, api_key, payload, start, on_event, cancel)
+
+        if stream_error is not None:
+            if not tool_calls and not content_parts and not reasoning_parts:
+                raise LLMError(
+                    "network",
+                    f"流式连接中断: {stream_error}",
+                    api_key=api_key,
+                )
+            on_event(
+                {
+                    "type": "note",
+                    "level": "warn",
+                    "text": "流式连接中断，已保留本次已收到的内容。",
+                }
+            )
 
         content = "".join(content_parts)
         reasoning = "".join(reasoning_parts)
@@ -339,12 +491,15 @@ class LLMClient:
         payload: dict,
         start: float,
         on_event: Callable[[dict], None],
+        cancel: Optional[Callable[[], bool]] = None,
     ) -> ChatResult:
+        if cancel and cancel():
+            raise LLMError("cancelled", "请求已取消")
         fallback = dict(payload)
         fallback["stream"] = False
         fallback.pop("stream_options", None)
         fallback.pop("tool_stream", None)
-        response = self._session.post(
+        response = self._get_session().post(
             self.registry.endpoint(spec),
             headers={
                 "Authorization": f"Bearer {api_key}",
@@ -355,12 +510,43 @@ class LLMClient:
         )
         if response.status_code >= 400:
             body = response.text[:4000]
+            kind = classify_http(response.status_code, body)
+            response.close()
             raise LLMError(
-                classify_http(response.status_code, body),
+                kind,
                 f"HTTP {response.status_code}: {body}",
                 response.status_code,
+                api_key=api_key,
             )
-        data = response.json()
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise LLMError("server", f"返回的 JSON 无效: {exc}", api_key=api_key) from exc
+        finally:
+            response.close()
+        if not isinstance(data, dict):
+            raise LLMError("server", "厂商返回了非对象 JSON", api_key=api_key)
+        return self._parse_completion(api_key, payload, data, start, on_event)
+
+    def _parse_completion(
+        self,
+        api_key: str,
+        payload: dict,
+        data: dict,
+        start: float,
+        on_event: Callable[[dict], None],
+    ) -> ChatResult:
+        if not isinstance(data, dict):
+            raise LLMError("server", "厂商返回了非对象 JSON", api_key=api_key)
+        if isinstance(data.get("error"), dict):
+            error = data["error"]
+            detail = error.get("message") or json.dumps(error, ensure_ascii=False)
+            code = error.get("code") or error.get("status")
+            try:
+                status = int(code)
+            except (TypeError, ValueError):
+                status = 0
+            raise LLMError(classify_http(status, str(detail)), str(detail), status, api_key=api_key)
         choice = (data.get("choices") or [{}])[0] or {}
         message = choice.get("message") or {}
         content = _normalize_text(message.get("content"))
@@ -372,8 +558,9 @@ class LLMClient:
         if reasoning:
             on_event({"type": "reasoning_delta", "delta": reasoning})
         tool_calls: Dict[int, dict] = {}
+        id_map: Dict[str, int] = {}
         for index, raw_call in enumerate(message.get("tool_calls") or []):
-            self._accumulate_tool_call(tool_calls, {**raw_call, "index": index}, on_event)
+            self._accumulate_tool_call(tool_calls, {**raw_call, "index": index}, on_event, id_map)
         usage = _usage_from(data)
         estimated = not bool(usage)
         if not usage:
@@ -402,21 +589,36 @@ class LLMClient:
         store: Dict[int, dict],
         raw_call: dict,
         on_event: Callable[[dict], None],
+        id_map: Optional[Dict[str, int]] = None,
+        index_map: Optional[Dict[int, int]] = None,
     ) -> None:
         if not isinstance(raw_call, dict):
             return
-        index = raw_call.get("index", 0)
-        try:
-            index = int(index)
-        except (TypeError, ValueError):
-            index = 0
+        id_map = id_map if id_map is not None else {}
+        index_map = index_map if index_map is not None else {}
+        call_id = str(raw_call.get("id") or "")
+        raw_index = raw_call.get("index")
+        if raw_index is None:
+            if call_id and call_id in id_map:
+                provider_index = id_map[call_id]
+            elif call_id:
+                provider_index = (max(index_map) + 1) if index_map else 0
+            else:
+                provider_index = max(index_map) if index_map else 0
+        else:
+            try:
+                provider_index = int(raw_index)
+            except (TypeError, ValueError):
+                provider_index = 0
+        if call_id:
+            id_map[call_id] = provider_index
+        index = index_map.setdefault(provider_index, len(index_map))
         entry = store.setdefault(
             index,
             {"id": "", "name": "", "arguments": "", "started": False},
         )
-        call_id = raw_call.get("id")
         if call_id:
-            entry["id"] = str(call_id)
+            entry["id"] = call_id
         function = raw_call.get("function") or {}
         name_fragment = _normalize_text(function.get("name"))
         if name_fragment:
@@ -452,13 +654,21 @@ class LLMClient:
     @staticmethod
     def _finalize_tool_calls(store: Dict[int, dict]) -> List[ToolCall]:
         calls: List[ToolCall] = []
+        seen_ids: Set[str] = set()
         for index in sorted(store):
             entry = store[index]
             if not entry.get("name"):
                 continue
+            call_id = entry.get("id") or f"call_{index}"
+            if call_id in seen_ids:
+                suffix = 2
+                while f"{call_id}_{suffix}" in seen_ids:
+                    suffix += 1
+                call_id = f"{call_id}_{suffix}"
+            seen_ids.add(call_id)
             calls.append(
                 ToolCall(
-                    id=entry.get("id") or f"call_{index}",
+                    id=call_id,
                     name=entry["name"],
                     arguments=entry.get("arguments") or "{}",
                 )
@@ -470,38 +680,30 @@ class LLMClient:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _reduce_payload(payload: dict, detail: str) -> Optional[dict]:
-        """Drop optional vendor fields when a provider rejects them."""
+    def _reduce_payload(payload: dict, detail: str) -> Optional[Tuple[dict, Set[str]]]:
+        """Drop optional vendor fields named in a provider rejection."""
         reduced = json.loads(json.dumps(payload))
-        changed = False
         text = (detail or "").lower()
+        removed: Set[str] = set()
 
         if "max_tokens" in text and reduced.get("max_tokens", 0) > 8192:
             reduced["max_tokens"] = 8192
-            changed = True
+            removed.add("max_tokens")
 
         for key in ("stream_options", "tool_stream", "preserve_thinking", "thinking", "reasoning_effort", "enable_thinking"):
-            if key in reduced:
+            if key in text and key in reduced:
                 reduced.pop(key, None)
-                changed = True
+                removed.add(key)
 
-        if "reasoning_content" in text:
+        if "reasoning" in text:
             messages = reduced.get("messages", [])
             for message in messages:
-                if isinstance(message, dict):
+                if isinstance(message, dict) and "reasoning_content" in message:
                     message.pop("reasoning_content", None)
-            changed = True
-
-        if changed:
-            return reduced
-        # Last resort: strip reasoning_content as vendors sometimes reject it
-        # without naming the field.
-        messages = reduced.get("messages", [])
-        for message in messages:
-            if isinstance(message, dict) and "reasoning_content" in message:
-                message.pop("reasoning_content", None)
-                changed = True
-        return reduced if changed else None
+                    removed.add("reasoning_content")
+        if not removed:
+            return None
+        return reduced, removed
 
     # ------------------------------------------------------------------
     # Logging
@@ -538,8 +740,30 @@ class LLMClient:
         )
 
     def close(self) -> None:
-        """Close the underlying HTTP connection pool."""
-        self._session.close()
+        """Close every HTTP connection pool created by this client."""
+        with self._session_lock:
+            sessions = list(self._sessions)
+            self._sessions.clear()
+        for session in sessions:
+            try:
+                session.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _apply_payload_drops(payload: dict, dropped: Set[str]) -> dict:
+    reduced = json.loads(json.dumps(payload))
+    for key in dropped:
+        if key == "reasoning_content":
+            for message in reduced.get("messages", []):
+                if isinstance(message, dict):
+                    message.pop("reasoning_content", None)
+        elif key == "max_tokens":
+            if reduced.get("max_tokens", 0) > 8192:
+                reduced["max_tokens"] = 8192
+        else:
+            reduced.pop(key, None)
+    return reduced
 
 
 def _split_think_tags(content: str) -> tuple[str, str]:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import List
 
 from src.agents.base import AgentView
@@ -17,7 +18,7 @@ class FakeClient:
         self.responses = list(responses)
         self.calls = 0
 
-    def stream(self, spec, messages, tools, params, on_event):
+    def stream(self, spec, messages, tools, params, on_event, cancel=None):
         self.calls += 1
         response = self.responses.pop(0)
         if response.get("reasoning"):
@@ -92,6 +93,8 @@ def build_agent(
     responses: List[dict],
     failures: int = 3,
     require_estimate_first: bool = False,
+    runtime: dict | None = None,
+    validator=None,
 ):
     registry = ProviderRegistry()
     spec = registry.resolve("deepseek", "deepseek-flash")
@@ -102,6 +105,15 @@ def build_agent(
             return "最小下注为 20"
         return None
 
+    settings = {
+        "max_steps_per_turn": 8,
+        "max_consecutive_failures": failures,
+        "require_estimate_first": require_estimate_first,
+        "max_context_tokens_estimate": 200000,
+    }
+    if runtime:
+        settings.update(runtime)
+
     agent = LLMAgent(
         seat=0,
         name="Hero",
@@ -109,13 +121,8 @@ def build_agent(
         params={},
         client=FakeClient(responses),
         analyzer=HandDistributionAnalyzer(),
-        validate_action=validate,
-        runtime={
-            "max_steps_per_turn": 8,
-            "max_consecutive_failures": failures,
-            "require_estimate_first": require_estimate_first,
-            "max_context_tokens_estimate": 200000,
-        },
+        validate_action=validator or validate,
+        runtime=settings,
     )
     return agent, events
 
@@ -333,3 +340,146 @@ def test_random_number_does_not_replace_estimate() -> None:
     assert "请先调用" in results[1]["summary"]
     assert results[2]["name"] == "estimate_hand_probabilities"
     assert results[2]["ok"] is True
+
+
+def test_reasoning_content_counts_toward_context_budget() -> None:
+    agent, _ = build_agent([])
+    agent.messages.append(
+        {
+            "role": "assistant",
+            "content": "",
+            "reasoning_content": "x" * 40000,
+        }
+    )
+    assert agent._context_tokens() >= 10000
+
+
+def test_estimate_calls_are_capped_per_turn() -> None:
+    agent, events = build_agent(
+        [
+            {
+                "tool_calls": [
+                    {
+                        "name": "estimate_hand_probabilities",
+                        "arguments": '{"iterations": 2000}',
+                    }
+                ]
+            },
+            {
+                "tool_calls": [
+                    {
+                        "name": "estimate_hand_probabilities",
+                        "arguments": '{"iterations": 2000}',
+                    }
+                ]
+            },
+            {"tool_calls": [{"name": "apply_action", "arguments": '{"action": "check"}'}]},
+        ],
+        runtime={"max_estimate_calls_per_turn": 1},
+    )
+    action = agent.decide(make_view(), events.append)
+    assert action.type == ActionType.CHECK
+    results = [event for event in events if event["type"] == "tool_result"]
+    assert results[0]["ok"] is True
+    assert results[1]["ok"] is False
+    assert "上限" in results[1]["summary"]
+    assert results[2]["ok"] is True
+
+
+def test_random_number_never_returns_one(monkeypatch) -> None:
+    monkeypatch.setattr("src.llm.agent.random.random", lambda: 0.999999999)
+    agent, events = build_agent(
+        [
+            {"tool_calls": [{"name": "get_random_number", "arguments": "{}"}]},
+            {"tool_calls": [{"name": "apply_action", "arguments": '{"action": "check"}'}]},
+        ]
+    )
+    agent.decide(make_view(), events.append)
+    results = [
+        event
+        for event in events
+        if event["type"] == "tool_result" and event.get("name") == "get_random_number"
+    ]
+    assert 0.999 <= results[0]["result"]["value"] < 1.0
+
+
+def test_malformed_random_arguments_return_tool_error() -> None:
+    agent, events = build_agent(
+        [
+            {"tool_calls": [{"name": "get_random_number", "arguments": "not-json"}]},
+            {"tool_calls": [{"name": "apply_action", "arguments": '{"action": "check"}'}]},
+        ]
+    )
+    action = agent.decide(make_view(), events.append)
+    assert action.type == ActionType.CHECK
+    results = [event for event in events if event["type"] == "tool_result"]
+    assert results[0]["ok"] is False
+    assert "合法 JSON" in results[0]["summary"]
+
+
+def test_validation_exception_becomes_tool_error() -> None:
+    calls = {"count": 0}
+
+    def validator(action: Action):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("boom")
+        return None
+
+    agent, events = build_agent(
+        [
+            {"tool_calls": [{"name": "apply_action", "arguments": '{"action": "check"}'}]},
+            {"tool_calls": [{"name": "apply_action", "arguments": '{"action": "check"}'}]},
+        ],
+        validator=validator,
+    )
+    action = agent.decide(make_view(), events.append)
+    assert action.type == ActionType.CHECK
+    results = [event for event in events if event["type"] == "tool_result"]
+    assert results[0]["ok"] is False
+    assert "动作校验失败" in results[0]["summary"]
+    assert results[1]["ok"] is True
+
+
+def test_success_clears_last_error() -> None:
+    agent, events = build_agent(
+        [{"tool_calls": [{"name": "apply_action", "arguments": '{"action": "check"}'}]}]
+    )
+    agent.last_error = "old failure"
+    agent.decide(make_view(), events.append)
+    assert agent.last_error == ""
+
+
+def test_cancel_returns_fold_without_calling_model() -> None:
+    agent, events = build_agent([])
+    agent.cancel()
+    action = agent.decide(make_view(), events.append)
+    assert action.type == ActionType.FOLD
+    assert agent.client.calls == 0
+
+
+def test_model_raise_is_normalized_to_bet_at_big_blind_option() -> None:
+    view = replace(
+        make_view(),
+        current_bet=10,
+        my_street_bet=10,
+        to_call=0,
+        call_amount=0,
+        min_raise_to=20,
+        legal_actions=["fold", "check", "bet", "all_in"],
+    )
+    agent, events = build_agent(
+        [
+            {
+                "tool_calls": [
+                    {
+                        "name": "apply_action",
+                        "arguments": '{"action": "raise", "amount": 20}',
+                    }
+                ]
+            }
+        ]
+    )
+    action = agent.decide(view, events.append)
+    assert action.type == ActionType.BET
+    assert action.amount == 20

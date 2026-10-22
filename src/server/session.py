@@ -54,6 +54,7 @@ class GameSession:
         self.client = client
         self.analyzer = analyzer
         self.lock = threading.RLock()
+        self._start_lock = threading.Lock()
         self.game: Optional[HeadsUpGame] = None
         self.agents: Dict[int, object] = {}
         self.seat_configs: Dict[int, SeatConfig] = {}
@@ -91,12 +92,16 @@ class GameSession:
         rules = dict(defaults)
         rules.update({key: value for key, value in raw.items() if value is not None})
 
-        def clamp_int(key: str, default: int, minimum: int, maximum: int) -> int:
+        def int_value(key: str, default: int) -> int:
+            value = rules.get(key, default)
+            if isinstance(value, bool):
+                raise ValueError(f"{key} 必须是整数")
+            if isinstance(value, float) and not value.is_integer():
+                raise ValueError(f"{key} 必须是整数")
             try:
-                value = int(rules.get(key, default))
-            except (TypeError, ValueError):
-                value = default
-            return max(minimum, min(maximum, value))
+                return int(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{key} 必须是整数") from exc
 
         for key, default in (
             ("starting_chips", 1000),
@@ -105,25 +110,47 @@ class GameSession:
             ("rebuy_amount", 1000),
         ):
             limit = limits.get(key, {})
-            rules[key] = clamp_int(key, default, int(limit.get("min", 1)), int(limit.get("max", 100000)))
+            minimum = int(limit.get("min", 1))
+            maximum = int(limit.get("max", 100000))
+            value = int_value(key, default)
+            if not minimum <= value <= maximum:
+                raise ValueError(f"{key} 必须在 {minimum} 到 {maximum} 之间")
+            rules[key] = value
 
-        rules["max_hands"] = clamp_int("max_hands", 0, 0, int(limits.get("max_hands", {}).get("max", 1000)))
-        rules["auto_rebuy"] = bool(rules.get("auto_rebuy", False))
-        rules["god_view"] = bool(rules.get("god_view", True))
+        max_hands_limit = int(limits.get("max_hands", {}).get("max", 1000))
+        max_hands = int_value("max_hands", 0)
+        if not 0 <= max_hands <= max_hands_limit:
+            raise ValueError(f"max_hands 必须在 0 到 {max_hands_limit} 之间")
+        rules["max_hands"] = max_hands
+
+        def bool_value(key: str, default: bool) -> bool:
+            value = rules.get(key, default)
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                lowered = value.strip().lower()
+                if lowered in ("true", "1", "yes", "on"):
+                    return True
+                if lowered in ("false", "0", "no", "off"):
+                    return False
+            raise ValueError(f"{key} 必须是布尔值")
+
+        rules["auto_rebuy"] = bool_value("auto_rebuy", False)
+        rules["god_view"] = bool_value("god_view", True)
         seed = rules.get("seed")
         if seed in ("", None):
             rules["seed"] = None
         else:
+            if isinstance(seed, bool) or (isinstance(seed, float) and not seed.is_integer()):
+                raise ValueError("seed 必须是整数或留空")
             try:
                 rules["seed"] = int(seed)
-            except (TypeError, ValueError):
-                rules["seed"] = None
+            except (TypeError, ValueError) as exc:
+                raise ValueError("seed 必须是整数或留空") from exc
         if rules["big_blind"] < rules["small_blind"]:
-            rules["big_blind"] = rules["small_blind"]
+            raise ValueError("大盲必须不小于小盲")
         if rules["starting_chips"] < rules["big_blind"]:
-            rules["starting_chips"] = rules["big_blind"]
-        if rules["rebuy_amount"] <= 0:
-            rules["rebuy_amount"] = rules["starting_chips"]
+            raise ValueError("起始筹码不能低于大盲")
         return rules
 
     def _parse_seats(self, payload: dict) -> List[SeatConfig]:
@@ -160,8 +187,19 @@ class GameSession:
             elif kind == "bot":
                 bot_raw = raw.get("bot") if isinstance(raw.get("bot"), dict) else {}
                 agent_type = str(bot_raw.get("agent_type") or "random").lower()
+                if agent_type not in (
+                    "random",
+                    "dqn",
+                    "nfsp",
+                    "dmc",
+                    "project_dqn",
+                    "project_nfsp",
+                ):
+                    raise ValueError(f"座位 {index} 的 Bot 类型无效: {agent_type}")
                 model_path = bot_raw.get("model_path")
-                name = name or "RLCard Bot"
+                if agent_type != "random" and not model_path:
+                    raise ValueError(f"座位 {index} 的 {agent_type} 需要模型文件")
+                name = name or ("Project Bot" if agent_type.startswith("project_") else "RLCard Bot")
                 seats.append(
                     SeatConfig(
                         kind="bot",
@@ -183,36 +221,25 @@ class GameSession:
     # ------------------------------------------------------------------
 
     def start_match(self, payload: dict) -> dict:
-        seats = self._parse_seats(payload)
-        rules = self._normalize_rules(payload.get("rules") if isinstance(payload.get("rules"), dict) else {})
+        # Serialize match starts so two requests cannot race on the same state.
+        with self._start_lock:
+            seats = self._parse_seats(payload)
+            rules = self._normalize_rules(
+                payload.get("rules") if isinstance(payload.get("rules"), dict) else {}
+            )
 
-        # Validate LLM keys before touching the running match.
-        for seat in seats:
-            if seat.kind == "llm":
-                spec = self.registry.resolve(seat.provider_id, seat.model_id)
-                if not ProviderRegistry.key_present(spec):
-                    raise ValueError(
-                        f"{spec.provider_name} 缺少环境变量 {spec.api_key_env}，请在 .env 中配置后重启服务"
-                    )
+            # Validate LLM keys before building anything.
+            for seat in seats:
+                if seat.kind == "llm":
+                    spec = self.registry.resolve(seat.provider_id, seat.model_id)
+                    if not ProviderRegistry.key_present(spec):
+                        raise ValueError(
+                            f"{spec.provider_name} 缺少环境变量 {spec.api_key_env}，请在 .env 中配置后重启服务"
+                        )
 
-        self._stop_current_thread()
-        with self.lock:
-            self.match_id = uuid.uuid4().hex[:12]
-            self.god_view = bool(rules.get("god_view", True))
-            self.max_hands = int(rules.get("max_hands", 0))
-            self.hand_history = []
-            self.transcripts = {0: [], 1: []}
-            self.event_seq = 0
-            self.state_seq = 0
-            self.match_error = ""
-            self.started_at = time.time()
-            self._last_result_hand_id = -1
-            self._human_token = None
-            self._human_action = None
-            self._human_event.clear()
-            self._next_hand_event.clear()
-
-            game = HeadsUpGame(
+            # Build the new game and all agents in local variables. A failure
+            # here leaves the running match untouched.
+            new_game = HeadsUpGame(
                 starting_chips=rules["starting_chips"],
                 small_blind=rules["small_blind"],
                 big_blind=rules["big_blind"],
@@ -221,42 +248,36 @@ class GameSession:
                 seed=rules["seed"],
                 max_hands=rules["max_hands"],
             )
-            game.configure_players(
+            new_game.configure_players(
                 {"name": seats[0].name, "kind": seats[0].kind},
                 {"name": seats[1].name, "kind": seats[1].kind},
             )
-            self.game = game
-            self.seat_configs = {0: seats[0], 1: seats[1]}
-            self._generation += 1
-            generation = self._generation
-            self._stop_event.clear()
             base_seed = rules.get("seed")
             if base_seed is None:
                 base_seed = int(time.time())
-            self.agents = {}
+            generation_holder = {"value": 0}
+            new_agents: Dict[int, object] = {}
             for seat_index, seat in enumerate(seats):
                 if seat.kind == "llm":
                     spec = self.registry.resolve(seat.provider_id, seat.model_id)
-                    self.agents[seat_index] = LLMAgent(
+                    new_agents[seat_index] = LLMAgent(
                         seat=seat_index,
                         name=seat.name,
                         spec=spec,
                         params=seat.params,
                         client=self.client,
                         analyzer=self.analyzer,
-                        validate_action=lambda action, gen=generation: self._validate_for_generation(action, gen),
+                        validate_action=self._validator_for(generation_holder),
                         runtime=self._game_config.get("llm_runtime", {}),
                     )
                 elif seat.kind == "bot":
                     if str(seat.bot_agent_type).startswith("project_"):
                         algorithm = str(seat.bot_agent_type).split("_", 1)[1]
                         model_path = seat.bot_model_path
-                        if not model_path:
-                            raise ValueError(f"座位 {seat_index} 的 Project Bot 需要模型文件")
                         try:
-                            self.agents[seat_index] = ProjectBot(
+                            new_agents[seat_index] = ProjectBot(
                                 name=seat.name,
-                                model_path=model_path,
+                                model_path=model_path or "",
                                 algorithm=algorithm,
                             )
                         except (FileNotFoundError, ValueError, RuntimeError) as exc:
@@ -264,14 +285,44 @@ class GameSession:
                                 f"座位 {seat_index} 的 Project Bot 加载失败: {exc}"
                             ) from exc
                     else:
-                        self.agents[seat_index] = RLCardBot(
+                        bot = RLCardBot(
                             name=seat.name,
                             agent_type=seat.bot_agent_type,
                             model_path=seat.bot_model_path,
                             seed=int(base_seed) + seat_index * 97,
                         )
-            self._thread = threading.Thread(target=self._run, args=(generation,), daemon=True)
-            self._thread.start()
+                        if not bot.describe().get("available"):
+                            raise ValueError(
+                                f"座位 {seat_index} 的 RLCard Bot 加载失败: "
+                                f"{bot.describe().get('warning')}"
+                            )
+                        new_agents[seat_index] = bot
+
+            new_match_id = uuid.uuid4().hex[:12]
+            with self.lock:
+                self._stop_current_thread()
+                generation = self._generation
+                generation_holder["value"] = generation
+                self.match_id = new_match_id
+                self.god_view = rules["god_view"]
+                self.max_hands = rules["max_hands"]
+                self.hand_history = []
+                self.transcripts = {0: [], 1: []}
+                self.event_seq = 0
+                self.state_seq = 0
+                self.match_error = ""
+                self.started_at = time.time()
+                self._last_result_hand_id = -1
+                self._human_token = None
+                self._human_action = None
+                self._human_event.clear()
+                self._next_hand_event.clear()
+                self.game = new_game
+                self.seat_configs = {0: seats[0], 1: seats[1]}
+                self._stop_event.clear()
+                self.agents = new_agents
+                self._thread = threading.Thread(target=self._run, args=(generation,), daemon=True)
+                self._thread.start()
 
         # Give the thread a moment to deal the first hand.
         for _ in range(120):
@@ -281,8 +332,21 @@ class GameSession:
             time.sleep(0.025)
         return self.get_state()
 
+    def _validator_for(self, generation_holder: dict):
+        def validate(action: Action) -> Optional[str]:
+            return self._validate_for_generation(action, int(generation_holder["value"]))
+
+        return validate
+
     def _stop_current_thread(self) -> None:
         with self.lock:
+            for agent in self.agents.values():
+                cancel = getattr(agent, "cancel", None)
+                if callable(cancel):
+                    try:
+                        cancel()
+                    except Exception:  # noqa: BLE001
+                        pass
             self._generation += 1
             self._stop_event.set()
             self._human_event.set()
@@ -292,11 +356,19 @@ class GameSession:
 
     def shutdown(self) -> None:
         self._stop_current_thread()
+        close = getattr(self.client, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:  # noqa: BLE001
+                pass
 
     def next_hand(self) -> dict:
         with self.lock:
             if not self.game:
                 raise ValueError("还没有开始比赛")
+            if self.match_error or not self._thread_alive_locked():
+                raise ValueError("对局线程已停止，请开始新比赛")
             if self.game.street != Street.FINISHED:
                 raise ValueError("当前手牌还没有结束")
             if self.game.match_over:
@@ -314,6 +386,8 @@ class GameSession:
         with self.lock:
             if not self.game:
                 raise ValueError("还没有开始比赛")
+            if self.match_error or not self._thread_alive_locked():
+                raise ValueError("对局线程已停止，请开始新比赛")
             actor = self.game.actor
             if actor is None:
                 raise ValueError("当前没有轮到人类行动")
@@ -624,6 +698,21 @@ class GameSession:
     def _alive(self, generation: int) -> bool:
         return generation == self._generation and not self._stop_event.is_set()
 
+    def _thread_alive_locked(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def _sync_human_token_locked(self) -> None:
+        """Keep the action token in step with the state that was broadcast."""
+        if not self.game or self.game.actor is None:
+            self._human_token = None
+            return
+        actor = self.game.actor
+        if self.game.players[actor].kind != "human":
+            self._human_token = None
+            return
+        if self._human_token is None:
+            self._human_token = (self.game.hand_id, len(self.game.actions), actor)
+
     def _make_emit(self, generation: int, seat: int):
         def emit(event: dict) -> None:
             if not self._alive(generation):
@@ -648,10 +737,22 @@ class GameSession:
         with self.lock:
             self.event_seq += 1
             payload.setdefault("event_id", self.event_seq)
+            seat = payload.get("seat", 0)
+            try:
+                seat = int(seat)
+            except (TypeError, ValueError):
+                seat = 0
+            bucket = self.transcripts.setdefault(seat, [])
+            stored = dict(payload)
+            stored["seat"] = seat
+            bucket.append(stored)
+            if len(bucket) > 6000:
+                del bucket[:1000]
         self.socketio.emit("agent_event", payload)
 
     def _emit_state_locked(self) -> dict:
         """Increment the state version, snapshot and emit while holding the lock."""
+        self._sync_human_token_locked()
         self.state_seq += 1
         snapshot = self._snapshot_locked()
         self.socketio.emit("state", snapshot)
@@ -737,7 +838,16 @@ class GameSession:
             {"role": "system", "content": "你是一个连通性测试助手。"},
             {"role": "user", "content": "请只回复四个字：连接成功"},
         ]
-        result = self.client.stream(spec, messages, None, test_params, lambda event: None)
+        runtime = self._game_config.get("llm_runtime", {})
+        test_client = LLMClient(
+            self.registry,
+            connect_timeout=min(10.0, float(runtime.get("connect_timeout_seconds", 20))),
+            read_timeout=min(60.0, float(runtime.get("request_timeout_seconds", 300))),
+        )
+        try:
+            result = test_client.stream(spec, messages, None, test_params, lambda event: None)
+        finally:
+            test_client.close()
         return {
             "ok": True,
             "provider_id": provider_id,

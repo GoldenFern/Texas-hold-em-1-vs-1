@@ -1,6 +1,6 @@
 # 通信协议
 
-所有 REST 路径以 `/api` 开头；Socket.IO 路径为 `/socket.io`。服务端默认 `127.0.0.1:5050`。
+所有 REST 路径以 `/api` 开头；Socket.IO 路径为 `/socket.io`。服务端默认 `127.0.0.1:5050`。Socket.IO 默认只接受 `127.0.0.1/localhost` 的 `5050` 与 `5173` 来源，可用 `HU_ALLOWED_ORIGINS` 覆盖。厂商错误文本在返回前会脱敏，Key 值不会进入响应。
 
 ## REST
 
@@ -115,7 +115,7 @@ Bot 座位：
 {"action": "raise", "amount": 40}
 ```
 
-`amount` 对 `bet` / `raise` 是**本街总额（raise-to）**。`fold/check/call/all_in` 忽略 `amount`。
+`amount` 对 `bet` / `raise` 是**本街总额（raise-to）**。`fold/check/call/all_in` 忽略 `amount`。动作历史里的 `added` 始终表示该动作本次投入的筹码；`amount` 在跟注时是本次投入，在下注/加注时是本街总额。
 
 成功返回 `{"ok": true, "state": ...}`；非法返回 400 与 `{"ok": false, "error": "..."}`，人类需要重新提交。
 
@@ -196,7 +196,7 @@ Bot 座位：
   "acting_seat": 0,
   "acting_kind": "llm",
   "legal_actions": ["fold", "call", "raise", "all_in"],
-  "constraints": {"to_call": 40, "call_amount": 40, "min_raise_to": 80, "max_raise_to": 920, "pot": 160},
+  "constraints": {"to_call": 40, "call_amount": 40, "min_raise_to": 80, "max_raise_to": 920, "can_raise": true, "raise_allowed": true, "pot": 160},
   "community": [{"code": "Ah", "rank": "A", "suit": "h", "symbol": "♥", "red": true, "label": "A♥"}],
   "burned": [],
   "deck_remaining": [],
@@ -221,7 +221,7 @@ Bot 座位：
       "rebuy_count": 0
     }
   ],
-  "actions": [{"hand_id": 3, "street": "flop", "seat": 0, "type": "raise", "label": "加注", "amount": 40, "pot_after": 120, "chips_after": 920, "source": "llm", "auto": false}],
+  "actions": [{"hand_id": 3, "street": "flop", "seat": 0, "type": "raise", "label": "加注", "amount": 40, "added": 40, "pot_after": 120, "chips_after": 920, "source": "llm", "auto": false}],
   "result": null,
   "match_over": false,
   "match": {

@@ -1,6 +1,6 @@
 # Heads-Up Lab · 二人德州扑克实验室
 
-一个专门为 **单挑（Heads-Up）无限注德州扑克** 做的实验台：人类、LLM、RLCard 三者任选其二上桌。重点不是做一个普通的扑克游戏，而是把 LLM 的**思考、工具调用、参数与结果**完整地摊开在牌桌旁边。
+一个专门为 **单挑（Heads-Up）无限注德州扑克** 做的实验台：人类、LLM、RLCard 三者任选其二上桌。它把重点放在把 LLM 的**思考、工具调用、参数与结果**完整地摊开在牌桌旁边。
 
 - 游戏引擎：严格双人规则，Treys 牌力评估
 - Agent：每次行动发一条新的牌局消息，保留上下文；三个工具：牌型概率 + 随机数 + 执行动作
@@ -117,7 +117,7 @@ cd frontend && npm run dev     # 终端 2，:5173，代理到 :5050
 
 ### RLCard Bot
 
-- 观察编码严格对齐 RLCard `no-limit-holdem` 的 54 维向量与 5 个动作 ID
+- 观察编码严格匹配 RLCard `no-limit-holdem` 的 54 维向量与 5 个动作 ID
 - 支持 `random` / `dqn` / `nfsp` / `dmc`
 - RLCard 双人局的翻后行动顺序与本项目引擎不同（RLCard 按钮/小盲先行动，本项目大盲先行动）。RLCard checkpoint 直接放进本项目会有位置偏差；比较算法强弱建议在 RLCard 原生环境里跑。
 - 默认 RandomAgent 不需要模型文件；DQN 等需要在配置里选择模型
@@ -198,15 +198,16 @@ models/rlcard/                # checkpoint 目录（文件 gitignore）
 
 ```bash
 python -m pytest tests -q
-cd frontend && npm run typecheck && npm run build
+cd frontend && npm run typecheck && npm test && npm run build
 ```
 
 当前测试覆盖：
 
-- 盲注/位置、最小加注、短码全下不重开下注、弃牌退款、摊牌平分、随机 60 手筹码守恒
-- 牌型分布精确/蒙特卡洛、重复牌拒绝、缓存
-- LLM 工具循环：估算→动作、随机数、连续三次非法动作兜底、无工具调用兜底、未知工具
-- RLCard 动作合法性与 54 维 observation 对齐
+- 盲注/位置、最小加注、短码全下不重开下注、对手全下后禁止加注、弃牌退款、摊牌平分、随机 60 手筹码守恒
+- 牌型分布精确/蒙特卡洛、重复牌拒绝、缓存座位键与 LRU
+- LLM 工具循环、SSE 分块、工具调用合并、非流式降级、断线保留、取消、错误脱敏
+- 服务器建局原子性、严格规则校验、JSON 类型校验
+- RLCard 动作合法性与 54 维 observation 编码一致
 
 ---
 
@@ -214,6 +215,7 @@ cd frontend && npm run typecheck && npm run build
 
 - 单进程、内存态，只维护一桌；重启服务后对局丢失
 - 没有登录/权限，默认只监听 `127.0.0.1`，不要直接暴露到公网
+- Socket.IO 默认只接受本机 `5050` 与 `5173` 来源；需要其他端口或主机时设置 `HU_ALLOWED_ORIGINS`
 - God view 是观战功能，不会进入 Agent 上下文
 - LLM 的 `reasoning_content` 是厂商原始输出；不同模型可能用英文思考
 - RLCard 短训练容易退化；默认用 RandomAgent 验证链路，训练模型请自行评估

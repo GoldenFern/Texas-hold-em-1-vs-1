@@ -25,6 +25,7 @@ cd frontend && npm run dev             # :5173，代理到 :5050
 cd frontend && npm run build           # 构建到 static/dist
 python -m pytest tests -q
 cd frontend && npm run typecheck
+cd frontend && npm test
 python scripts/train_rlcard.py --episodes 50000 --chips 1000 --reward-scale 0.01
 python scripts/train_nfsp.py --episodes 50000 --chips 1000 --reward-scale 0.01
 python scripts/train_project_bot.py --algorithm dqn --hands 100000 --opponent mix
@@ -57,6 +58,10 @@ python scripts/eval_llm_vs_bot.py --hands 25 --workers 25   # LLM vs Project DQN
 - `min_raise_to = current_bet + last_full_raise`；翻前初始 `last_full_raise = big_blind`。
 - 短码 all-in 加注不重开下注：`raise_allowed` 只在完整加注时对对手重置。
 - 两人局没有边池；`matched = min(total_bet)`，未匹配部分退回。
+- 对手已经全下时不能再加注，只能跟注或弃牌；`ALL_IN` 只在能覆盖跟注时作为全下跟注。
+- `start_hand` 只能在 `WAITING` 或 `FINISHED` 调用，进行中调用直接报错。
+- `ActionType.BET` 与 `RAISE` 按 `to_call` 区分：`to_call == 0` 用 BET，否则用 RAISE。大盲选项虽然 `current_bet > 0`，仍然用 BET。
+- 牌局结束后 `current_bet` 与双方 `street_bet` 归零，`total_bet` 保留给结果。
 - `pot` 属性在牌局结束后返回有效底池（`_final_pot`），不是 `total_bet` 之和。
 - 筹码守恒：活跃阶段 `sum(chips) + sum(total_bet)` 恒定；结束后 `sum(chips)` 恒定（自动重购会注入新筹码）。
 - `start_hand` 前若有人筹码为 0：auto_rebuy 则补回，否则 match_over。
@@ -83,6 +88,10 @@ python scripts/eval_llm_vs_bot.py --hands 25 --workers 25   # LLM vs Project DQN
   3. `apply_action(action, amount?)`：`amount` 是 raise-to 总额
 - 每回合必须调用 `apply_action` 恰好一次；非法则把错误 + 约束 + 合法动作作为 tool 消息回传，让模型重试。
 - 估算工具是可选辅助，默认不强制（`require_estimate_first: false`）。打开后只会在每条街第一次 `apply_action` 前软提醒一次，不计入三次失败；`get_random_number` 不能满足这个开关。默认关闭，避免模型机械地在每条街、甚至河牌公共牌发完后仍调用估算。
+- 估算工具单回合默认最多 2 次、总采样 50000 次（`config/game.json`），避免阻塞游戏线程。
+- 上下文预算会计入 `reasoning_content`、工具名、参数和 tool id；每轮模型调用前都会重新检查并裁剪。
+- `LLMAgent.cancel()` 会设置取消标记，客户端在每次流式读取前检查，旧比赛不会继续烧模型调用。
+- 厂商 4xx 文本在进入 `LLMError` 前会脱敏，`last_error`、状态快照和 `/api/llm/test` 都不能包含 Key。
 - 连续 3 次非法动作：call 优先，否则 fold（`_fallback` 的 `allow_check` 只用于网络错误等非动作失败）。
 - 单回合最多 12 次模型调用（`config/game.json`）。
 - 上下文超过预算时从最早的 `【牌局更新】` 回合边界整段删除，不拆散 assistant/tool 对。
@@ -125,7 +134,9 @@ python scripts/eval_llm_vs_bot.py --hands 25 --workers 25   # LLM vs Project DQN
 - 思考块在正文开始后自动折叠；用户手动展开后不再自动折叠。
 - `turn_state` 事件保存发给模型的原样牌局输入，在 `AgentTurn` 的「牌局输入」折叠块中可查。
 - 工具卡片默认展开；估算工具显示迷你分布条，随机数工具显示数值和 0 到 1 刻度，动作工具显示动作徽章/错误约束。
-- 响应式断点：1180px 控制台移到下方；720px 牌桌/表单单列。
+- 响应式断点：1520px 行动区换行，1180px 控制台移到下方；720px 牌桌/表单单列。
+- 720px 以下 `.felt` 必须有确定高度，不能只给 `min-height` 再让 `.felt-inner` 使用 `height: 100%`。
+- 全局快捷键必须忽略 `ctrlKey/metaKey/altKey/repeat`，否则 Ctrl+A/F/C 会误触发全下、弃牌、跟注。
 - `frontend/src/store.ts` 是唯一 socket 入口；组件不要直接 `io()` 或 `fetch` 游戏接口（`api.ts` 除外）。
 - 字号统一由 `:root` 的 `--type-scale` 缩放（当前 1.2）；新增 `font-size` 必须写成 `calc(Npx * var(--type-scale))`，不要写死 px，否则会绕过整体缩放。
 - 类型检查必须通过 `npm run typecheck`；构建必须通过 `npm run build`。
@@ -136,6 +147,9 @@ python scripts/eval_llm_vs_bot.py --hands 25 --workers 25   # LLM vs Project DQN
 - 牌型分布精确/蒙特卡洛在 `tests/test_analysis.py`。
 - LLM vs Bot 离线评测：`scripts/eval_llm_vs_bot.py`，每手独立、可并发、同牌换座，输出到 `tmp/llm_eval/`。默认对手是 `nlh_dqn_project.pth`（20k 手矩阵里最强的项目 Bot）。
 - LLM 工具循环用 `FakeClient`，不要依赖真实 API Key。
+- LLM 客户端流式解析、脱敏、降级、断线和取消在 `tests/test_llm_client.py`，不发起真实请求。
+- 服务器建局原子性、规则校验、JSON 类型在 `tests/test_server_session.py` 与 `tests/test_server_api.py`。
+- 前端单元测试在 `frontend/src/**/*.test.ts`，用 `cd frontend && npm test` 运行。
 - RLCard 适配器测试会构造 `AgentView` 并重复决策，断言动作合法。
 - 真实 Provider 连通性用 UI 的「测试连接」，不要在测试里发真实请求。
 

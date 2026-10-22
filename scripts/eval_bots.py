@@ -107,6 +107,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         parser.error("blinds must satisfy 0 < sb <= bb")
     if args.chips <= 0:
         parser.error("--chips must be positive")
+    if args.workers <= 0:
+        parser.error("--workers must be positive")
     return args
 
 
@@ -128,8 +130,6 @@ def build_pairings(selection: str) -> List[Pairing]:
                 raise ValueError(f"无法解析组合 {raw!r}，请使用 random_vs_dqn 这种格式")
             if left not in BOT_TYPES or right not in BOT_TYPES:
                 raise ValueError(f"未知 Bot 类型: {raw!r}")
-            if BOT_TYPES.index(left) > BOT_TYPES.index(right):
-                left, right = right, left
             pairs.append((left, right))
         pairs = list(dict.fromkeys(pairs))
     return [Pairing(index=index, a=a, b=b) for index, (a, b) in enumerate(pairs)]
@@ -187,12 +187,22 @@ def create_bot(
 ) -> Tuple[RLCardBot, bool, Optional[Path]]:
     """Create a bot and return (bot, is_untrained, model_path)."""
     if agent_type == "random":
-        return RLCardBot(name, "random", seed=seed), False, None
+        bot = RLCardBot(name, "random", seed=seed)
+        info = bot.describe()
+        if not info.get("available"):
+            raise RuntimeError(f"加载 random 失败: {info.get('warning')}")
+        return bot, False, None
 
     path = resolve_model_path(agent_type, args)
     assert path is not None
     if path.is_file():
-        bot = RLCardBot(name, agent_type, model_path=str(path), seed=seed)
+        bot = RLCardBot(
+            name,
+            agent_type,
+            model_path=str(path),
+            seed=seed,
+            allow_external_model=True,
+        )
         info = bot.describe()
         if not info.get("available"):
             raise RuntimeError(f"加载 {agent_type} 失败: {info.get('warning')}")
@@ -264,6 +274,9 @@ def play_hand(
         seat = game.actor
         if seat is None:
             raise RuntimeError("actor is None before the hand finished")
+        actions += 1
+        if actions > MAX_ACTIONS_PER_HAND:
+            raise RuntimeError(f"单手动作数超过 {MAX_ACTIONS_PER_HAND}，可能存在死循环")
         view = build_view(game, seat)
         action = bots[seat].decide(view, lambda event: None)
         result = game.apply(action)
@@ -272,9 +285,6 @@ def play_hand(
             result = game.apply(safe_action(game, seat))
             if not result.ok:
                 raise RuntimeError(f"兜底动作也被拒绝: {result.error}")
-        actions += 1
-        if actions > MAX_ACTIONS_PER_HAND:
-            raise RuntimeError(f"单手动作数超过 {MAX_ACTIONS_PER_HAND}，可能存在死循环")
     if game.result is None:
         raise RuntimeError("手牌结束但没有 result")
     return game.result, actions, fallbacks
@@ -352,7 +362,12 @@ def make_row(
         "actions_count": action_count,
         "fallback_count": fallback_count,
         "showdown": int(result.get("reason") == "showdown"),
-        "all_in": int(any(item["type"] == "all_in" for item in actions)),
+        "all_in": int(
+            any(
+                item["type"] == "all_in" or int(item.get("chips_after", 1)) == 0
+                for item in actions
+            )
+        ),
         "duration_ms": round(duration_ms, 3),
         "actions": compact_actions(game),
     }
@@ -501,6 +516,10 @@ def summarize_pairing(
     pair_mean = statistics.fmean(pair_means) if pair_means else 0.0
     pair_sd = statistics.pstdev(pair_means) if len(pair_means) > 1 else 0.0
     pair_ci = 1.96 * pair_sd / math.sqrt(len(pair_means)) if pair_means else 0.0
+    deal_wins = [1.0 if mean > 0 else 0.0 for mean in pair_means]
+    deal_win_rate = statistics.fmean(deal_wins) if deal_wins else 0.0
+    deal_win_sd = statistics.pstdev(deal_wins) if len(deal_wins) > 1 else 0.0
+    deal_win_ci = 1.96 * deal_win_sd / math.sqrt(len(deal_wins)) * 100.0 if deal_wins else 0.0
 
     action_counts = {key: Counter() for key in ("a", "b")}
     for row in rows:
@@ -526,7 +545,9 @@ def summarize_pairing(
         "hands": n,
         "deals": len(by_deal),
         "a_win_pct": round(100.0 * win_rate, 3),
-        "a_win_ci_pp": round(win_ci_pp, 3),
+        "a_deal_win_pct": round(100.0 * deal_win_rate, 3),
+        "a_win_ci_pp": round(deal_win_ci, 3),
+        "a_win_ci_binomial_pp": round(win_ci_pp, 3),
         "a_push_pct": round(100.0 * pushes / n, 3) if n else 0.0,
         "a_mean_net": round(mean_net, 3),
         "a_mean_bb100": round(mean_net / big_blind * 100.0, 3),
@@ -577,7 +598,7 @@ def write_csv(path: Path, rows: Sequence[dict], fieldnames: Optional[Sequence[st
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     pairings = build_pairings(args.pairings)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
     output = args.output or (PROJECT_ROOT / "tmp" / "bot_eval" / timestamp)
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)

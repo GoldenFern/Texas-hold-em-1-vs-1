@@ -49,6 +49,7 @@ class RLCardBot(BaseAgent):
         agent_type: str = "random",
         model_path: Optional[str] = None,
         seed: int = 42,
+        allow_external_model: bool = False,
     ) -> None:
         self.name = name
         self.agent_type = (agent_type or "random").strip().lower()
@@ -56,6 +57,7 @@ class RLCardBot(BaseAgent):
             raise ValueError(f"不支持的 RLCard agent_type: {agent_type}")
         self.model_path = model_path or None
         self.seed = seed
+        self.allow_external_model = bool(allow_external_model)
         self._agent = None
         self._warning = ""
         self._available = True
@@ -95,12 +97,36 @@ class RLCardBot(BaseAgent):
         else:
             resolved = resolved.resolve()
         if resolved != MODELS_DIR and MODELS_DIR not in resolved.parents:
-            raise ValueError(f"模型文件必须位于 {MODELS_DIR} 下")
+            if not self.allow_external_model:
+                raise ValueError(f"模型文件必须位于 {MODELS_DIR} 下")
         if not resolved.is_file():
             raise FileNotFoundError(f"模型文件不存在: {model_path}")
         import torch
 
-        checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+        checkpoint = torch.load(resolved, map_location="cpu", weights_only=False)
+        cpu = torch.device("cpu")
+        if agent_type in ("dqn", "nfsp") and isinstance(checkpoint, dict):
+            # Checkpoints trained on CUDA store the original device. Force CPU
+            # so a GPU-trained policy can still be served on a CPU-only host.
+            checkpoint["device"] = "cpu"
+            for key in ("q_estimator", "rl_agent"):
+                nested = checkpoint.get(key)
+                if isinstance(nested, dict):
+                    nested["device"] = "cpu"
+                    inner = nested.get("q_estimator")
+                    if isinstance(inner, dict):
+                        inner["device"] = "cpu"
+        elif agent_type in ("dqn", "nfsp"):
+            # Legacy checkpoints may be full agent objects rather than dicts.
+            if hasattr(checkpoint, "device"):
+                checkpoint.device = cpu
+            for key in ("q_estimator", "target_estimator", "policy_network", "_rl_agent"):
+                nested = getattr(checkpoint, key, None)
+                if nested is not None and hasattr(nested, "device"):
+                    nested.device = cpu
+                qnet = getattr(nested, "qnet", None)
+                if qnet is not None and hasattr(qnet, "device"):
+                    qnet.device = cpu
         if agent_type == "dqn":
             from rlcard.agents import DQNAgent
 
@@ -268,7 +294,11 @@ class RLCardBot(BaseAgent):
         if target <= view.current_bet:
             return self._fallback(view, legal_types)
 
-        action_type = ActionType.BET if view.current_bet == 0 else ActionType.RAISE
+        action_type = (
+            ActionType.BET
+            if ActionType.BET.value in legal_types
+            else ActionType.RAISE
+        )
         if target >= view.max_raise_to and added >= view.my_chips:
             action_type = ActionType.ALL_IN
         return Action(view.seat, action_type, amount=target, source="bot")

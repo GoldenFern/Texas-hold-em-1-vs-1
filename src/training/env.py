@@ -250,6 +250,9 @@ class ProjectHeadsUpEnv:
             actor = self.game.actor
             if actor is None:
                 raise RuntimeError("手牌未结束但没有行动者")
+            actions += 1
+            if actions > self.max_actions_per_hand:
+                raise RuntimeError(f"单手动作数超过 {self.max_actions_per_hand}")
             agent = agents[actor]
             if not training and isinstance(agent, BaseAgent):
                 # Live-style agents (ProjectBot, RLCardBot) consume AgentView
@@ -269,9 +272,6 @@ class ProjectHeadsUpEnv:
                 _next_state, done, _info = self.step(slot)
                 if training:
                     transitions[actor].append((state, slot, _next_state, done))
-            actions += 1
-            if actions > self.max_actions_per_hand:
-                raise RuntimeError(f"单手动作数超过 {self.max_actions_per_hand}")
             if done:
                 break
         return self.payoffs(), transitions

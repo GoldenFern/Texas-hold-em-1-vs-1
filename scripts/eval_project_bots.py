@@ -60,12 +60,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.hands <= 0 or args.hands % 2:
         parser.error("--hands 必须是正偶数")
+    if args.chips <= 0 or args.sb <= 0 or args.bb < args.sb:
+        parser.error("筹码和盲注必须满足 chips > 0, 0 < sb <= bb")
     if args.dqn_model is None:
         args.dqn_model = PROJECT_ROOT / "models" / "rlcard" / "nlh_dqn_project.pth"
     if args.nfsp_model is None:
         args.nfsp_model = PROJECT_ROOT / "models" / "rlcard" / "nlh_nfsp_project.pth"
     if args.output is None:
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
         args.output = PROJECT_ROOT / "tmp" / "project_eval" / stamp
     return args
 
@@ -90,6 +92,11 @@ def build_pairings(selection: str) -> List[Tuple[str, str]]:
     return list(dict.fromkeys(pairs))
 
 
+def _resolved_model_path(path: Path) -> Path:
+    path = Path(path)
+    return path if path.is_absolute() else (PROJECT_ROOT / path).resolve()
+
+
 def make_bot(kind: str, args: argparse.Namespace):
     if kind == "random":
         return RandomAgent(num_actions=NUM_ACTIONS)
@@ -109,7 +116,7 @@ def run_pairing(
     missing = [
         str(path)
         for kind, path in (("dqn", args.dqn_model), ("nfsp", args.nfsp_model))
-        if kind in pairing and not Path(path).is_file()
+        if kind in pairing and not _resolved_model_path(path).is_file()
     ]
     if missing:
         raise FileNotFoundError(f"{label} 缺少模型文件: {missing}")
@@ -126,6 +133,7 @@ def run_pairing(
     rows: List[dict] = []
     pair_means: List[float] = []
     per_hand_nets: List[int] = []
+    deal_wins: List[float] = []
     wins = 0
     pushes = 0
 
@@ -179,7 +187,12 @@ def run_pairing(
                     "net_seat0": int(net0),
                     "net_seat1": int(net1),
                     "actions_count": len(actions),
-                    "all_in": int(any(item["type"] == "all_in" for item in actions)),
+                    "all_in": int(
+                        any(
+                            item["type"] == "all_in" or int(item.get("chips_after", 1)) == 0
+                            for item in actions
+                        )
+                    ),
                     "fold": int(action_types.get("fold", 0)),
                     "call": int(action_types.get("call", 0)),
                     "raise": int(action_types.get("raise", 0)),
@@ -191,17 +204,16 @@ def run_pairing(
             pushes += int(net_a == 0)
 
         pair_means.append((per_hand_nets[-2] + per_hand_nets[-1]) / 2.0)
+        deal_wins.append(1.0 if per_hand_nets[-2] + per_hand_nets[-1] > 0 else 0.0)
 
     mean_net = statistics.fmean(pair_means)
     sd = statistics.pstdev(pair_means) if len(pair_means) > 1 else 0.0
     ci = 1.96 * sd / math.sqrt(len(pair_means)) if pair_means else 0.0
     total_hands = len(per_hand_nets)
     win_rate = wins / total_hands if total_hands else 0.0
-    win_ci = (
-        1.96 * math.sqrt(win_rate * (1.0 - win_rate) / total_hands) * 100.0
-        if total_hands
-        else 0.0
-    )
+    deal_win_rate = statistics.fmean(deal_wins) if deal_wins else 0.0
+    deal_sd = statistics.pstdev(deal_wins) if len(deal_wins) > 1 else 0.0
+    win_ci = 1.96 * deal_sd / math.sqrt(len(deal_wins)) * 100.0 if deal_wins else 0.0
     total_pot = sum(row["pot"] for row in rows)
     total_actions = sum(row["actions_count"] for row in rows)
     summary = {
@@ -215,6 +227,7 @@ def run_pairing(
         "a_ci95_net": round(ci, 3),
         "a_ci95_bb100": round(ci / max(1, args.bb) * 100.0, 3),
         "a_win_pct": round(win_rate * 100.0, 3),
+        "a_deal_win_pct": round(deal_win_rate * 100.0, 3),
         "a_win_ci_pp": round(win_ci, 3),
         "a_push_pct": round(pushes / total_hands * 100.0, 3) if total_hands else 0.0,
         "seat0_win_pct": round(
@@ -266,12 +279,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     all_rows: List[dict] = []
     summaries: List[dict] = []
     metadata: List[dict] = []
+    skipped: List[dict] = []
     for pairing in pairings:
         label = f"{pairing[0]}_vs_{pairing[1]}"
         try:
             rows, summary = run_pairing(pairing, args)
         except FileNotFoundError as exc:
             print(f"skip {label}: {exc}")
+            skipped.append({"pairing": label, "reason": str(exc)})
             continue
         all_rows.extend(rows)
         summaries.append(summary)
@@ -292,6 +307,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "big_blind": args.bb,
         "seed": args.seed,
         "pairings": [item["pairing"] for item in metadata],
+        "skipped_pairings": skipped,
         "dqn_model": str(args.dqn_model),
         "nfsp_model": str(args.nfsp_model),
         "note": "同牌换座；a_mean 以 pairing 标签里的第一个 Bot 为 A。",
@@ -302,6 +318,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     print(f"summary: {args.output / 'summary.csv'}")
     print(f"hands:   {args.output / 'hands.csv'}")
+    if not summaries:
+        print("error: 没有任何组合成功运行", file=sys.stderr)
+        return 2
+    if skipped:
+        print("error: 部分组合因缺少模型文件被跳过", file=sys.stderr)
+        return 1
     return 0
 
 

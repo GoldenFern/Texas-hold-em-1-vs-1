@@ -17,7 +17,7 @@
 - 60..63：街道 one-hot。
 - 64：是否按钮位。
 - 65..69：上一个动作类型 one-hot。
-- 70：上一个动作金额 / 动作后底池。
+- 70：上一个动作本次投入的筹码 / 动作后底池（v2；旧 checkpoint 按 v1 使用 raise-to 总额）。
 - 71..72：上一个行动者相对位置。
 
 观测始终以当前行动者为 hero，因此一个网络可以同时学两个座位。合法动作掩码单独返回，不拼进观测。
@@ -104,6 +104,7 @@ python scripts/train_project_bot.py \
     "format": "project-bot-v1",
     "algorithm": "dqn" | "nfsp",
     "obs_dim": 73,
+    "obs_version": 2,
     "num_actions": 10,
     "mlp_layers": [...],
     "state_dict": {...},
@@ -111,7 +112,7 @@ python scripts/train_project_bot.py \
 }
 ```
 
-推理用 `src/agents/project_bot.py` 的 `ProjectBot`，`torch.load(..., weights_only=True)`，不加载完整 Python 对象。
+推理用 `src/agents/project_bot.py` 的 `ProjectBot`，`torch.load(..., weights_only=True)`，不加载完整 Python 对象。NFSP checkpoint 默认 `sample=True`，与训练中的平均策略评估一致；DQN 使用 argmax。加载时如果 checkpoint 的算法与请求的 `dqn`/`nfsp` 不符会直接报错。旧 checkpoint 没有 `obs_version` 时按 v1 推理；新训练写入 v2，最后一个动作尺寸特征改用本次投入的筹码，跨版本指标不要直接比较。
 
 旧的 `RLCardBot` 仍然支持 54 维 / 5 动作的 RLCard checkpoint，但不属于这套项目规则训练流程。
 

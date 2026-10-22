@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import AppIcon from "./AppIcon.vue";
 import ReasoningBlock from "./ReasoningBlock.vue";
 import ToolCard from "./ToolCard.vue";
@@ -15,11 +15,35 @@ const totalTokens = computed(() => {
   const usage = props.turn.usage || { input_tokens: 0, output_tokens: 0 };
   return Number(usage.input_tokens || 0) + Number(usage.output_tokens || 0);
 });
+const now = ref(Date.now());
+let timer: number | null = null;
+
+function syncTimer(): void {
+  const running = props.turn.status === "running" && !props.turn.endedAt;
+  if (running && timer === null) {
+    timer = window.setInterval(() => {
+      now.value = Date.now();
+    }, 1000);
+  } else if (!running && timer !== null) {
+    window.clearInterval(timer);
+    timer = null;
+  }
+}
+
+watch(
+  () => [props.turn.status, props.turn.endedAt],
+  syncTimer,
+  { immediate: true },
+);
+onUnmounted(() => {
+  if (timer !== null) window.clearInterval(timer);
+});
+
 const elapsed = computed(() => {
   if (props.turn.latencyMs) return duration(props.turn.latencyMs);
   if (!props.turn.startedAt) return "";
   if (props.turn.endedAt) return duration(props.turn.endedAt - props.turn.startedAt);
-  return secondsSince(props.turn.startedAt);
+  return secondsSince(props.turn.startedAt, now.value);
 });
 const statusText = computed(() => {
   if (props.turn.status === "running") return props.live ? "思考中" : "运行中";

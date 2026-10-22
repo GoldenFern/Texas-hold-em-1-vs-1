@@ -162,7 +162,11 @@ def action_from_view(view: AgentView, slot: int) -> Action:
     else:
         target = raise_to_for_fraction(view, POT_FRACTIONS[slot])
 
-    action_type = ActionType.BET if int(view.current_bet) == 0 else ActionType.RAISE
+    action_type = (
+        ActionType.BET
+        if "bet" in set(view.legal_actions)
+        else ActionType.RAISE
+    )
     return Action(seat, action_type, amount=int(target), source="project")
 
 

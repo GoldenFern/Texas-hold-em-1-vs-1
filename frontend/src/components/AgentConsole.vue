@@ -229,14 +229,7 @@ onUnmounted(() => {
 
     <div ref="scrollEl" class="console-scroll" @scroll="onScroll">
       <div v-if="mode === 'stream'" class="stream-body">
-        <div v-if="!agentSeats.length" class="empty-state">
-          <div class="empty-orb"><AppIcon name="user" :size="28" /></div>
-          <h3>这是一场人类对局</h3>
-          <p>把其中一个座位换成 LLM 或 RLCard，就能在这里看到实时思考与工具调用。</p>
-          <button class="btn btn-primary btn-sm" @click="openSetup">打开配置</button>
-        </div>
-
-        <div v-else-if="!game.snapshot?.has_match" class="empty-state">
+        <div v-if="!game.snapshot?.has_match" class="empty-state">
           <div class="empty-orb"><AppIcon name="sparkles" :size="28" /></div>
           <h3>还没有开始对局</h3>
           <p>配置两位玩家，LLM 的推理、工具参数和返回结果会逐字出现在这里。</p>
@@ -244,6 +237,13 @@ onUnmounted(() => {
             <AppIcon name="settings" :size="14" />
             配置对局
           </button>
+        </div>
+
+        <div v-else-if="!agentSeats.length" class="empty-state">
+          <div class="empty-orb"><AppIcon name="user" :size="28" /></div>
+          <h3>这是一场人类对局</h3>
+          <p>把其中一个座位换成 LLM 或 RLCard，就能在这里看到实时思考与工具调用。</p>
+          <button class="btn btn-primary btn-sm" @click="openSetup">打开配置</button>
         </div>
 
         <div v-else-if="!turns.length" class="empty-state">

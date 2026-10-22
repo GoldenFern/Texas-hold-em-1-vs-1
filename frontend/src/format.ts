@@ -29,8 +29,8 @@ export function duration(ms: number | null | undefined): string {
   return `${Math.round(value / 1000)}s`;
 }
 
-export function secondsSince(start: number): string {
-  const value = (Date.now() - start) / 1000;
+export function secondsSince(start: number, now = Date.now()): string {
+  const value = (now - start) / 1000;
   if (value < 10) return `${value.toFixed(1)}s`;
   return `${Math.round(value)}s`;
 }

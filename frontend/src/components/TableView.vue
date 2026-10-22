@@ -605,8 +605,8 @@ const dealerStyle = computed(() => {
   .phase-label { display: none; }
   .phase-line { width: 16px; margin: 0 4px; }
   .felt-wrap { padding: 8px 8px 4px; }
-  .felt { min-height: 430px; aspect-ratio: auto; border-radius: 42% / 46%; }
-  .felt-inner { border-radius: 42% / 46%; }
+  .felt { height: 430px; min-height: 430px; aspect-ratio: auto; border-radius: 42% / 46%; }
+  .felt-inner { height: 100%; border-radius: 42% / 46%; }
   .board { gap: 4px; }
   .board-block { top: 45%; }
   .pot-display { top: 33%; min-width: 100px; padding: 5px 12px 6px; }

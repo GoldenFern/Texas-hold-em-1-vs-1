@@ -1,0 +1,184 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const socketMock = vi.hoisted(() => ({
+  handlers: {} as Record<string, (payload: any) => void>,
+}));
+
+vi.mock("socket.io-client", () => ({
+  io: () => ({
+    on: (name: string, handler: (payload: any) => void) => {
+      socketMock.handlers[name] = handler;
+    },
+    disconnect: () => undefined,
+  }),
+}));
+
+vi.mock("./api", () => {
+  class ApiError extends Error {
+    status = 0;
+    kind = "unknown";
+  }
+  return {
+    ApiError,
+    api: {
+      bootstrap: vi.fn(),
+      state: vi.fn(),
+      transcripts: vi.fn(),
+      newGame: vi.fn(),
+      action: vi.fn(),
+      nextHand: vi.fn(),
+      setGodView: vi.fn(),
+      analyze: vi.fn(),
+      testLLM: vi.fn(),
+    },
+  };
+});
+
+import { api } from "./api";
+import { boot, game, refreshAnalysis, refreshTranscripts } from "./store";
+
+const mockedApi = api as unknown as Record<string, ReturnType<typeof vi.fn>>;
+
+function snapshot(overrides: Record<string, any> = {}): any {
+  const base = {
+    has_match: true,
+    seq: 1,
+    hand_id: 1,
+    street: "preflop",
+    phase: "preflop",
+    pot: 15,
+    current_bet: 10,
+    min_raise_to: 20,
+    max_raise_to: 1000,
+    to_call: 5,
+    call_amount: 5,
+    button: 0,
+    acting_seat: 0,
+    acting_kind: "human",
+    legal_actions: ["fold", "call", "raise", "all_in"],
+    constraints: {},
+    community: [],
+    players: [
+      { seat: 0, kind: "human", chips: 995, street_bet: 5, total_bet: 5, hole_cards: [], assessment: null },
+      { seat: 1, kind: "bot", chips: 990, street_bet: 10, total_bet: 10, hole_cards: [], assessment: null },
+    ],
+    actions: [],
+    result: null,
+    match_over: false,
+    match: {
+      id: "m1",
+      hands_played: 0,
+      max_hands: 0,
+      match_over: false,
+      god_view: false,
+      can_next_hand: false,
+      started_at: 1,
+      rules: { starting_chips: 1000, small_blind: 5, big_blind: 10, auto_rebuy: false, rebuy_amount: 1000, max_hands: 0, seed: 1 },
+      seats: [
+        { seat: 0, name: "You", kind: "human", agent: {} },
+        { seat: 1, name: "Bot", kind: "bot", agent: {} },
+      ],
+      history: [],
+      last_result: null,
+      error: "",
+    },
+  };
+  return { ...base, ...overrides };
+}
+
+function turnEvent(eventId: number, turnId: string, handId = 1) {
+  return {
+    match_id: "m1",
+    seat: 0,
+    event_id: eventId,
+    type: "turn_start",
+    turn_id: turnId,
+    hand_id: handId,
+    hand_number: handId,
+    street: "flop",
+    pot: 30,
+    my_chips: 900,
+    opponent_chips: 900,
+    to_call: 0,
+    legal_actions: ["fold", "check", "bet"],
+    position: "button",
+  };
+}
+
+beforeEach(async () => {
+  game.turns = {};
+  game.currentTurns = {};
+  game.seenEvents = {};
+  game.lastEventIds = {};
+  game.analysis = {};
+  game.analysisKey = "";
+  game.analysisLoading = false;
+  mockedApi.bootstrap.mockResolvedValue({
+    app: {},
+    providers: [],
+    game: {
+      defaults: {},
+      limits: { starting_chips: { min: 100, max: 100000 } },
+      llm_runtime: {},
+    },
+    rlcard: { available: true, models: [] },
+    env: {},
+  });
+  mockedApi.state.mockResolvedValue(snapshot());
+  mockedApi.transcripts.mockResolvedValue({ match_id: "m1", seats: {} });
+  await boot();
+});
+
+describe("transcript resync", () => {
+  it("replays live events that arrive while the snapshot request is in flight", async () => {
+    let resolveTranscripts: (value: any) => void = () => undefined;
+    mockedApi.transcripts.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveTranscripts = resolve; }),
+    );
+
+    const pending = refreshTranscripts();
+    await Promise.resolve();
+    socketMock.handlers.agent_event?.(turnEvent(2, "live-turn"));
+    resolveTranscripts({
+      match_id: "m1",
+      seats: { "0": [turnEvent(1, "snapshot-turn")] },
+    });
+    await pending;
+
+    const ids = (game.turns[0] || []).map((turn) => turn.id);
+    expect(ids).toContain("snapshot-turn");
+    expect(ids).toContain("live-turn");
+  });
+});
+
+describe("analysis resync", () => {
+  it("ignores an older response that arrives after a newer one", async () => {
+    const resolvers: Array<(value: any) => void> = [];
+    mockedApi.analyze.mockImplementation(
+      () => new Promise((resolve) => { resolvers.push(resolve); }),
+    );
+
+    game.snapshot = snapshot({
+      street: "flop",
+      community: [{ code: "Qh" }, { code: "Jh" }, { code: "2c" }],
+      match: { ...snapshot().match, god_view: true },
+    });
+    game.selectedAnalysisSeat = 0;
+
+    const first = refreshAnalysis(true);
+    game.snapshot = snapshot({
+      street: "turn",
+      community: [{ code: "Qh" }, { code: "Jh" }, { code: "2c" }, { code: "7d" }],
+      match: { ...snapshot().match, god_view: true },
+    });
+    const second = refreshAnalysis(true);
+
+    resolvers[1]({ analysis: { seat: 0, street: "turn", distribution: [] } });
+    await second;
+    resolvers[0]({ analysis: { seat: 0, street: "flop", distribution: [] } });
+    await first;
+
+    expect((game.analysis[0] as any)?.street).toBe("turn");
+    expect(game.analysisLoading).toBe(false);
+  });
+});

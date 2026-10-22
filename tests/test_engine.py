@@ -192,3 +192,87 @@ def test_god_snapshot_shows_deck_and_burn() -> None:
     assert snapshot["players"][1]["hole_hidden"] is False
     assert len(snapshot["deck_remaining"]) == game.deck.remaining
     assert "burned" in snapshot
+
+
+def test_no_raise_when_opponent_is_all_in() -> None:
+    game = HeadsUpGame(starting_chips=300, small_blind=5, big_blind=10, seed=21)
+    game.configure_players({"name": "A", "kind": "human"}, {"name": "B", "kind": "bot"})
+    game.start_hand()
+    act(game, 0, ActionType.ALL_IN)
+    assert game.players[0].status == PlayerStatus.ALL_IN
+    legal = game.legal_actions(1)
+    assert ActionType.RAISE not in legal
+    result = game.apply(Action(1, ActionType.RAISE, amount=600, source="test"))
+    assert not result.ok
+    assert "不能加注" in result.error
+
+
+def test_start_hand_rejected_while_hand_is_active() -> None:
+    game = make_game()
+    assert not game.can_start_hand
+    with pytest.raises(RuntimeError):
+        game.start_hand()
+    assert game.hand_id == 1
+
+
+def test_finished_snapshot_resets_street_fields() -> None:
+    game = make_game()
+    act(game, 0, ActionType.RAISE, 100)
+    act(game, 1, ActionType.FOLD)
+    snapshot = game.snapshot()
+    assert snapshot["street"] == "finished"
+    assert snapshot["current_bet"] == 0
+    assert all(player["street_bet"] == 0 for player in snapshot["players"])
+    assert game.result is not None
+    assert game.result["players"][0]["total_bet"] == 100
+
+
+def test_bet_and_raise_types_follow_to_call() -> None:
+    game = make_game()
+    act(game, 0, ActionType.CALL)
+    assert game.actor == 1
+    assert ActionType.BET in game.legal_actions(1)
+    rejected = game.apply(Action(1, ActionType.RAISE, amount=20, source="test"))
+    assert not rejected.ok
+    accepted = game.apply(Action(1, ActionType.BET, amount=20, source="test"))
+    assert accepted.ok
+
+    facing_bet = make_game()
+    act(facing_bet, 0, ActionType.RAISE, 20)
+    rejected = facing_bet.apply(Action(1, ActionType.BET, amount=40, source="test"))
+    assert not rejected.ok
+    accepted = facing_bet.apply(Action(1, ActionType.RAISE, amount=40, source="test"))
+    assert accepted.ok
+
+
+def test_constraints_do_not_advertise_raise_below_current_bet() -> None:
+    game = make_game()
+    act(game, 0, ActionType.RAISE, 30)
+    game.players[1].chips = 15
+    constraints = game.action_constraints(1)
+    assert constraints["can_raise"] is False
+    assert constraints["min_raise_to"] >= constraints["current_bet"]
+    assert constraints["max_raise_to"] >= constraints["current_bet"]
+
+
+def test_invalid_constructor_values_are_rejected() -> None:
+    with pytest.raises(ValueError):
+        HeadsUpGame(starting_chips=0.5)
+    with pytest.raises(ValueError):
+        HeadsUpGame(starting_chips=100, small_blind=10, big_blind=5)
+    with pytest.raises(ValueError):
+        HeadsUpGame(starting_chips=100, rebuy_amount=0)
+    with pytest.raises(ValueError):
+        HeadsUpGame(starting_chips=100, max_hands=-1)
+
+
+def test_action_history_records_added_chips() -> None:
+    game = make_game()
+    act(game, 0, ActionType.RAISE, 40)
+    act(game, 1, ActionType.CALL)
+    raise_entry = game.actions[0]
+    call_entry = game.actions[1]
+    assert raise_entry["amount"] == 40
+    assert raise_entry["added"] == 35
+    assert call_entry["amount"] == 30
+    assert call_entry["added"] == 30

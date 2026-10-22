@@ -43,6 +43,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.hands <= 0 or args.hands % 2:
         parser.error("--hands 必须是正偶数")
+    if args.chips <= 0 or args.sb <= 0 or args.bb < args.sb:
+        parser.error("筹码和盲注必须满足 chips > 0, 0 < sb <= bb")
     if args.output is None:
         args.output = PROJECT_ROOT / "models" / "rlcard" / f"nlh_{args.algorithm}_project_selected.pth"
     if args.summary is None:

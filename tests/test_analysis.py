@@ -59,3 +59,38 @@ def test_cache_returns_same_result() -> None:
     first = analyzer.analyze(cards("Ah", "Kh"), cards("Qh", "Jh", "2c"))
     second = analyzer.analyze(cards("Ah", "Kh"), cards("Qh", "Jh", "2c"))
     assert first is second
+
+
+def test_cache_key_includes_hero_seat() -> None:
+    analyzer = HandDistributionAnalyzer()
+    hero = cards("Ah", "Kh")
+    board = cards("Qh", "Jh", "2c")
+    seat0 = analyzer.analyze(hero, board, hero_seat=0)
+    seat1 = analyzer.analyze(hero, board, hero_seat=1)
+    assert seat0 is not seat1
+    assert seat0.hero_seat == 0
+    assert seat1.hero_seat == 1
+
+
+def test_cached_result_lists_are_copies() -> None:
+    analyzer = HandDistributionAnalyzer()
+    result = analyzer.analyze(cards("Ah", "Kh"), cards("Qh", "Jh", "2c"))
+    payload = result.to_dict()
+    payload["distribution"].clear()
+    payload["known_cards"].clear()
+    again = analyzer.analyze(cards("Ah", "Kh"), cards("Qh", "Jh", "2c"))
+    assert again.distribution
+    assert again.known_cards
+
+
+def test_cache_evicts_least_recently_used(monkeypatch) -> None:
+    import src.analysis.hand_distribution as module
+
+    monkeypatch.setattr(module, "_CACHE_LIMIT", 2)
+    analyzer = HandDistributionAnalyzer()
+    first = analyzer.analyze(cards("Ah", "Kh"), cards("Qh", "Jh", "2c"))
+    second = analyzer.analyze(cards("9s", "8s"), cards("7c", "6c", "4d"))
+    analyzer.analyze(cards("Ah", "Kh"), cards("Qh", "Jh", "2c"))
+    analyzer.analyze(cards("5s", "5h"), cards("3c", "3d", "2s"))
+    assert analyzer.analyze(cards("Ah", "Kh"), cards("Qh", "Jh", "2c")) is first
+    assert analyzer.analyze(cards("9s", "8s"), cards("7c", "6c", "4d")) is not second
