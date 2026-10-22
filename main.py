@@ -6,25 +6,7 @@ import argparse
 import os
 import sys
 
-from werkzeug.serving import WSGIRequestHandler
-
 from src.server.app import APP_VERSION, create_app
-
-
-class SafeRequestHandler(WSGIRequestHandler):
-    """Ignore client-abort races in Werkzeug's threaded development server.
-
-    Browsers and Socket.IO polling sometimes close a connection before
-    Werkzeug has called ``start_response``. Werkzeug 3.1 raises an assertion
-    in that case; it is harmless for a local dev server but floods the log and
-    can take down the process. The request is already gone, so swallow it.
-    """
-
-    def write(self, data: bytes) -> None:
-        try:
-            super().write(data)
-        except (AssertionError, OSError):
-            pass
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,7 +35,6 @@ def main() -> int:
             debug=args.debug,
             allow_unsafe_werkzeug=True,
             use_reloader=args.debug,
-            request_handler=SafeRequestHandler,
         )
     except KeyboardInterrupt:
         pass

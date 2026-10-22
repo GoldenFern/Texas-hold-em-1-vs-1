@@ -263,7 +263,10 @@ export async function boot(): Promise<void> {
 
 function connectSocket(): void {
   if (socket) return;
-  socket = io({ path: "/socket.io", transports: ["websocket", "polling"] });
+  // Polling first gives engine.io an sid before the websocket upgrade. A
+  // direct websocket connection ends with an empty WSGI response and makes
+  // Werkzeug log a spurious "write() before start_response" on disconnect.
+  socket = io({ path: "/socket.io", transports: ["polling", "websocket"] });
   socket.on("connect", () => {
     state.connected = true;
     if (state.snapshot?.has_match) void refreshTranscripts();

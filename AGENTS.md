@@ -124,6 +124,7 @@ python scripts/eval_llm_vs_llm.py --hands 100 --workers 5  # LLM vs LLM 工具�
 - `nextHand()` 在请求前关闭旧结果弹窗，不能在响应后强制关闭，否则新一手瞬间结束时会把新结果弹窗吞掉。
 - Agent 事件按 `(match_id, seat, event_id)` 去重；`eventBuffer` 在 `startMatch` 期间缓冲，`refreshTranscripts` 后重放。
 - 前端 transcript 只做增量 reducer；不要在每个 delta 上做全量 JSON 深拷贝/排序。
+- Socket.IO 客户端必须 polling 优先（`transports: ["polling", "websocket"]`）。直连 WebSocket 时 engine.io 在连接结束返回空迭代器且不调用 `start_response`，Werkzeug 3.1 会报 `write() before start_response`。
 
 ## 前端约定
 
@@ -138,6 +139,7 @@ python scripts/eval_llm_vs_llm.py --hands 100 --workers 5  # LLM vs LLM 工具�
   - `ResultOverlay`、`ToastHost`
 - 思考块在正文开始后自动折叠；用户手动展开后不再自动折叠。
 - `turn_state` 事件保存发给模型的原样牌局输入，在 `AgentTurn` 的「牌局输入」折叠块中可查。
+- `AgentTurn` 底部的阶段文案由 `turnPhase.ts` 根据最后一条 message 与 tool 状态推导；不要再用 `turn.status === "running"` 当作“等待工具调用”。
 - 工具卡片默认展开；估算工具显示迷你分布条，随机数工具显示数值和 0 到 1 刻度，动作工具显示动作徽章/错误约束。
 - 响应式断点：1520px 行动区换行，1180px 控制台移到下方；720px 牌桌/表单单列。
 - 720px 以下 `.felt` 必须有确定高度，不能只给 `min-height` 再让 `.felt-inner` 使用 `height: 100%`。

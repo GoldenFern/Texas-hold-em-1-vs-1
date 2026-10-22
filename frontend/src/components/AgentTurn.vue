@@ -4,6 +4,7 @@ import AppIcon from "./AppIcon.vue";
 import ReasoningBlock from "./ReasoningBlock.vue";
 import ToolCard from "./ToolCard.vue";
 import { actionLabel, chips, duration, secondsSince, streetLabel, tokenText } from "../format";
+import { turnPendingLabel } from "../turnPhase";
 import type { TurnView } from "../types";
 
 const props = defineProps<{ turn: TurnView; seatName: string; live: boolean; turnNumber: number }>();
@@ -50,6 +51,7 @@ const statusText = computed(() => {
   if (props.turn.auto) return "系统兜底";
   return "已完成";
 });
+const pendingText = computed(() => turnPendingLabel(props.turn));
 const streetClass = computed(() => props.turn.header.street || "preflop");
 </script>
 
@@ -148,9 +150,9 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
           <strong>{{ actionLabel(actionType) }}<template v-if="actionAmount"> {{ chips(actionAmount) }}</template></strong>
           <span v-if="turn.auto" class="auto-chip">AUTO</span>
         </div>
-        <div v-else-if="turn.status === 'running'" class="final-pending">
+        <div v-else-if="pendingText" class="final-pending">
           <span class="spinner"></span>
-          正在等待工具调用…
+          {{ pendingText }}
         </div>
         <div class="turn-usage">
           <span v-if="turn.steps" class="mono">STEP {{ turn.steps }}</span>
