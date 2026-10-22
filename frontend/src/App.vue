@@ -3,7 +3,6 @@ import { onMounted, ref, watch } from "vue";
 import AgentConsole from "./components/AgentConsole.vue";
 import AnalysisPanel from "./components/AnalysisPanel.vue";
 import AppIcon from "./components/AppIcon.vue";
-import ResultOverlay from "./components/ResultOverlay.vue";
 import SetupModal from "./components/SetupModal.vue";
 import TableView from "./components/TableView.vue";
 import ToastHost from "./components/ToastHost.vue";
@@ -69,7 +68,6 @@ function reload(): void {
     </main>
 
     <SetupModal />
-    <ResultOverlay />
     <ToastHost />
 
     <div v-if="game.loading" class="loading-cover">

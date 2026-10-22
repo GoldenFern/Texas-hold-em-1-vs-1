@@ -3,8 +3,9 @@ import { computed } from "vue";
 import AppIcon from "./AppIcon.vue";
 import FlipCard from "./FlipCard.vue";
 import { iconUrl } from "../api";
-import { chips, shortName, statusLabel } from "../format";
-import type { HandResult, PlayerState, SeatInfo } from "../types";
+import { describeAction } from "../actionMeta";
+import { chips, shortName } from "../format";
+import type { ActionLog, HandResult, PlayerState, SeatInfo } from "../types";
 
 const props = withDefaults(
   defineProps<{
@@ -18,6 +19,7 @@ const props = withDefaults(
     dealNonce?: number;
     holeHold?: boolean;
     holdAssessment?: boolean;
+    lastAction?: ActionLog | null;
   }>(),
   {
     active: false,
@@ -27,6 +29,7 @@ const props = withDefaults(
     dealNonce: 0,
     holeHold: false,
     holdAssessment: false,
+    lastAction: null,
   },
 );
 
@@ -54,16 +57,8 @@ const roleLabel = computed(() => {
   if (kind.value === "bot") return props.seatInfo?.agent?.agent_type?.startsWith("project_") ? "Project RL" : "RLCard";
   return "人类玩家";
 });
-const action = computed(() => props.player?.last_action || null);
-const actionText = computed(() => {
-  if (!action.value) return "";
-  const base = action.value.label || action.value.type;
-  if (action.value.type === "bet" || action.value.type === "raise") {
-    return `${base}到 ${chips(action.value.amount)}`;
-  }
-  if (action.value.type === "call") return `${base} ${chips(action.value.amount)}`;
-  return base;
-});
+const action = computed(() => props.lastAction || null);
+const actionText = computed(() => describeAction(action.value));
 const assessment = computed(() => {
   if (props.holdAssessment) return "";
   return props.player?.assessment?.category_name || "";
@@ -75,7 +70,11 @@ function dealOrder(index: number): number {
 </script>
 
 <template>
-  <div class="seat" :class="[position, { active, folded: isFolded, winner: isWinner, 'all-in': isAllIn }]">
+  <div
+    class="seat"
+    :class="[position, { active, folded: isFolded, winner: isWinner, 'all-in': isAllIn }]"
+    :data-seat-pod="player?.seat"
+  >
     <div class="seat-cards" v-if="position === 'bottom'">
       <div class="card-wrap" v-if="cards.length || player">
         <FlipCard
@@ -126,7 +125,19 @@ function dealOrder(index: number): number {
         </div>
         <div class="meta-row">
           <span class="mono stack"><AppIcon name="coins" :size="11" /> {{ chips(stack) }}</span>
-          <span class="role">{{ roleLabel }}</span>
+          <Transition name="meta-swap" mode="out-in">
+            <span
+              v-if="actionText"
+              :key="`action-${action?.street}-${action?.type}-${action?.amount}`"
+              class="pod-action"
+              :class="action?.type"
+            >
+              <span class="action-dot"></span>
+              <span class="action-text">{{ actionText }}</span>
+              <span v-if="action?.auto" class="auto-tag">AUTO</span>
+            </span>
+            <span v-else key="role" class="role">{{ roleLabel }}</span>
+          </Transition>
         </div>
       </div>
 
@@ -179,13 +190,6 @@ function dealOrder(index: number): number {
       </div>
       <span v-if="assessment" class="assess">{{ assessment }}</span>
     </div>
-
-    <transition name="action-pop" :css="!holeHold">
-      <div v-if="actionText && !holeHold" class="action-badge" :class="action?.type">
-        {{ actionText }}
-        <span v-if="action?.auto" class="auto-tag">AUTO</span>
-      </div>
-    </transition>
 
     <div v-if="isWinner && result" class="winner-badge">
       <AppIcon name="sparkles" :size="12" />
@@ -367,12 +371,54 @@ function dealOrder(index: number): number {
 }
 
 .role {
+  flex: 1;
+  min-width: 0;
   font-size: calc(9.5px * var(--type-scale));
   color: var(--faint);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.pod-action {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: calc(10px * var(--type-scale));
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.action-dot {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 7px currentColor;
+}
+
+.action-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pod-action.raise, .pod-action.bet { color: var(--blue); }
+.pod-action.call { color: var(--emerald); }
+.pod-action.fold { color: var(--red); }
+.pod-action.all_in { color: var(--purple); }
+.pod-action.check { color: var(--muted); }
+
+.meta-swap-enter-active, .meta-swap-leave-active {
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.meta-swap-enter-from { opacity: 0; transform: translateY(3px); }
+.meta-swap-leave-to { opacity: 0; transform: translateY(-3px); }
 
 .badges {
   display: flex;
@@ -425,34 +471,8 @@ function dealOrder(index: number): number {
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
 }
 
-.action-badge {
-  position: absolute;
-  right: -8px;
-  bottom: -11px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 9px;
-  border-radius: 8px;
-  border: 1px solid var(--line-strong);
-  background: rgba(10, 22, 17, 0.92);
-  color: var(--text-soft);
-  font-size: calc(10.5px * var(--type-scale));
-  font-weight: 700;
-  white-space: nowrap;
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.32);
-  backdrop-filter: blur(8px);
-}
-
-.seat.top .action-badge { bottom: auto; top: -11px; }
-
-.action-badge.raise, .action-badge.bet { color: var(--blue); border-color: rgba(121, 169, 255, 0.3); }
-.action-badge.call { color: var(--emerald); border-color: rgba(84, 214, 168, 0.3); }
-.action-badge.fold { color: var(--red); border-color: rgba(226, 112, 95, 0.3); }
-.action-badge.all_in { color: var(--purple); border-color: rgba(196, 140, 255, 0.35); }
-.action-badge.check { color: var(--muted); }
-
 .auto-tag {
+  flex: none;
   font-family: var(--font-mono);
   font-size: calc(7px * var(--type-scale));
   color: var(--amber);
@@ -481,9 +501,6 @@ function dealOrder(index: number): number {
 }
 
 .seat.bottom .winner-badge { bottom: auto; top: -30px; }
-
-.action-pop-enter-active, .action-pop-leave-active { transition: opacity 0.16s ease, transform 0.16s ease; }
-.action-pop-enter-from, .action-pop-leave-to { opacity: 0; transform: translateY(4px); }
 
 @media (max-width: 720px) {
   .seat { width: min(280px, 60%); }

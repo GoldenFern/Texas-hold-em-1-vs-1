@@ -9,8 +9,6 @@ import {
   humanSeat,
   nextHand,
   openSetup,
-  openResult,
-  dismissResult,
 } from "../store";
 
 const raiseTo = ref(0);
@@ -166,7 +164,7 @@ function raiseAction(): void {
 
 function onKeydown(event: KeyboardEvent): void {
   if (event.ctrlKey || event.metaKey || event.altKey || event.repeat) return;
-  if (game.setupOpen || game.resultOpen) return;
+  if (game.setupOpen) return;
   const target = event.target as HTMLElement | null;
   if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
   if (!canAct.value) return;
@@ -227,9 +225,6 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
       <button v-if="match.can_next_hand" class="btn btn-primary" :disabled="game.busy || boardLocked" @click="nextHand">
         下一手
         <AppIcon name="arrowRight" :size="15" />
-      </button>
-      <button class="btn" @click="game.resultOpen ? dismissResult() : openResult()">
-        {{ game.resultOpen ? "查看牌桌" : "查看结果" }}
       </button>
       <button class="btn btn-ghost" @click="openSetup">新比赛</button>
     </div>

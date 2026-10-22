@@ -48,11 +48,8 @@ interface StoreState {
   analysisKey: string;
   toasts: Toast[];
   setupOpen: boolean;
-  resultOpen: boolean;
   lastResult: HandResult | null;
   lastResultHandId: number | null;
-  dismissedResultHandId: number | null;
-  pendingResultHandId: number | null;
   godView: boolean;
   godViewBusy: boolean;
   busy: boolean;
@@ -81,11 +78,8 @@ const state = reactive<StoreState>({
   analysisKey: "",
   toasts: [],
   setupOpen: false,
-  resultOpen: false,
   lastResult: null,
   lastResultHandId: null,
-  dismissedResultHandId: null,
-  pendingResultHandId: null,
   godView: true,
   godViewBusy: false,
   busy: false,
@@ -99,7 +93,6 @@ let bufferDepth = 0;
 let transcriptEpoch = 0;
 let analysisSeq = 0;
 let lastErrorToastAt = 0;
-let resultWatchdog: ReturnType<typeof setTimeout> | null = null;
 
 export const game = state;
 
@@ -356,14 +349,6 @@ function applySnapshot(snapshot: GameSnapshot): void {
       state.lastResult = snapshot.match.last_result;
       state.lastResultHandId = snapshot.match.last_result.hand_id;
     }
-    if (snapshot.match.last_result) {
-      maybeOpenResult();
-    }
-    if (!snapshot.match.last_result && snapshot.street !== "finished") {
-      state.resultOpen = false;
-      state.pendingResultHandId = null;
-      clearResultWatchdog();
-    }
     if (snapshot.match.error && snapshot.match.error !== state.fatalError) {
       state.fatalError = snapshot.match.error;
     }
@@ -376,56 +361,6 @@ function applySnapshot(snapshot: GameSnapshot): void {
   addActions(snapshot);
   followActingSeat(snapshot);
 }
-
-function clearResultWatchdog(): void {
-  if (resultWatchdog !== null) {
-    clearTimeout(resultWatchdog);
-    resultWatchdog = null;
-  }
-}
-
-function scheduleResultWatchdog(handId: number): void {
-  if (resultWatchdog !== null) return;
-  resultWatchdog = setTimeout(() => {
-    resultWatchdog = null;
-    if (state.pendingResultHandId !== handId) return;
-    if (state.setupOpen || state.dismissedResultHandId === handId) return;
-    state.pendingResultHandId = null;
-    state.resultOpen = true;
-  }, 6000);
-}
-
-function maybeOpenResult(): void {
-  const result = state.lastResult;
-  if (!result) return;
-  if (state.setupOpen) {
-    state.pendingResultHandId = result.hand_id;
-    scheduleResultWatchdog(result.hand_id);
-    return;
-  }
-  if (state.dismissedResultHandId === result.hand_id) {
-    state.pendingResultHandId = null;
-    clearResultWatchdog();
-    return;
-  }
-  const expectedBoard = Array.isArray(result.board) ? result.board.length : 0;
-  if (boardLocked.value || board.community.length < expectedBoard) {
-    state.pendingResultHandId = result.hand_id;
-    scheduleResultWatchdog(result.hand_id);
-    return;
-  }
-  state.pendingResultHandId = null;
-  clearResultWatchdog();
-  state.resultOpen = true;
-}
-
-watch([boardLocked, () => board.community.length], () => {
-  if (state.pendingResultHandId !== null) maybeOpenResult();
-});
-
-watch(() => state.setupOpen, (open) => {
-  if (!open && state.pendingResultHandId !== null) maybeOpenResult();
-});
 
 watch(boardLocked, (locked) => {
   if (!locked) return;
@@ -486,10 +421,6 @@ function resetMatchLocalState(): void {
   state.selectedAnalysisSeat = null;
   state.lastResult = null;
   state.lastResultHandId = null;
-  state.dismissedResultHandId = null;
-  state.pendingResultHandId = null;
-  state.resultOpen = false;
-  clearResultWatchdog();
   resetBoardReveal();
   state.fatalError = "";
   state.selectedSeat = null;
@@ -894,7 +825,6 @@ function onHandResultEvent(event: AgentEvent): void {
   if (result.hand_id === state.lastResultHandId) return;
   state.lastResult = result;
   state.lastResultHandId = result.hand_id;
-  maybeOpenResult();
 }
 
 // ---------------------------------------------------------------------
@@ -908,15 +838,10 @@ export async function startMatch(payload: MatchSetupPayload): Promise<boolean> {
     const response = await api.newGame(payload);
     saveSetup(payload);
     // Close the setup sheet before applying the first snapshot. Some fast
-    // bot-vs-bot hands finish before the response returns; if setupOpen were
-    // still true, the deferred result would be dropped and never reopened.
+    // bot-vs-bot hands finish before the response returns.
     state.setupOpen = false;
     applySnapshot(response.state);
-    // The socket may have applied a newer state while new_game was still in
-    // flight. Re-check the result even if the REST snapshot itself was stale.
-    maybeOpenResult();
     await refreshTranscripts();
-    state.dismissedResultHandId = null;
     for (const seat of response.state.match?.seats || []) {
       if (seat.agent?.warning) {
         toast("warn", `${seat.name} 使用降级策略`, seat.agent.warning);
@@ -954,9 +879,6 @@ export async function humanAction(action: string, amount = 0): Promise<void> {
 export async function nextHand(): Promise<void> {
   if (state.busy || boardLocked.value) return;
   state.busy = true;
-  // Close the previous result first; if the next hand finishes before the
-  // response returns, applySnapshot is still allowed to open the new result.
-  state.resultOpen = false;
   try {
     const response = await api.nextHand();
     applySnapshot(response.state);
@@ -989,23 +911,10 @@ export async function toggleGodView(): Promise<void> {
 
 export function openSetup(): void {
   state.setupOpen = true;
-  state.resultOpen = false;
 }
 
 export function closeSetup(): void {
   state.setupOpen = false;
-}
-
-export function dismissResult(): void {
-  state.resultOpen = false;
-  state.pendingResultHandId = null;
-  clearResultWatchdog();
-  if (state.lastResultHandId !== null) state.dismissedResultHandId = state.lastResultHandId;
-}
-
-export function openResult(): void {
-  if (!state.lastResult) return;
-  state.resultOpen = true;
 }
 
 export function selectSeat(seat: number, pin = false): void {

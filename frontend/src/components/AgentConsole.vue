@@ -4,6 +4,7 @@ import AppIcon from "./AppIcon.vue";
 import AgentTurn from "./AgentTurn.vue";
 import PlayingCard from "./PlayingCard.vue";
 import { iconUrl } from "../api";
+import { describeAction } from "../actionMeta";
 import { actionLabel, chips, shortName, streetShort } from "../format";
 import { reasoningDefaultCollapsed, setReasoningDefaultCollapsed } from "../reasoning";
 import { agentSeats, followLive, game, humanSeat, openSetup, selectSeat } from "../store";
@@ -13,8 +14,12 @@ const mode = ref<"stream" | "log">("stream");
 const scrollEl = ref<HTMLElement | null>(null);
 const stick = ref(true);
 const showJump = ref(false);
+const anchorTail = ref(0);
 let observer: MutationObserver | null = null;
 let scrollFrame = 0;
+let seenHandId: number | null = null;
+let anchorToken = 0;
+let anchorGuardUntil = 0;
 
 const selectedInfo = computed(() => {
   if (game.selectedSeat === null) return null;
@@ -25,6 +30,19 @@ const turns = computed<Array<TurnView | BotDecisionView>>(() => {
   if (game.selectedSeat === null) return [];
   return game.turns[game.selectedSeat] || [];
 });
+
+function itemHandId(item: TurnView | BotDecisionView): number {
+  return "messages" in item ? Number(item.header.handId || 0) : Number(item.handId || 0);
+}
+
+const latestHandId = computed<number | null>(() => {
+  if (!turns.value.length) return null;
+  return itemHandId(turns.value[turns.value.length - 1]);
+});
+
+function handDividerLabel(handId: number): string {
+  return handId > 0 ? `HAND #${handId}` : "HAND";
+}
 
 const anyLive = computed(() => {
   for (const seat of agentSeats.value) {
@@ -83,6 +101,7 @@ function resultLine(group: (typeof groups.value)[number]): string {
 }
 
 function clickSeat(seat: number): void {
+  clearAnchor();
   mode.value = "stream";
   selectSeat(seat, true);
   stick.value = true;
@@ -92,8 +111,13 @@ function clickSeat(seat: number): void {
 function onScroll(): void {
   const el = scrollEl.value;
   if (!el) return;
-  stick.value = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-  showJump.value = !stick.value && mode.value === "stream";
+  if (performance.now() < anchorGuardUntil) return;
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  stick.value = atBottom;
+  showJump.value = !atBottom && mode.value === "stream";
+  if (atBottom && anchorTail.value > 0) {
+    anchorTail.value = 0;
+  }
 }
 
 function scrollToBottom(): void {
@@ -110,15 +134,67 @@ function scheduleScroll(): void {
   scrollFrame = requestAnimationFrame(scrollToBottom);
 }
 
+function clearAnchor(): void {
+  anchorToken += 1;
+  anchorTail.value = 0;
+}
+
+/**
+ * Put the first divider of a fresh hand at the top of the stream.
+ *
+ * A temporary tail gives a short hand enough scroll range to reach the top.
+ * Follow mode stays paused so the new hand can be read from its beginning;
+ * the "回到最新" button removes the tail and resumes following.
+ */
+async function anchorNewHand(handId: number): Promise<void> {
+  const token = ++anchorToken;
+  anchorGuardUntil = performance.now() + 600;
+  stick.value = false;
+  showJump.value = true;
+  cancelAnimationFrame(scrollFrame);
+  await nextTick();
+  const el = scrollEl.value;
+  if (!el || token !== anchorToken) return;
+  const target = el.querySelector<HTMLElement>(`[data-hand-id="${handId}"]`);
+  if (!target) {
+    stick.value = true;
+    showJump.value = false;
+    return;
+  }
+
+  anchorTail.value = 0;
+  await nextTick();
+  if (token !== anchorToken) return;
+
+  const containerRect = el.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const targetTop = targetRect.top - containerRect.top + el.scrollTop;
+  const contentBelow = el.scrollHeight - targetTop;
+  anchorTail.value = Math.max(0, Math.ceil(el.clientHeight - contentBelow));
+  await nextTick();
+  if (token !== anchorToken) return;
+
+  const nextContainer = el.getBoundingClientRect();
+  const nextTarget = target.getBoundingClientRect();
+  anchorGuardUntil = performance.now() + 220;
+  el.scrollTop += nextTarget.top - nextContainer.top;
+  stick.value = false;
+  showJump.value = true;
+}
+
 function jumpLatest(): void {
+  clearAnchor();
   mode.value = "stream";
+  stick.value = true;
   nextTick(scrollToBottom);
 }
 
 function setMode(next: "stream" | "log"): void {
+  clearAnchor();
   mode.value = next;
   if (next === "log") {
     stick.value = false;
+    showJump.value = false;
     nextTick(() => {
       if (scrollEl.value) scrollEl.value.scrollTop = 0;
     });
@@ -131,6 +207,8 @@ function setMode(next: "stream" | "log"): void {
 watch(
   () => game.selectedSeat,
   () => {
+    clearAnchor();
+    seenHandId = latestHandId.value;
     stick.value = true;
     nextTick(scrollToBottom);
   },
@@ -139,11 +217,34 @@ watch(
 watch(
   () => game.matchId,
   () => {
+    clearAnchor();
+    seenHandId = null;
     mode.value = agentSeats.value.length ? "stream" : "log";
     stick.value = true;
     nextTick(scrollToBottom);
   },
 );
+
+watch(latestHandId, (handId) => {
+  if (mode.value !== "stream") {
+    seenHandId = handId;
+    return;
+  }
+  if (handId === null) {
+    seenHandId = null;
+    return;
+  }
+  if (seenHandId === null) {
+    seenHandId = handId;
+    return;
+  }
+  if (handId > seenHandId) {
+    seenHandId = handId;
+    void anchorNewHand(handId);
+    return;
+  }
+  seenHandId = handId;
+});
 
 onMounted(() => {
   const el = scrollEl.value;
@@ -155,9 +256,11 @@ onMounted(() => {
     scrollToBottom();
   }
   mode.value = agentSeats.value.length ? "stream" : "log";
+  seenHandId = latestHandId.value;
 });
 
 onUnmounted(() => {
+  clearAnchor();
   observer?.disconnect();
   cancelAnimationFrame(scrollFrame);
 });
@@ -272,6 +375,14 @@ onUnmounted(() => {
 
         <template v-else>
           <template v-for="(item, index) in turns" :key="item.id">
+            <div
+              v-if="index === 0 || itemHandId(item) !== itemHandId(turns[index - 1])"
+              class="hand-divider"
+              role="separator"
+              :data-hand-id="itemHandId(item)"
+            >
+              <span class="hand-divider-label">{{ handDividerLabel(itemHandId(item)) }}</span>
+            </div>
             <AgentTurn
               v-if="'messages' in item"
               :turn="item"
@@ -319,6 +430,7 @@ onUnmounted(() => {
               </div>
             </article>
           </template>
+          <div class="stream-anchor-tail" :style="{ height: `${anchorTail}px` }" aria-hidden="true"></div>
         </template>
       </div>
 
@@ -349,7 +461,7 @@ onUnmounted(() => {
               <span class="log-street" :class="action.street">{{ streetShort(action.street) }}</span>
               <span class="log-seat">{{ shortName(seatName(action.seat), 14) }}</span>
               <span class="log-action" :class="action.type">
-                {{ action.label }}<template v-if="action.amount"> {{ chips(action.amount) }}</template>
+                {{ describeAction(action) }}
               </span>
               <span v-if="action.auto" class="auto-chip">AUTO</span>
               <span class="log-pot mono">底池 {{ chips(action.potAfter) }}</span>
@@ -557,6 +669,48 @@ onUnmounted(() => {
 
 .stream-body { display: flex; flex-direction: column; }
 .log-body { display: flex; flex-direction: column; gap: 12px; padding: 4px 2px; }
+
+.hand-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 2px 4px;
+}
+
+.hand-divider::before,
+.hand-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+}
+
+.hand-divider::before {
+  background: linear-gradient(90deg, transparent, var(--line-strong));
+}
+
+.hand-divider::after {
+  background: linear-gradient(90deg, var(--line-strong), transparent);
+}
+
+.hand-divider-label {
+  flex: none;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(232, 195, 122, 0.2);
+  background: rgba(232, 195, 122, 0.06);
+  color: var(--gold);
+  font-family: var(--font-mono);
+  font-size: calc(8px * var(--type-scale));
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+.stream-anchor-tail {
+  flex: none;
+  width: 100%;
+  pointer-events: none;
+}
 
 .empty-state {
   display: flex;

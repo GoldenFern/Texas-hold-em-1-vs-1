@@ -7,10 +7,11 @@ import FlipCard from "./FlipCard.vue";
 import PlayingCard from "./PlayingCard.vue";
 import SeatPod from "./SeatPod.vue";
 import AppIcon from "./AppIcon.vue";
+import { lastActionForSeat } from "../actionMeta";
 import { chips, streetLabel } from "../format";
 import { board, prefersReducedMotion, streetForCommunity } from "../boardReveal";
 import { game, openSetup } from "../store";
-import type { CardInfo, PlayerState } from "../types";
+import type { ActionLog, CardInfo, PlayerState } from "../types";
 
 const snapshot = computed(() => (
   (board.busy || board.holeHold) && board.baseSnapshot ? board.baseSnapshot : game.snapshot
@@ -25,6 +26,25 @@ const topSeat = computed(() => {
   return humanSeatIndex.value === 0 ? 1 : 0;
 });
 const bottomSeat = computed(() => (topSeat.value === 0 ? 1 : 0));
+
+const actionStreet = computed(() => snapshot.value?.street || "preflop");
+const handFinished = computed(
+  () => actionStreet.value === "finished" || actionStreet.value === "showdown",
+);
+const topLastAction = computed<ActionLog | null>(() => lastActionForSeat(
+  snapshot.value?.actions || [],
+  Number(snapshot.value?.hand_id || 0),
+  actionStreet.value,
+  topSeat.value,
+  handFinished.value,
+));
+const bottomLastAction = computed<ActionLog | null>(() => lastActionForSeat(
+  snapshot.value?.actions || [],
+  Number(snapshot.value?.hand_id || 0),
+  actionStreet.value,
+  bottomSeat.value,
+  handFinished.value,
+));
 
 function playerAt(seat: number): PlayerState | null {
   return players.value.find((player) => player.seat === seat) || null;
@@ -88,16 +108,6 @@ const boardCaption = computed(() => {
   return streetLabel(street.value);
 });
 
-const potChips = computed(() => {
-  const amount = pot.value;
-  if (amount <= 0) return 0;
-  if (amount < 60) return 1;
-  if (amount < 200) return 2;
-  if (amount < 600) return 3;
-  if (amount < 1500) return 4;
-  return 5;
-});
-
 const tableHint = computed(() => {
   if (board.holeHold) return "发牌中";
   if (board.busy) {
@@ -117,11 +127,18 @@ const dealerStyle = computed(() => {
 
 const feltInner = ref<HTMLElement | null>(null);
 const deckOrigin = ref<HTMLElement | null>(null);
+const potEl = ref<HTMLElement | null>(null);
+const flyChip = ref<HTMLElement | null>(null);
 const dealing = ref(false);
+const potShockKey = ref(0);
 let lastDealNonce = board.dealNonce;
 let dealTimer = 0;
 let dealToken = 0;
 let dealAnimations: Animation[] = [];
+let chipAnimations: Animation[] = [];
+let chipNodes: HTMLElement[] = [];
+let fxHandId = -1;
+let fxActionCount = 0;
 
 function centerOf(rect: DOMRect): { x: number; y: number } {
   return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
@@ -191,10 +208,114 @@ watch(() => board.dealNonce, (nonce) => {
   void playHoleDeal();
 });
 
+function movesChips(action: ActionLog): boolean {
+  return ["call", "bet", "raise", "all_in"].includes(action.type)
+    && Number(action.amount || 0) > 0;
+}
+
+function clearChipFx(): void {
+  for (const animation of chipAnimations) {
+    try {
+      animation.cancel();
+    } catch {
+      // The chip may already be gone; cancelling is best effort.
+    }
+  }
+  chipAnimations = [];
+  for (const chip of chipNodes) chip.remove();
+  chipNodes = [];
+}
+
+async function playChipToss(action: ActionLog): Promise<void> {
+  if (prefersReducedMotion() || board.holeHold) return;
+  await nextTick();
+  const root = feltInner.value;
+  const target = potEl.value;
+  const template = flyChip.value;
+  if (!root || !target || !template) return;
+  const pod = root.querySelector<HTMLElement>(`[data-seat-pod="${action.seat}"]`);
+  if (!pod) return;
+  const rootRect = root.getBoundingClientRect();
+  const from = centerOf(pod.getBoundingClientRect());
+  const to = centerOf(target.getBoundingClientRect());
+  if (!from.x || !from.y || !to.x || !to.y) return;
+  const chip = template.cloneNode(true) as HTMLElement;
+  chip.style.display = "block";
+  chip.style.opacity = "1";
+  chip.style.left = `${to.x - rootRect.left}px`;
+  chip.style.top = `${to.y - rootRect.top}px`;
+  if (action.seat === 1) chip.classList.add("seat-b");
+  root.appendChild(chip);
+  chipNodes.push(chip);
+  if (typeof chip.animate !== "function") {
+    chip.remove();
+    chipNodes = chipNodes.filter((node) => node !== chip);
+    return;
+  }
+  const dx = from.x - to.x;
+  const dy = from.y - to.y;
+  const animation = chip.animate(
+    [
+      {
+        transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(0.7)`,
+        opacity: 0,
+      },
+      { opacity: 1, offset: 0.18 },
+      {
+        transform: `translate(calc(-50% + ${dx * 0.45}px), calc(-50% + ${dy * 0.45}px - 14px)) scale(1)`,
+        offset: 0.55,
+      },
+      { transform: "translate(-50%, -50%) scale(0.85)", opacity: 0.9 },
+    ],
+    {
+      duration: 620,
+      easing: "cubic-bezier(0.2, 0.8, 0.25, 1)",
+      fill: "both",
+    },
+  );
+  chipAnimations.push(animation);
+  animation.onfinish = () => {
+    chip.remove();
+    chipNodes = chipNodes.filter((node) => node !== chip);
+    chipAnimations = chipAnimations.filter((item) => item !== animation);
+  };
+}
+
+watch(
+  () => {
+    const snap = snapshot.value;
+    return [Number(snap?.hand_id || 0), (snap?.actions || []).length] as const;
+  },
+  ([handId, count]) => {
+    const actions = snapshot.value?.actions || [];
+    if (fxHandId !== handId) {
+      clearChipFx();
+      fxHandId = handId;
+      fxActionCount = count;
+      return;
+    }
+    if (count < fxActionCount) {
+      fxActionCount = count;
+      return;
+    }
+    if (count > fxActionCount) {
+      for (let index = fxActionCount; index < actions.length; index += 1) {
+        const action = actions[index];
+        if (!action || !movesChips(action)) continue;
+        potShockKey.value += 1;
+        if (index === actions.length - 1) void playChipToss(action);
+      }
+      fxActionCount = count;
+    }
+  },
+  { immediate: true },
+);
+
 onUnmounted(() => {
   dealToken += 1;
   window.clearTimeout(dealTimer);
   clearDealAnimations();
+  clearChipFx();
 });
 </script>
 
@@ -214,10 +335,6 @@ onUnmounted(() => {
         </template>
       </div>
       <div class="table-meta">
-        <span class="chip">
-          <span class="meta-key">底池</span>
-          <strong class="mono gold">{{ chips(pot) }}</strong>
-        </span>
         <span class="chip" v-if="currentBet > 0 && !board.busy && !board.holeHold">
           <span class="meta-key">当前注</span>
           <strong class="mono">{{ chips(currentBet) }}</strong>
@@ -239,6 +356,7 @@ onUnmounted(() => {
         <div ref="feltInner" class="felt-inner">
           <div class="felt-watermark">♠</div>
           <div class="felt-brand">HEADS-UP <span>LAB</span></div>
+          <span ref="flyChip" class="action-fly-chip" aria-hidden="true"></span>
 
           <template v-if="match">
             <div
@@ -267,6 +385,7 @@ onUnmounted(() => {
               :deal-nonce="board.dealNonce"
               :hole-hold="board.holeHold"
               :hold-assessment="board.busy"
+              :last-action="topLastAction"
             />
             <SeatPod
               :player="playerAt(bottomSeat)"
@@ -279,35 +398,35 @@ onUnmounted(() => {
               :deal-nonce="board.dealNonce"
               :hole-hold="board.holeHold"
               :hold-assessment="board.busy"
+              :last-action="bottomLastAction"
             />
 
-            <div class="pot-display">
-              <div class="pot-label">
-                <span>POT</span>
-                <span v-if="result" class="pot-result-label">{{ result.reason === "fold" ? "弃牌" : "摊牌" }}</span>
-              </div>
-              <div class="pot-value">
-                <AnimatedNumber :key="`pot-${snapshot?.hand_id || 0}-${board.dealNonce}`" :value="pot" />
-              </div>
-              <div class="pot-chips" v-if="potChips">
-                <span v-for="n in potChips" :key="n" class="pot-chip" :style="{ '--i': n }"></span>
-              </div>
-            </div>
-
             <div class="board-block">
-              <div class="board">
-                <FlipCard
-                  v-for="(card, index) in boardSlots"
-                  :key="card?.code || `slot-${index}`"
-                  :card="card"
-                  :face-down="Boolean(card)"
-                  :index="index"
-                  :size="'community'"
-                  :auto-reveal="true"
-                  :flip-delay="50"
-                  :instant="board.hydrated"
-                  :dim="street === 'finished' && winnerSeats.length === 0"
-                />
+              <div class="board-row">
+                <div class="board">
+                  <FlipCard
+                    v-for="(card, index) in boardSlots"
+                    :key="card?.code || `slot-${index}`"
+                    :card="card"
+                    :face-down="Boolean(card)"
+                    :index="index"
+                    :size="'community'"
+                    :auto-reveal="true"
+                    :flip-delay="50"
+                    :instant="board.hydrated"
+                    :dim="street === 'finished' && winnerSeats.length === 0"
+                  />
+                </div>
+                <div ref="potEl" class="pot-display" :class="{ empty: pot <= 0 }">
+                  <div class="pot-label">
+                    <span>POT</span>
+                    <span v-if="result" class="pot-result-label">{{ result.reason === "fold" ? "弃牌" : "摊牌" }}</span>
+                  </div>
+                  <div class="pot-value">
+                    <AnimatedNumber :key="`pot-${snapshot?.hand_id || 0}-${board.dealNonce}`" :value="pot" />
+                  </div>
+                  <span v-if="potShockKey" :key="potShockKey" class="pot-shock" aria-hidden="true"></span>
+                </div>
               </div>
               <div class="board-caption">
                 <span class="caption-line"></span>
@@ -539,11 +658,11 @@ onUnmounted(() => {
 .deal-deck {
   position: absolute;
   right: 4.5%;
-  top: 50%;
+  top: 31%;
   z-index: 3;
   width: 30px;
   height: 42px;
-  transform: translateY(-50%) rotate(-7deg);
+  transform: rotate(-7deg);
   pointer-events: none;
   opacity: 0.68;
   transition: opacity 0.2s ease, filter 0.2s ease;
@@ -572,7 +691,7 @@ onUnmounted(() => {
 .street-banner {
   position: absolute;
   left: 50%;
-  top: 45%;
+  top: 50%;
   z-index: 5;
   transform: translate(-50%, -50%);
   font-family: var(--font-mono);
@@ -599,35 +718,53 @@ onUnmounted(() => {
   }
 }
 
-.pot-display {
+.board-block {
   position: absolute;
   left: 50%;
-  top: 32%;
-  transform: translateX(-50%);
-  z-index: 5;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 6;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  min-width: 120px;
-  padding: 6px 16px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(232, 195, 122, 0.2);
-  background: rgba(5, 14, 10, 0.55);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
-  backdrop-filter: blur(10px);
+  gap: 7px;
 }
 
-.pot-display.empty { opacity: 0.3; }
+.board-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pot-display {
+  position: absolute;
+  left: calc(100% + 16px);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(232, 195, 122, 0.2);
+  background: rgba(5, 14, 10, 0.58);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(10px);
+  white-space: nowrap;
+}
+
+.pot-display.empty { opacity: 0.38; }
 
 .pot-label {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 5px;
   font-family: var(--font-mono);
   font-size: calc(8px * var(--type-scale));
   font-weight: 700;
-  letter-spacing: 0.26em;
+  letter-spacing: 0.18em;
   color: var(--gold);
   opacity: 0.85;
 }
@@ -635,13 +772,13 @@ onUnmounted(() => {
 .pot-result-label {
   font-family: var(--font-ui);
   font-size: calc(8px * var(--type-scale));
-  letter-spacing: 0.08em;
+  letter-spacing: 0.05em;
   color: var(--muted);
 }
 
 .pot-value {
   font-family: var(--font-mono);
-  font-size: clamp(calc(19px * var(--type-scale)), 2.2vw, calc(27px * var(--type-scale)));
+  font-size: clamp(calc(17px * var(--type-scale)), 1.7vw, calc(22px * var(--type-scale)));
   font-weight: 700;
   line-height: 1.1;
   color: var(--gold-bright);
@@ -649,34 +786,38 @@ onUnmounted(() => {
   text-shadow: 0 2px 14px rgba(232, 195, 122, 0.2);
 }
 
-.pot-chips {
-  display: flex;
-  gap: 0;
-  height: 7px;
-  align-items: flex-end;
-}
-
-.pot-chip {
-  width: 14px;
-  height: 6px;
-  margin-left: -5px;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.32);
-  background: linear-gradient(180deg, #f0d194, #b98a3f);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-  transform: translateY(calc(var(--i) * -2px));
-}
-
-.board-block {
+.pot-shock {
   position: absolute;
-  left: 50%;
-  top: 45%;
-  transform: translateX(-50%);
-  z-index: 6;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 7px;
+  inset: -4px;
+  border-radius: 999px;
+  border: 1px solid rgba(232, 195, 122, 0.6);
+  pointer-events: none;
+  animation: pot-shock 0.62s ease-out both;
+}
+
+@keyframes pot-shock {
+  from { opacity: 0.85; transform: scale(0.94); }
+  to { opacity: 0; transform: scale(1.16); }
+}
+
+.action-fly-chip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 13px;
+  height: 13px;
+  display: none;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.52);
+  background: linear-gradient(145deg, #f5d89d, #b98a3f);
+  box-shadow: 0 0 10px rgba(232, 195, 122, 0.45), 0 2px 5px rgba(0, 0, 0, 0.36);
+  pointer-events: none;
+  z-index: 9;
+}
+
+.action-fly-chip.seat-b {
+  background: linear-gradient(145deg, #b9d1ff, #4f7ed6);
+  box-shadow: 0 0 10px rgba(121, 169, 255, 0.45), 0 2px 5px rgba(0, 0, 0, 0.36);
 }
 
 .board {
@@ -799,11 +940,20 @@ onUnmounted(() => {
   .felt { height: 430px; min-height: 430px; aspect-ratio: auto; border-radius: 42% / 46%; }
   .felt-inner { height: 100%; border-radius: 42% / 46%; }
   .board { gap: 4px; }
-  .board-block { top: 45%; }
   .deal-deck { display: none; }
-  .street-banner { top: 46%; letter-spacing: 0.2em; }
-  .pot-display { top: 33%; min-width: 100px; padding: 5px 12px 6px; }
+  .street-banner { top: 50%; letter-spacing: 0.2em; }
+  .pot-display { left: calc(100% + 10px); padding: 4px 9px; gap: 5px; }
+  .pot-value { font-size: calc(16px * var(--type-scale)); }
   .table-hint { left: 5%; bottom: 8%; }
   .felt-brand { top: 8%; }
+}
+
+@media (max-width: 560px) {
+  .board-row { flex-direction: column; gap: 6px; }
+  .pot-display {
+    position: static;
+    transform: none;
+    padding: 4px 10px;
+  }
 }
 </style>

@@ -17,4 +17,16 @@ describe("responsive layout regressions", () => {
     expect(source).toContain("@media (max-width: 1520px)");
     expect(source).toMatch(/@media \(max-width: 1520px\)[\s\S]*?\.raise-panel \{\s+flex: 1 1 100%;/);
   });
+
+  it("keeps the pot beside the community cards", () => {
+    const source = read("./components/TableView.vue");
+    expect(source).toContain('class="board-row"');
+    expect(source).toMatch(/\.pot-display \{[\s\S]*?left: calc\(100% \+ 16px\);/);
+  });
+
+  it("keeps seat actions inside the pod instead of an absolute badge", () => {
+    const source = read("./components/SeatPod.vue");
+    expect(source).toContain('class="pod-action"');
+    expect(source).not.toContain("action-badge");
+  });
 });

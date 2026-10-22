@@ -121,7 +121,7 @@ python scripts/eval_llm_vs_llm.py --hands 100 --workers 5  # LLM vs LLM 工具�
 
 - 服务端每次广播 state 前递增 `state_seq`，快照带 `seq`。
 - REST 变更接口（new/action/next-hand/god-view）和 Socket 广播可能乱序到达；前端 `applySnapshot` 会丢弃同 match 下 `seq` 更小的快照。
-- `nextHand()` 在请求前关闭旧结果弹窗，不能在响应后强制关闭，否则新一手瞬间结束时会把新结果弹窗吞掉。
+- 本手结果不再使用弹窗；`lastResult` 只用于牌桌胜者高亮、ActionBar 结果行和控制台日志。不要恢复自动弹出的结果弹窗。
 - Agent 事件按 `(match_id, seat, event_id)` 去重；`eventBuffer` 在 `startMatch` 期间缓冲，`refreshTranscripts` 后重放。
 - 前端 transcript 只做增量 reducer；不要在每个 delta 上做全量 JSON 深拷贝/排序。
 - Socket.IO 客户端必须 polling 优先（`transports: ["polling", "websocket"]`）。直连 WebSocket 时 engine.io 在连接结束返回空迭代器且不调用 `start_response`，Werkzeug 3.1 会报 `write() before start_response`。
@@ -130,8 +130,8 @@ python scripts/eval_llm_vs_llm.py --hands 100 --workers 5  # LLM vs LLM 工具�
 
 - `frontend/src/boardReveal.ts` 是牌桌展示层：`board.community` 是已经展示的公共牌，`board.busy` 表示逐张翻牌中，`board.holeHold` 表示开局底牌还没落桌翻开。
 - 服务端状态可能在一帧内从翻牌前跳到河牌，牌桌不要直接渲染 `game.snapshot.community`。用 `board.community`，队列会按翻牌圈、转牌、河牌拆开播放。
-- 展示期间 `board.baseSnapshot` 冻结底池、筹码、操作徽章、评估和牌堆。`TableView`、`TopBar`、`ActionBar` 都从这份快照取数；不要只改其中一个，否则其他位置会提前泄露结果。
-- 结果弹窗、胜者高亮、AnalysisPanel 刷新都等 `boardLocked`（`busy || holeHold`）结束。`maybeOpenResult()` 会同时检查展示牌数和结果里的 `board` 长度。
+- 展示期间 `board.baseSnapshot` 冻结底池、筹码、动作状态、评估和牌堆。`TableView`、`TopBar`、`ActionBar` 都从这份快照取数；不要只改其中一个，否则其他位置会提前泄露结果。
+- 胜者高亮和 AnalysisPanel 刷新等 `boardLocked`（`busy || holeHold`）结束，避免提前泄露结果。
 - `startMatch` 必须先关闭 `setupOpen` 再应用首个快照。Bot 对 Bot 的首手可能在 `new_game` 返回前就结束，顺序反了会把结果丢掉。
 - `FlipCard.vue` 负责 3D 翻面，`PlayingCard.vue` 只负责牌面。底牌飞行用 Web Animations API 从桌内牌堆测量偏移。
 - `prefers-reduced-motion` 下队列直接展示最终牌面，底牌 hold 也跳过。
@@ -146,7 +146,13 @@ python scripts/eval_llm_vs_llm.py --hands 100 --workers 5  # LLM vs LLM 工具�
   - `AgentConsole` + `AgentTurn` + `ReasoningBlock` + `ToolCard`
   - `AnalysisPanel`（唯一可视化：最终牌型分布）
   - `SetupModal`（Provider/模型/参数/规则）
-  - `ResultOverlay`、`ToastHost`
+  - `ToastHost`
+- POT 固定在公共牌右侧，与牌面垂直居中；顶部工具栏不再重复显示底池。窄屏 (<=560px) POT 落到公共牌下方。
+- 公共牌组用 `top: 50%` + `translate(-50%, -50%)` 整体垂直居中，不要再按 POT 在上方的旧布局设置 `top: 45%` 之类的偏移。
+- 牌桌只显示当前街每家最近一条动作，位置在 `SeatPod` 的第二行；完整行动顺序在控制台「日志」页。不要恢复悬浮 `action-badge`，否则会和 `turn-flag` 抢座位卡右上角。
+- 动作文案统一走 `frontend/src/actionMeta.ts` 的 `describeAction`；取某个座位当前街最后动作走 `lastActionForSeat`。
+- 下注/跟注动作触发筹码飞向 POT 和 POT 脉冲；弃牌、过牌不飞筹码。首次加载和重连不补播动画。
+- 思考流按手牌插入 `HAND #N` 分隔符。新一手出现时，滚动位置锚定到该分隔符顶部，历史留在上方；此时暂停自动跟随，点「回到最新」或滚到底部后恢复。
 - 思考块默认在正文开始后自动折叠；手动折叠任一块后，后续思考（含流式中）默认折叠。偏好由 `frontend/src/reasoning.ts` 存到 localStorage，控制台的「思考默认折叠」徽标可恢复自动。手动展开只影响当前块，不改变全局偏好。
 - `turn_state` 事件保存发给模型的原样牌局输入，在 `AgentTurn` 的「牌局输入」折叠块中可查。
 - `AgentTurn` 底部的阶段文案由 `turnPhase.ts` 根据最后一条 message 与 tool 状态推导；不要再用 `turn.status === "running"` 当作“等待工具调用”。
@@ -166,7 +172,7 @@ python scripts/eval_llm_vs_llm.py --hands 100 --workers 5  # LLM vs LLM 工具�
 - LLM 工具循环用 `FakeClient`，不要依赖真实 API Key。
 - LLM 客户端流式解析、脱敏、降级、断线和取消在 `tests/test_llm_client.py`，不发起真实请求。
 - 服务器建局原子性、规则校验、JSON 类型在 `tests/test_server_session.py` 与 `tests/test_server_api.py`。
-- 前端单元测试在 `frontend/src/**/*.test.ts`，用 `cd frontend && npm test` 运行。
+- 前端单元测试在 `frontend/src/**/*.test.ts`，用 `cd frontend && npm test` 运行。动作文案/当前街动作选择在 `actionMeta.test.ts`，思考流手牌分隔符在 `AgentConsole.test.ts`。
 - RLCard 适配器测试会构造 `AgentView` 并重复决策，断言动作合法。
 - 真实 Provider 连通性用 UI 的「测试连接」，不要在测试里发真实请求。
 

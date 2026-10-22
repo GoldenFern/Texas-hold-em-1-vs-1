@@ -108,11 +108,8 @@ function turnEvent(eventId: number, turnId: string, handId = 1) {
 beforeEach(async () => {
   game.snapshot = null;
   game.matchId = null;
-  game.resultOpen = false;
-  game.pendingResultHandId = null;
   game.lastResult = null;
   game.lastResultHandId = null;
-  game.dismissedResultHandId = null;
   game.turns = {};
   game.currentTurns = {};
   game.seenEvents = {};
@@ -158,17 +155,9 @@ describe("transcript resync", () => {
   });
 });
 
-describe("board reveal buffers the result", () => {
-  it("keeps the result hidden until every community card is shown", async () => {
-    vi.useFakeTimers();
+describe("hand result", () => {
+  it("keeps the result available for the table without an overlay", () => {
     const boardCodes = ["2c", "7d", "Th", "Jh", "As"];
-    const flopState = snapshot({
-      seq: 2,
-      street: "flop",
-      community: boardCodes.slice(0, 3).map((code) => ({ code })),
-    });
-    socketMock.handlers.state?.(flopState);
-
     const result = {
       hand_id: 1,
       reason: "showdown",
@@ -194,15 +183,8 @@ describe("board reveal buffers the result", () => {
     });
     socketMock.handlers.state?.(finishedState);
 
-    expect(game.resultOpen).toBe(false);
-    expect(game.pendingResultHandId).toBe(1);
-
-    await vi.advanceTimersByTimeAsync(2600);
-    await Promise.resolve();
-
-    expect(game.resultOpen).toBe(true);
-    expect(game.pendingResultHandId).toBeNull();
-    vi.useRealTimers();
+    expect(game.lastResult?.hand_id).toBe(1);
+    expect(game.snapshot?.street).toBe("finished");
   });
 });
 

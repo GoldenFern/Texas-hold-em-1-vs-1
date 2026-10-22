@@ -6,14 +6,11 @@ const storeMock = vi.hoisted(() => ({
   humanAction: vi.fn(),
   nextHand: vi.fn(),
   openSetup: vi.fn(),
-  openResult: vi.fn(),
-  dismissResult: vi.fn(),
   humanSeat: { value: { seat: 0, kind: "human" } },
   game: {
     snapshot: null as any,
     busy: false,
     setupOpen: false,
-    resultOpen: false,
     lastResult: null,
   },
 }));
@@ -24,8 +21,6 @@ vi.mock("../store", () => ({
   humanSeat: storeMock.humanSeat,
   nextHand: storeMock.nextHand,
   openSetup: storeMock.openSetup,
-  openResult: storeMock.openResult,
-  dismissResult: storeMock.dismissResult,
 }));
 
 import ActionBar from "./ActionBar.vue";
@@ -57,7 +52,6 @@ beforeEach(() => {
   storeMock.game.snapshot = snapshot();
   storeMock.game.busy = false;
   storeMock.game.setupOpen = false;
-  storeMock.game.resultOpen = false;
   storeMock.game.lastResult = null;
   storeMock.humanAction.mockClear();
 });
