@@ -7,6 +7,7 @@ import {
   ingestSnapshot,
   resetBoardReveal,
 } from "./boardReveal";
+import { agentNameFor } from "./format";
 import type {
   ActionEntry,
   AgentEvent,
@@ -173,7 +174,7 @@ export function defaultSeat(kind: SeatSetup["kind"], model?: ProviderModel | nul
   const picked = model || pickDefaultModel();
   return {
     kind: "llm",
-    name: picked ? `${picked.provider_name} · ${picked.name}` : "LLM Agent",
+    name: picked ? agentNameFor(picked.provider_name, picked.name) : "LLM Agent",
     provider_id: picked?.provider_id || "deepseek",
     model_id: picked?.id || "deepseek-flash",
     params: picked ? { ...picked.defaults } : {},

@@ -140,6 +140,13 @@ python scripts/eval_llm_vs_llm.py --hands 100 --workers 5  # LLM vs LLM 工具�
 
 ## 前端约定
 
+- 主界面信息只保留一份：底池在牌桌中央，阶段在牌桌工具栏，行动状态在 `ActionBar`；不要再往 `TopBar`、`SeatPod` 或牌桌上加同类状态。
+- `TopBar` 常态只显示品牌、双方图标、手牌编号和操作按钮；连接正常时不显示 LIVE，仅在断线时显示离线提示。对局双方用厂商/角色图标表达，完整名称放 `title`，不要重复“厂商 · 模型”长文本。
+- 座位名默认用 `format.ts` 的 `agentNameFor` 去重，展示时用 `compactSeatName`；控制台 Agent 切换只显示图标，牌桌和牌型分布显示模型短名，完整名称放 `title`。
+- 牌堆条只在上帝视角开启时挂载（`TableView` 的 `v-if="match && game.godView"`），不要恢复“上帝视角关闭”的常驻占位。
+- `AnalysisPanel` 默认收起为一行摘要：当前分析对象 + 最终最可能牌型；底牌和当前牌型牌桌已有，不在摘要里重复。展开后才显示完整分布。展开状态存在 localStorage 的 `hulab.analysis.expanded`，不要改回常驻完整图表。
+- 座位卡只保留庄家 D 和 ALL-IN 徽章；SB/BB 不再单独标，庄家标记也不要同时在牌桌上重复画一枚，弃牌状态用座位变暗与当前街动作表达。
+- 手牌结果只在行动栏显示一次；桌面端可以用座位旁的“赢得”徽章，手机端隐藏该徽章，避免和 POT 重叠。
 - 设计语言：深翡翠 + 暖金 + 象牙白；牌桌是椭圆绒面，Agent 控制台是深色“观测站”。
 - 不使用旧项目的布局/配色；不用 `v-html`。
 - 主要组件：
@@ -157,7 +164,7 @@ python scripts/eval_llm_vs_llm.py --hands 100 --workers 5  # LLM vs LLM 工具�
 - 下注/跟注动作触发筹码飞向 POT 和 POT 脉冲；弃牌、过牌不飞筹码。首次加载和重连不补播动画。
 - 思考流按手牌插入 `HAND #N` 分隔符。新一手发牌时（即使当前是人类先行动、Agent 还没出手）就插入新分隔符，并用动态底部占位把旧历史顶出视野：新手内容不足一屏时停在该手顶部，超过一屏后继续向下跟随。用户手动上滚则取消该手的隔离跟随，点「回到最新」或滚到底部后恢复。不要在 Agent 首次行动时才补分隔符。
 - 思考块默认在正文开始后自动折叠；手动折叠任一块后，后续思考（含流式中）默认折叠。偏好由 `frontend/src/reasoning.ts` 存到 localStorage，控制台的「思考默认折叠」徽标可恢复自动。手动展开只影响当前块，不改变全局偏好。
-- `turn_state` 事件保存发给模型的原样牌局输入，在 `AgentTurn` 的「牌局输入」折叠块中可查。
+- `turn_state` 事件保存发给模型的原样牌局输入，在 `AgentTurn` 的「牌局输入」折叠块中可查。`AgentTurn` 头部只保留回合序号、街、位置、手牌号、状态和耗时；底池、筹码、需跟和合法动作不再常驻，避免和牌桌及牌局输入重复。
 - `AgentTurn` 底部的阶段文案由 `turnPhase.ts` 根据最后一条 message 与 tool 状态推导；不要再用 `turn.status === "running"` 当作“等待工具调用”。
 - 工具卡片默认展开；估算工具显示迷你分布条，随机数工具显示数值和 0 到 1 刻度，动作工具显示动作徽章/错误约束。
 - 响应式断点：1520px 行动区换行，1180px 控制台移到下方；720px 牌桌/表单单列。
@@ -175,7 +182,7 @@ python scripts/eval_llm_vs_llm.py --hands 100 --workers 5  # LLM vs LLM 工具�
 - LLM 工具循环用 `FakeClient`，不要依赖真实 API Key。
 - LLM 客户端流式解析、脱敏、降级、断线和取消在 `tests/test_llm_client.py`，不发起真实请求。
 - 服务器建局原子性、规则校验、JSON 类型在 `tests/test_server_session.py` 与 `tests/test_server_api.py`。
-- 前端单元测试在 `frontend/src/**/*.test.ts`，用 `cd frontend && npm test` 运行。动作文案/当前街动作选择在 `actionMeta.test.ts`，思考流手牌分隔符在 `AgentConsole.test.ts`。
+- 前端单元测试在 `frontend/src/**/*.test.ts`，用 `cd frontend && npm test` 运行。动作文案/当前街动作选择在 `actionMeta.test.ts`，思考流手牌分隔符在 `AgentConsole.test.ts`，牌型分布默认收起与最大概率摘要在 `AnalysisPanel.test.ts`。
 - RLCard 适配器测试会构造 `AgentView` 并重复决策，断言动作合法。
 - 真实 Provider 连通性用 UI 的「测试连接」，不要在测试里发真实请求。
 

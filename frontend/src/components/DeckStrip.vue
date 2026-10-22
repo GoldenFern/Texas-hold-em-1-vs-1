@@ -8,11 +8,10 @@ const props = withDefaults(
   defineProps<{
     remaining: CardInfo[];
     burned: CardInfo[];
-    visible: boolean;
     count: number;
     dealing?: boolean;
   }>(),
-  { remaining: () => [], burned: () => [], visible: false, count: 0, dealing: false },
+  { remaining: () => [], burned: () => [], count: 0, dealing: false },
 );
 
 const shown = computed(() => props.remaining.slice(0, 10));
@@ -20,7 +19,7 @@ const extra = computed(() => Math.max(0, props.count - shown.value.length));
 </script>
 
 <template>
-  <div class="deck-strip" :class="{ hidden: !visible }">
+  <div class="deck-strip">
     <div class="deck-head">
       <div class="deck-title">
         <AppIcon name="cards" :size="14" />
@@ -29,11 +28,7 @@ const extra = computed(() => Math.max(0, props.count - shown.value.length));
         <span v-else class="mono deck-count">{{ count }} 张</span>
       </div>
       <span v-if="dealing" class="deck-hint">底牌落桌后更新牌堆</span>
-      <span v-else-if="visible" class="deck-hint">按发出顺序排列 · 下一张在左</span>
-      <button v-else class="deck-locked" disabled>
-        <AppIcon name="eyeOff" :size="13" />
-        上帝视角关闭
-      </button>
+      <span v-else class="deck-hint">按发出顺序排列 · 下一张在左</span>
     </div>
 
     <div v-if="dealing" class="deck-placeholder">
@@ -41,7 +36,7 @@ const extra = computed(() => Math.max(0, props.count - shown.value.length));
       <span class="mono">公共牌会按顺序展示</span>
     </div>
 
-    <div v-else-if="visible" class="deck-body">
+    <div v-else class="deck-body">
       <div class="deck-row">
         <div v-for="(card, index) in shown" :key="`${card.code}-${index}`" class="deck-card" :class="{ next: index === 0 }">
           <PlayingCard :card="card" size="mini" :index="index" />
@@ -57,10 +52,6 @@ const extra = computed(() => Math.max(0, props.count - shown.value.length));
           <PlayingCard v-for="(card, index) in burned" :key="card.code" :card="card" size="mini" :index="index" dim />
         </div>
       </div>
-    </div>
-    <div v-else class="deck-placeholder">
-      <span>对手手牌与剩余牌堆已隐藏</span>
-      <span class="mono">开启上帝视角后可见</span>
     </div>
   </div>
 </template>
@@ -100,16 +91,6 @@ const extra = computed(() => Math.max(0, props.count - shown.value.length));
   margin-left: auto;
   font-size: calc(9.5px * var(--type-scale));
   color: var(--faint);
-}
-
-.deck-locked {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: calc(9.5px * var(--type-scale));
-  color: var(--faint);
-  cursor: default;
 }
 
 .deck-body {

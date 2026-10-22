@@ -1,58 +1,54 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import AppIcon from "./AppIcon.vue";
-import { board, streetForCommunity } from "../boardReveal";
+import { iconUrl } from "../api";
+import { board } from "../boardReveal";
 import { game, openSetup, toggleGodView } from "../store";
-import { chips, shortName, streetLabel } from "../format";
 
 const snapshot = computed(() => (
   (board.busy || board.holeHold) && board.baseSnapshot ? board.baseSnapshot : game.snapshot
 ));
 const match = computed(() => snapshot.value?.match || null);
 const seats = computed(() => match.value?.seats || []);
-const matchup = computed(() => {
-  if (seats.value.length !== 2) return "";
-  return `${shortName(seats.value[0].name, 16)}  vs  ${shortName(seats.value[1].name, 16)}`;
-});
-const street = computed(() => {
-  if (board.busy) return streetForCommunity(board.community.length);
-  if (board.holeHold) return "preflop";
-  return snapshot.value?.street || "";
-});
-const pot = computed(() => snapshot.value?.pot || 0);
+const matchupTitle = computed(() => seats.value.map((seat) => seat.name).join("  vs  "));
 const handId = computed(() => snapshot.value?.hand_id || 0);
-const streetText = computed(() => {
-  if (board.busy && board.community.length === 0) return "发牌中";
-  return match.value?.match_over ? "比赛结束" : streetLabel(street.value);
-});
 </script>
 
 <template>
   <header class="topbar">
     <div class="brand">
       <div class="brand-mark"><span>♠</span></div>
-      <div class="brand-text">
-        <div class="brand-name">HEADS-UP <span class="brand-lab">LAB</span></div>
-        <div class="brand-sub">二人德州扑克 · 实验室</div>
-      </div>
+      <div class="brand-name">HEADS-UP <span class="brand-lab">LAB</span></div>
     </div>
 
-    <div class="top-info" v-if="match">
-      <span class="matchup">{{ matchup }}</span>
-      <span class="chip mono">#{{ handId }}</span>
-      <span class="chip mono">{{ match.rules.small_blind }}/{{ match.rules.big_blind }}</span>
-      <span class="chip gold">{{ streetText }}</span>
-      <span class="chip mono pot-chip"><AppIcon name="coins" :size="12" /> {{ chips(pot) }}</span>
+    <div class="top-info" v-if="match" :title="matchupTitle">
+      <div class="matchup">
+        <template v-for="(seat, index) in seats" :key="seat.seat">
+          <span class="matchup-side">
+            <span class="matchup-icon" :class="seat.kind">
+              <img v-if="seat.icon" :src="iconUrl(seat.icon)" :alt="seat.name" />
+              <AppIcon
+                v-else
+                :name="seat.kind === 'human' ? 'user' : seat.kind === 'bot' ? 'bot' : 'sparkles'"
+                :size="12"
+              />
+            </span>
+            <span v-if="seat.kind === 'human'" class="matchup-label">你</span>
+          </span>
+          <span v-if="index === 0" class="vs">vs</span>
+        </template>
+      </div>
+      <span class="hand mono">#{{ handId }}</span>
     </div>
     <div class="top-info" v-else>
-      <span class="chip">尚未开局</span>
+      <span class="hand faint">尚未开局</span>
     </div>
 
     <div class="top-actions">
-      <div class="conn" :class="{ ok: game.connected }">
-        <span class="dot" :class="{ live: game.connected }"></span>
-        <span>{{ game.connected ? "LIVE" : "OFFLINE" }}</span>
-      </div>
+      <span v-if="!game.connected" class="conn offline" title="实时连接已断开">
+        <span class="dot"></span>
+        离线
+      </span>
       <button
         class="btn btn-ghost btn-sm god-btn"
         :class="{ active: game.godView }"
@@ -79,7 +75,7 @@ const streetText = computed(() => {
   display: flex;
   align-items: center;
   gap: 18px;
-  padding: 12px 22px;
+  padding: 10px 22px;
   border-bottom: 1px solid var(--line);
   background: rgba(6, 16, 12, 0.72);
   backdrop-filter: blur(18px);
@@ -94,26 +90,27 @@ const streetText = computed(() => {
 }
 
 .brand-mark {
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   display: grid;
   place-items: center;
-  border-radius: 12px;
+  border-radius: 11px;
   border: 1px solid rgba(232, 195, 122, 0.32);
   background:
     radial-gradient(circle at 35% 25%, rgba(246, 216, 156, 0.22), transparent 60%),
     linear-gradient(150deg, rgba(232, 195, 122, 0.16), rgba(232, 195, 122, 0.03));
   color: var(--gold-bright);
-  font-size: calc(20px * var(--type-scale));
+  font-size: calc(18px * var(--type-scale));
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.25);
 }
 
 .brand-name {
-  font-size: calc(14px * var(--type-scale));
+  font-size: calc(13px * var(--type-scale));
   font-weight: 800;
   letter-spacing: 0.12em;
   color: var(--text);
   line-height: 1.15;
+  white-space: nowrap;
 }
 
 .brand-lab {
@@ -128,35 +125,76 @@ const streetText = computed(() => {
   vertical-align: 1px;
 }
 
-.brand-sub {
-  font-size: calc(10px * var(--type-scale));
-  color: var(--faint);
-  letter-spacing: 0.08em;
-  margin-top: 2px;
-}
-
 .top-info {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 12px;
   min-width: 0;
   flex: 1;
   overflow: hidden;
 }
 
 .matchup {
-  max-width: 300px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: calc(11.5px * var(--type-scale));
-  color: var(--text-soft);
-  padding-right: 4px;
-  border-right: 1px solid var(--line);
-  margin-right: 3px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
 }
 
-.pot-chip { color: var(--gold); }
+.matchup-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.matchup-icon {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-soft);
+}
+
+.matchup-icon.llm {
+  background: #f1ecdf;
+  border-color: rgba(255, 255, 255, 0.2);
+  padding: 2px;
+}
+
+.matchup-icon.bot {
+  color: var(--blue);
+  border-color: rgba(121, 169, 255, 0.26);
+  background: var(--blue-dim);
+}
+
+.matchup-icon img {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
+.matchup-label {
+  font-size: calc(11.5px * var(--type-scale));
+  color: var(--text-soft);
+}
+
+.vs {
+  font-family: var(--font-mono);
+  font-size: calc(8.5px * var(--type-scale));
+  letter-spacing: 0.1em;
+  color: var(--faint);
+}
+
+.hand {
+  flex: none;
+  font-size: calc(10px * var(--type-scale));
+  color: var(--faint);
+  letter-spacing: 0.06em;
+}
 
 .top-actions {
   display: flex;
@@ -171,18 +209,15 @@ const streetText = computed(() => {
   gap: 6px;
   font-family: var(--font-mono);
   font-size: calc(9px * var(--type-scale));
-  letter-spacing: 0.12em;
-  color: var(--faint);
+  letter-spacing: 0.1em;
+  color: var(--red);
   padding: 5px 8px;
   border-radius: 7px;
-  border: 1px solid transparent;
+  border: 1px solid rgba(226, 112, 95, 0.28);
+  background: var(--red-dim);
 }
 
-.conn.ok {
-  color: var(--emerald);
-  border-color: rgba(84, 214, 168, 0.18);
-  background: rgba(84, 214, 168, 0.06);
-}
+.conn .dot { background: var(--red); }
 
 .god-btn.active {
   color: var(--gold);
@@ -196,24 +231,15 @@ const streetText = computed(() => {
   background: rgba(255, 255, 255, 0.05);
 }
 
-@media (max-width: 1180px) {
-  .matchup { max-width: 200px; }
-  .top-info .chip:nth-child(4) { display: none; }
-}
-
 @media (max-width: 860px) {
-  .topbar { padding: 10px 14px; gap: 10px; }
-  .brand-sub { display: none; }
-  .matchup { display: none; }
-  .top-info { gap: 5px; }
+  .topbar { padding: 9px 14px; gap: 10px; }
   .god-label { display: none; }
+  .conn span:last-child { display: none; }
 }
 
 @media (max-width: 620px) {
-  .brand-name { font-size: calc(12px * var(--type-scale)); letter-spacing: 0.08em; }
-  .brand-mark { width: 32px; height: 32px; font-size: calc(17px * var(--type-scale)); }
-  .top-info .chip:nth-child(2) { display: none; }
-  .conn { display: none; }
+  .brand-name { display: none; }
+  .brand-mark { width: 30px; height: 30px; font-size: calc(16px * var(--type-scale)); }
   .new-btn span { display: none; }
 }
 </style>

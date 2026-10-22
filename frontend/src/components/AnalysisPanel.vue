@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import AppIcon from "./AppIcon.vue";
-import PlayingCard from "./PlayingCard.vue";
-import { compactPercent } from "../format";
+import { compactPercent, compactSeatName } from "../format";
 import { boardLocked } from "../boardReveal";
 import {
   game,
@@ -10,6 +9,18 @@ import {
   refreshAnalysis,
   selectAnalysisSeat,
 } from "../store";
+
+const STORAGE_KEY = "hulab.analysis.expanded";
+
+function readExpanded(): boolean {
+  try {
+    return window.localStorage.getItem(STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+const expanded = ref(readExpanded());
 
 const snapshot = computed(() => game.snapshot);
 const match = computed(() => snapshot.value?.match || null);
@@ -29,6 +40,11 @@ const visibleSeats = computed(() => {
 const canAnalyze = computed(() => Boolean(selectedPlayer.value?.hole_cards?.length === 2 && snapshot.value?.has_match));
 const distribution = computed(() => analysis.value?.distribution || []);
 const bestKey = computed(() => analysis.value?.current_best?.category || "");
+const topCategory = computed(() => {
+  const list = distribution.value;
+  if (!list.length) return null;
+  return list.reduce((best, item) => (item.probability > best.probability ? item : best));
+});
 const methodText = computed(() => {
   if (!analysis.value) return "";
   if (analysis.value.method === "exact") return `精确枚举 · ${analysis.value.total.toLocaleString("en-US")} 种`;
@@ -42,9 +58,13 @@ const maxProbability = computed(() => {
   const values = distribution.value.map((item) => item.probability);
   return Math.max(0.0001, ...values);
 });
-const holeCards = computed(() => selectedPlayer.value?.hole_cards || []);
-const boardCards = computed(() => snapshot.value?.community || []);
-const summaryName = computed(() => selectedPlayer.value?.name || selectedInfo.value?.name || "—");
+const summaryName = computed(() => {
+  const player = selectedPlayer.value;
+  if (!player) return "—";
+  return player.kind === "llm"
+    ? compactSeatName(player.name, selectedInfo.value?.model_name)
+    : player.name;
+});
 
 function barWidth(value: number): string {
   if (value <= 0) return "0%";
@@ -60,17 +80,47 @@ function pickSeat(seat: number): void {
 function reload(): void {
   void refreshAnalysis(true);
 }
+
+function toggleExpanded(): void {
+  expanded.value = !expanded.value;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, expanded.value ? "1" : "0");
+  } catch {
+    // Storage can be unavailable in private mode; the panel still works.
+  }
+}
 </script>
 
 <template>
-  <section class="analysis-panel surface">
+  <section class="analysis-panel surface" :class="{ collapsed: !expanded }">
     <header class="analysis-head">
-      <div class="title-block">
-        <span class="eyebrow">HAND DISTRIBUTION</span>
-        <h2>最终牌型分布</h2>
-        <p>在已知底牌与公共牌下，你最终最佳五张牌成为各牌型的概率。</p>
-      </div>
-      <div class="head-controls">
+      <button
+        class="analysis-toggle"
+        type="button"
+        title="展开或收起牌型分布"
+        :aria-expanded="expanded"
+        @click="toggleExpanded"
+      >
+        <span class="toggle-icon"><AppIcon name="chart" :size="14" /></span>
+        <span class="toggle-title">牌型分布</span>
+
+        <template v-if="canAnalyze">
+          <span class="summary-name">{{ summaryName }}</span>
+          <span v-if="topCategory" class="summary-stat summary-top">
+            <span class="summary-key">最可能</span>
+            {{ topCategory.name }} {{ compactPercent(topCategory.probability) }}
+          </span>
+        </template>
+        <span v-else class="summary-muted">{{ match ? "等待底牌" : "开局后显示" }}</span>
+
+        <span v-if="boardLocked" class="summary-state"><span class="spinner"></span>发牌中</span>
+        <span v-else-if="stale" class="summary-state"><span class="spinner"></span>重算中</span>
+        <span v-else-if="game.analysisLoading" class="summary-state"><span class="spinner"></span>计算中</span>
+
+        <AppIcon name="chevronDown" :size="14" class="toggle-chevron" />
+      </button>
+
+      <div v-if="expanded" class="head-controls">
         <div v-if="visibleSeats.length > 1" class="segmented seat-switch">
           <button
             v-for="seat in visibleSeats"
@@ -88,61 +138,15 @@ function reload(): void {
       </div>
     </header>
 
-    <div v-if="!match || !canAnalyze" class="analysis-empty">
-      <div class="empty-icon"><AppIcon name="chart" :size="24" /></div>
-      <div>
-        <strong>{{ !match ? "开始一局后可用" : "当前没有可分析的底牌" }}</strong>
-        <p>
+    <div v-if="expanded" class="analysis-body">
+      <div v-if="!match || !canAnalyze" class="analysis-empty">
+        <AppIcon name="chart" :size="18" />
+        <span>
           {{ !match ? "配置两位玩家并开始对局，这里会展示手牌分布。" : game.godView ? "等待发牌。" : "开启上帝视角后，可以分析所有玩家。" }}
-        </p>
-      </div>
-    </div>
-
-    <div v-else class="analysis-body">
-      <div class="hero-strip">
-        <div class="hero-cards">
-          <PlayingCard
-            v-for="(card, index) in holeCards"
-            :key="card.code"
-            :card="card"
-            size="mini"
-            :index="index"
-          />
-          <span class="hero-name">{{ summaryName }}</span>
-        </div>
-        <div class="hero-stat">
-          <span class="hero-key">当前最佳</span>
-          <strong :class="{ gold: Boolean(analysis?.current_best) }">
-            {{ analysis?.current_best?.category_name || (analysis ? "未成牌" : "—") }}
-          </strong>
-        </div>
-        <div class="hero-stat" v-if="analysis">
-          <span class="hero-key">方法</span>
-          <strong class="mono">{{ methodText }}</strong>
-        </div>
-        <div class="hero-stat" v-if="analysis">
-          <span class="hero-key">耗时</span>
-          <strong class="mono">{{ analysis.elapsed_ms.toFixed(1) }}ms</strong>
-        </div>
-        <div class="hero-stat" v-if="analysis">
-          <span class="hero-key">还需公共牌</span>
-          <strong class="mono">{{ analysis.needed_board_cards }} 张</strong>
-        </div>
-        <span v-if="boardLocked" class="chip gold stale-chip">
-          <span class="spinner"></span>
-          发牌中
-        </span>
-        <span v-else-if="stale" class="chip gold stale-chip">
-          <span class="spinner"></span>
-          牌面更新，重算中
-        </span>
-        <span v-else-if="analysis" class="chip emerald">
-          <AppIcon name="check" :size="10" />
-          已同步
         </span>
       </div>
 
-      <div v-if="game.analysisLoading && !analysis" class="analysis-loading">
+      <div v-else-if="game.analysisLoading && !analysis" class="analysis-loading">
         <span class="spinner"></span>
         正在计算牌型分布…
       </div>
@@ -161,16 +165,11 @@ function reload(): void {
           :class="{ best: bestKey === item.key, zero: item.probability === 0 }"
           :style="{ '--delay': `${index * 28}ms`, '--bar-color': item.color }"
         >
-          <span class="chart-index mono">{{ String(index + 1).padStart(2, "0") }}</span>
           <span class="chart-name">{{ item.name }}</span>
           <div class="chart-track">
             <div class="chart-fill" :style="{ width: barWidth(item.probability) }"></div>
-            <div v-if="bestKey === item.key" class="chart-marker">
-              <AppIcon name="sparkles" :size="9" />
-            </div>
           </div>
           <span class="chart-pct mono">{{ compactPercent(item.probability) }}</span>
-          <span class="chart-count mono">{{ item.count.toLocaleString("en-US") }}</span>
         </div>
       </div>
 
@@ -179,14 +178,9 @@ function reload(): void {
         等待牌型数据…
       </div>
 
-      <footer class="analysis-foot">
-        <span class="foot-note">
-          <AppIcon name="alert" :size="11" />
-          这是「最终牌型」分布，不是胜率；条形按本次最大概率归一化，百分比为绝对概率。
-        </span>
-        <span v-if="analysis" class="mono faint">
-          已知 {{ analysis.known_cards.length }} 张 · 牌堆 {{ 52 - analysis.known_cards.length }} 张未知
-        </span>
+      <footer v-if="analysis" class="analysis-foot">
+        <span class="foot-note">最终牌型分布，不是胜率；条形按本次最大概率归一化。</span>
+        <span class="mono faint">{{ methodText }} · {{ analysis.elapsed_ms.toFixed(1) }}ms</span>
       </footer>
     </div>
   </section>
@@ -194,32 +188,100 @@ function reload(): void {
 
 <style scoped>
 .analysis-panel {
-  padding: 16px 18px 14px;
+  padding: 14px 16px 13px;
+}
+
+.analysis-panel.collapsed {
+  padding: 10px 14px;
 }
 
 .analysis-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
-.title-block { min-width: 0; }
-
-.title-block h2 {
-  margin: 3px 0 2px;
-  font-size: calc(16px * var(--type-scale));
-  font-weight: 750;
-  letter-spacing: -0.015em;
-}
-
-.title-block p {
-  margin: 0;
-  font-size: calc(10.5px * var(--type-scale));
+.analysis-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+  padding: 0;
+  text-align: left;
   color: var(--muted);
-  line-height: 1.5;
+  transition: color 0.16s ease;
 }
+
+.analysis-toggle:hover { color: var(--text-soft); }
+
+.toggle-icon {
+  display: flex;
+  flex: none;
+  color: var(--faint);
+}
+
+.toggle-title {
+  flex: none;
+  font-size: calc(12.5px * var(--type-scale));
+  font-weight: 750;
+  color: var(--text-soft);
+  letter-spacing: -0.01em;
+}
+
+.summary-name {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: calc(11px * var(--type-scale));
+  color: var(--muted);
+}
+
+.summary-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: calc(10.5px * var(--type-scale));
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+.summary-key {
+  font-size: calc(9px * var(--type-scale));
+  color: var(--faint);
+  letter-spacing: 0.04em;
+}
+
+.summary-top { color: var(--muted); }
+
+.summary-muted {
+  font-size: calc(10.5px * var(--type-scale));
+  color: var(--faint);
+}
+
+.summary-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  font-size: calc(9px * var(--type-scale));
+  color: var(--gold);
+  white-space: nowrap;
+}
+
+.summary-state .spinner { width: 10px; height: 10px; }
+
+.toggle-chevron {
+  flex: none;
+  margin-left: auto;
+  color: var(--faint);
+  transition: transform 0.18s ease;
+}
+
+.analysis-panel:not(.collapsed) .toggle-chevron { transform: rotate(180deg); }
 
 .head-controls {
   display: flex;
@@ -238,49 +300,6 @@ function reload(): void {
   margin-top: 12px;
 }
 
-.hero-strip {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
-  padding: 8px 10px;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.022);
-}
-
-.hero-cards {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: none;
-}
-
-.hero-name {
-  margin-left: 6px;
-  font-size: calc(11px * var(--type-scale));
-  font-weight: 700;
-  color: var(--text-soft);
-  max-width: 150px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.hero-stat {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-
-.hero-key { font-size: calc(8.5px * var(--type-scale)); color: var(--faint); letter-spacing: 0.05em; }
-.hero-stat strong { font-size: calc(10.5px * var(--type-scale)); color: var(--text-soft); font-weight: 650; white-space: nowrap; }
-.hero-stat strong.gold { color: var(--gold); }
-
-.stale-chip { margin-left: auto; }
-.stale-chip .spinner { width: 9px; height: 9px; }
-
 .chart {
   display: flex;
   flex-direction: column;
@@ -294,9 +313,9 @@ function reload(): void {
 .chart-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 21px;
-  padding: 1px 4px;
+  gap: 10px;
+  min-height: 22px;
+  padding: 1px 2px;
   border-radius: 5px;
   animation: row-in 0.35s ease-out both;
   animation-delay: var(--delay);
@@ -309,13 +328,6 @@ function reload(): void {
 
 .chart-row:hover { background: rgba(255, 255, 255, 0.025); }
 .chart-row.zero { opacity: 0.38; }
-
-.chart-index {
-  width: 18px;
-  flex: none;
-  font-size: calc(8px * var(--type-scale));
-  color: var(--faint);
-}
 
 .chart-name {
   width: 68px;
@@ -352,17 +364,8 @@ function reload(): void {
   box-shadow: 0 0 14px color-mix(in srgb, var(--bar-color) 40%, transparent);
 }
 
-.chart-marker {
-  position: absolute;
-  right: 4px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: #20170a;
-  display: flex;
-}
-
 .chart-pct {
-  width: 48px;
+  width: 52px;
   flex: none;
   text-align: right;
   font-size: calc(10px * var(--type-scale));
@@ -371,14 +374,6 @@ function reload(): void {
 }
 
 .chart-row.best .chart-pct { color: var(--gold); }
-
-.chart-count {
-  width: 52px;
-  flex: none;
-  text-align: right;
-  font-size: calc(8px * var(--type-scale));
-  color: var(--faint);
-}
 
 .analysis-foot {
   display: flex;
@@ -402,30 +397,17 @@ function reload(): void {
 .analysis-empty {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 18px 4px 8px;
+  gap: 8px;
+  padding: 4px 2px 2px;
+  font-size: calc(10.5px * var(--type-scale));
   color: var(--muted);
 }
-
-.empty-icon {
-  width: 42px;
-  height: 42px;
-  display: grid;
-  place-items: center;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  color: var(--faint);
-  flex: none;
-}
-
-.analysis-empty strong { font-size: calc(12px * var(--type-scale)); color: var(--text-soft); }
-.analysis-empty p { margin: 3px 0 0; font-size: calc(10px * var(--type-scale)); color: var(--faint); line-height: 1.5; }
 
 .analysis-loading {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 16px 4px;
+  padding: 12px 4px;
   font-size: calc(10.5px * var(--type-scale));
   color: var(--muted);
 }
@@ -447,10 +429,10 @@ function reload(): void {
 .spin { animation: spin 0.9s linear infinite; }
 
 @media (max-width: 720px) {
-  .analysis-panel { padding: 13px 12px 12px; }
+  .analysis-panel { padding: 12px 12px 11px; }
+  .analysis-panel.collapsed { padding: 9px 12px; }
+  .summary-name { display: none; }
   .chart-name { width: 54px; font-size: calc(10px * var(--type-scale)); }
-  .chart-count { display: none; }
-  .chart-index { width: 14px; }
-  .hero-strip { gap: 10px; }
+  .chart-pct { width: 46px; }
 }
 </style>

@@ -62,20 +62,16 @@ function showCardsAt(seat: number): boolean {
 const community = computed<CardInfo[]>(() => board.community);
 const boardSlots = computed(() => Array.from({ length: 5 }, (_, index) => community.value[index] || null));
 const pot = computed(() => Number(snapshot.value?.pot || 0));
-const currentBet = computed(() => Number(snapshot.value?.current_bet || 0));
-const toCall = computed(() => Number(snapshot.value?.to_call || 0));
 const street = computed(() => {
   if (board.busy) return streetForCommunity(community.value.length);
   if (board.holeHold) return "preflop";
   return snapshot.value?.street || "waiting";
 });
-const buttonSeat = computed(() => snapshot.value?.button ?? 0);
 const rawResult = computed(() => (
   game.lastResult?.hand_id === game.snapshot?.hand_id ? game.lastResult : null
 ));
 const result = computed(() => ((board.busy || board.holeHold) ? null : rawResult.value));
 const winnerSeats = computed(() => result.value?.winner_seats || []);
-const deckVisible = computed(() => Boolean(game.godView && match.value));
 const deckRemaining = computed(() => snapshot.value?.deck_remaining || []);
 const burned = computed(() => snapshot.value?.burned || []);
 const deckCount = computed(() => snapshot.value?.deck_remaining_count || 0);
@@ -101,28 +97,16 @@ function phaseState(index: number): "done" | "active" | "todo" {
 
 const boardCaption = computed(() => {
   if ((board.holeHold || board.busy) && community.value.length === 0) return "发牌中";
-  if (street.value === "finished" || street.value === "showdown") {
-    return result.value?.reason === "fold" ? "弃牌结束" : "摊牌";
-  }
-  if (street.value === "preflop") return "等待翻牌";
-  return streetLabel(street.value);
+  return "";
 });
 
-const tableHint = computed(() => {
+const streetText = computed(() => {
   if (board.holeHold) return "发牌中";
   if (board.busy) {
     return community.value.length ? `翻牌中 · ${streetLabel(street.value)}` : "发牌中";
   }
-  if (!match.value) return "配置两个玩家，开始一局单挑";
-  if (match.value.match_over) return "比赛结束";
-  if (street.value === "finished") return "本手结束";
-  if (snapshot.value?.acting_kind === "human") return "轮到你行动";
-  return "";
-});
-
-const dealerStyle = computed(() => {
-  if (buttonSeat.value === topSeat.value) return { top: "22%", left: "71%" };
-  return { bottom: "21%", left: "71%" };
+  if (match.value?.match_over) return "比赛结束";
+  return streetLabel(street.value);
 });
 
 const feltInner = ref<HTMLElement | null>(null);
@@ -322,31 +306,17 @@ onUnmounted(() => {
 <template>
   <section class="table-panel surface">
     <div class="table-toolbar">
-      <div class="phase-track">
-        <template v-for="(phase, index) in phases" :key="phase.key">
-          <div class="phase-step" :class="phaseState(index)">
-            <span class="phase-dot">
-              <AppIcon v-if="phaseState(index) === 'done'" name="check" :size="9" :stroke-width="2.4" />
-              <span v-else>{{ index + 1 }}</span>
-            </span>
-            <span class="phase-label">{{ phase.label }}</span>
-          </div>
-          <div v-if="index < phases.length - 1" class="phase-line" :class="{ done: phaseState(index) === 'done' }"></div>
-        </template>
-      </div>
-      <div class="table-meta">
-        <span class="chip" v-if="currentBet > 0 && !board.busy && !board.holeHold">
-          <span class="meta-key">当前注</span>
-          <strong class="mono">{{ chips(currentBet) }}</strong>
-        </span>
-        <span class="chip red" v-if="toCall > 0 && !board.busy && !board.holeHold">
-          <span class="meta-key">需跟</span>
-          <strong class="mono">{{ chips(toCall) }}</strong>
-        </span>
-        <span class="chip" :class="{ emerald: game.godView }">
-          <AppIcon :name="game.godView ? 'eye' : 'eyeOff'" :size="11" />
-          {{ game.godView ? "全知" : "隐藏" }}
-        </span>
+      <div class="phase-track" :aria-label="streetText">
+        <span class="street-now">{{ streetText }}</span>
+        <div class="phase-dots" aria-hidden="true">
+          <span
+            v-for="(phase, index) in phases"
+            :key="phase.key"
+            class="phase-dot"
+            :class="phaseState(index)"
+            :title="phase.label"
+          ></span>
+        </div>
       </div>
     </div>
 
@@ -355,7 +325,6 @@ onUnmounted(() => {
         <div class="felt-ring"></div>
         <div ref="feltInner" class="felt-inner">
           <div class="felt-watermark">♠</div>
-          <div class="felt-brand">HEADS-UP <span>LAB</span></div>
           <span ref="flyChip" class="action-fly-chip" aria-hidden="true"></span>
 
           <template v-if="match">
@@ -418,32 +387,17 @@ onUnmounted(() => {
                   />
                 </div>
                 <div ref="potEl" class="pot-display" :class="{ empty: pot <= 0 }">
-                  <div class="pot-label">
-                    <span>POT</span>
-                    <span v-if="result" class="pot-result-label">{{ result.reason === "fold" ? "弃牌" : "摊牌" }}</span>
-                  </div>
+                  <div class="pot-label"><span>POT</span></div>
                   <div class="pot-value">
                     <AnimatedNumber :key="`pot-${snapshot?.hand_id || 0}-${board.dealNonce}`" :value="pot" />
                   </div>
                   <span v-if="potShockKey" :key="potShockKey" class="pot-shock" aria-hidden="true"></span>
                 </div>
               </div>
-              <div class="board-caption">
+              <div v-if="boardCaption" class="board-caption">
                 <span class="caption-line"></span>
                 <span>{{ boardCaption }}</span>
               </div>
-            </div>
-
-            <div class="dealer-token" :style="dealerStyle">
-              <span>D</span>
-            </div>
-
-            <div v-if="tableHint" class="table-hint">
-              <span
-                class="dot"
-                :class="{ live: snapshot?.acting_kind === 'human' && !board.busy && !board.holeHold }"
-              ></span>
-              {{ tableHint }}
             </div>
           </template>
 
@@ -455,26 +409,20 @@ onUnmounted(() => {
               <AppIcon name="settings" :size="14" />
               配置对局
             </button>
-            <div class="empty-legend">
-              <span><AppIcon name="user" :size="11" /> 人类</span>
-              <span><AppIcon name="sparkles" :size="11" /> LLM</span>
-              <span><AppIcon name="bot" :size="11" /> RLCard / Project RL</span>
-            </div>
           </div>
         </div>
       </div>
     </div>
 
     <DeckStrip
-      v-if="match"
+      v-if="match && game.godView"
       :remaining="deckRemaining"
       :burned="burned"
-      :visible="deckVisible"
       :count="deckCount"
       :dealing="board.holeHold"
     />
 
-    <ActionBar />
+    <ActionBar v-if="match" />
   </section>
 </template>
 
@@ -488,81 +436,47 @@ onUnmounted(() => {
 .table-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 11px 16px;
+  padding: 9px 16px;
   border-bottom: 1px solid var(--line);
   background: rgba(5, 13, 10, 0.35);
-  flex-wrap: wrap;
 }
 
 .phase-track {
   display: flex;
   align-items: center;
-  gap: 0;
+  gap: 12px;
   min-width: 0;
 }
 
-.phase-step {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--faint);
-  font-size: calc(10px * var(--type-scale));
+.street-now {
+  font-size: calc(10.5px * var(--type-scale));
   font-weight: 700;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.08em;
+  color: var(--gold);
   white-space: nowrap;
 }
 
-.phase-step.active { color: var(--gold); }
-.phase-step.done { color: var(--emerald); }
-
-.phase-dot {
-  width: 17px;
-  height: 17px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  border: 1px solid var(--line-strong);
-  font-family: var(--font-mono);
-  font-size: calc(8px * var(--type-scale));
-  color: var(--faint);
-  transition: all 0.2s ease;
-}
-
-.phase-step.active .phase-dot {
-  border-color: rgba(232, 195, 122, 0.55);
-  background: var(--gold-dim);
-  color: var(--gold);
-  box-shadow: 0 0 12px rgba(232, 195, 122, 0.14);
-}
-
-.phase-step.done .phase-dot {
-  border-color: rgba(84, 214, 168, 0.42);
-  background: var(--emerald-dim);
-  color: var(--emerald);
-}
-
-.phase-line {
-  width: clamp(12px, 3vw, 34px);
-  height: 1px;
-  margin: 0 6px;
-  background: var(--line-strong);
-  transition: background 0.2s ease;
-}
-
-.phase-line.done { background: rgba(84, 214, 168, 0.32); }
-
-.table-meta {
+.phase-dots {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  gap: 4px;
 }
 
-.table-meta .chip { padding: 4px 9px; }
-.meta-key { color: var(--faint); font-size: calc(9px * var(--type-scale)); }
-.table-meta strong { font-size: calc(10.5px * var(--type-scale)); }
+.phase-dot {
+  width: 16px;
+  height: 3px;
+  border-radius: 99px;
+  background: var(--line-strong);
+  transition: width 0.2s ease, background 0.2s ease;
+}
+
+.phase-dot.done { background: rgba(84, 214, 168, 0.42); }
+
+.phase-dot.active {
+  width: 26px;
+  background: var(--gold);
+  box-shadow: 0 0 10px rgba(232, 195, 122, 0.32);
+}
 
 .felt-wrap {
   padding: 14px 14px 8px;
@@ -639,21 +553,6 @@ onUnmounted(() => {
   pointer-events: none;
   user-select: none;
 }
-
-.felt-brand {
-  position: absolute;
-  left: 50%;
-  top: 11%;
-  transform: translateX(-50%);
-  font-size: calc(8px * var(--type-scale));
-  font-weight: 700;
-  letter-spacing: 0.42em;
-  color: rgba(232, 195, 122, 0.24);
-  pointer-events: none;
-  white-space: nowrap;
-}
-
-.felt-brand span { color: rgba(232, 195, 122, 0.42); }
 
 .deal-deck {
   position: absolute;
@@ -769,13 +668,6 @@ onUnmounted(() => {
   opacity: 0.85;
 }
 
-.pot-result-label {
-  font-family: var(--font-ui);
-  font-size: calc(8px * var(--type-scale));
-  letter-spacing: 0.05em;
-  color: var(--muted);
-}
-
 .pot-value {
   font-family: var(--font-mono);
   font-size: clamp(calc(17px * var(--type-scale)), 1.7vw, calc(22px * var(--type-scale)));
@@ -844,40 +736,6 @@ onUnmounted(() => {
 
 .caption-pot { color: rgba(232, 195, 122, 0.5); }
 
-.dealer-token {
-  position: absolute;
-  z-index: 7;
-  width: 25px;
-  height: 25px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: linear-gradient(145deg, #f5d89d, #bd8c38);
-  color: #241a08;
-  font-family: var(--font-mono);
-  font-size: calc(10px * var(--type-scale));
-  font-weight: 800;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.38), 0 0 0 2px rgba(6, 16, 12, 0.75);
-}
-
-.table-hint {
-  position: absolute;
-  left: 7%;
-  bottom: 9%;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  border: 1px solid rgba(232, 195, 122, 0.14);
-  background: rgba(5, 14, 10, 0.42);
-  color: rgba(232, 226, 210, 0.55);
-  font-size: calc(9.5px * var(--type-scale));
-  letter-spacing: 0.06em;
-  white-space: nowrap;
-  backdrop-filter: blur(6px);
-}
-
 .empty-overlay {
   position: absolute;
   inset: 0;
@@ -894,21 +752,6 @@ onUnmounted(() => {
 }
 
 .empty-cta { margin-top: 10px; }
-
-.empty-legend {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 12px;
-  font-size: calc(9px * var(--type-scale));
-  color: var(--faint);
-}
-
-.empty-legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
 
 .empty-mark {
   font-size: calc(38px * var(--type-scale));
@@ -933,9 +776,10 @@ onUnmounted(() => {
 }
 
 @media (max-width: 720px) {
-  .table-toolbar { padding: 9px 10px; gap: 8px; }
-  .phase-label { display: none; }
-  .phase-line { width: 16px; margin: 0 4px; }
+  .table-toolbar { padding: 8px 10px; }
+  .phase-track { gap: 9px; }
+  .phase-dot { width: 12px; }
+  .phase-dot.active { width: 22px; }
   .felt-wrap { padding: 8px 8px 4px; }
   .felt { height: 430px; min-height: 430px; aspect-ratio: auto; border-radius: 42% / 46%; }
   .felt-inner { height: 100%; border-radius: 42% / 46%; }
@@ -944,8 +788,6 @@ onUnmounted(() => {
   .street-banner { top: 50%; letter-spacing: 0.2em; }
   .pot-display { left: calc(100% + 10px); padding: 4px 9px; gap: 5px; }
   .pot-value { font-size: calc(16px * var(--type-scale)); }
-  .table-hint { left: 5%; bottom: 8%; }
-  .felt-brand { top: 8%; }
 }
 
 @media (max-width: 560px) {

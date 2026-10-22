@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import AppIcon from "./AppIcon.vue";
 import { iconUrl } from "../api";
+import { agentNameFor } from "../format";
 import {
   buildDefaultSetup,
   closeSetup,
@@ -160,7 +161,7 @@ function selectProvider(index: number, provider: ProviderInfo): void {
   setup.seats[index] = {
     ...seat(index),
     kind: "llm",
-    name: `${provider.name} · ${model.name}`,
+    name: agentNameFor(provider.name, model.name),
     provider_id: provider.id,
     model_id: model.id,
     params: { ...model.defaults },
@@ -171,7 +172,7 @@ function selectModel(index: number, model: ProviderModel): void {
   setup.seats[index] = {
     ...seat(index),
     kind: "llm",
-    name: `${model.provider_name} · ${model.name}`,
+    name: agentNameFor(model.provider_name, model.name),
     provider_id: model.provider_id,
     model_id: model.id,
     params: { ...model.defaults },

@@ -91,6 +91,16 @@ describe("AgentConsole stream", () => {
     wrapper.unmount();
   });
 
+  it("keeps turn headers free of duplicated table stats and legal actions", async () => {
+    const wrapper = mount(AgentConsole);
+    await nextTick();
+
+    expect(wrapper.find(".turn-stats").exists()).toBe(false);
+    expect(wrapper.find(".legal-line").exists()).toBe(false);
+    expect(wrapper.find(".position-chip").text()).toContain("BTN");
+    wrapper.unmount();
+  });
+
   it("opens the next hand before the agent has acted", async () => {
     storeMock.game.snapshot.hand_id = 3;
     const wrapper = mount(AgentConsole);

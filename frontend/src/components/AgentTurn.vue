@@ -66,6 +66,9 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
         <div class="turn-head-main">
           <span class="turn-index mono">TURN {{ String(turnNumber || 1).padStart(2, "0") }}</span>
           <span class="street-pill" :class="streetClass">{{ streetLabel(turn.header.street) }}</span>
+          <span v-if="turn.header.position" class="position-chip">
+            {{ turn.header.position === "button" ? "BTN / SB" : "BB" }}
+          </span>
           <span class="faint mono hand-no">#{{ turn.header.handId }}</span>
           <span class="turn-status" :class="{ live, auto: turn.auto }">
             <span v-if="turn.status === 'running'" class="dot live"></span>
@@ -75,19 +78,7 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
           </span>
           <span class="turn-time mono">{{ elapsed }}</span>
         </div>
-        <div class="turn-stats">
-          <span class="stat"><span class="stat-key">底池</span><strong class="mono gold">{{ chips(turn.header.pot) }}</strong></span>
-          <span class="stat"><span class="stat-key">你</span><strong class="mono">{{ chips(turn.header.myChips) }}</strong></span>
-          <span class="stat"><span class="stat-key">对手</span><strong class="mono">{{ chips(turn.header.opponentChips) }}</strong></span>
-          <span v-if="turn.header.toCall > 0" class="stat call"><span class="stat-key">需跟</span><strong class="mono">{{ chips(turn.header.toCall) }}</strong></span>
-        </div>
       </header>
-
-      <div class="legal-line" v-if="turn.header.legalActions.length">
-        <span class="faint">合法</span>
-        <span v-for="item in turn.header.legalActions" :key="item" class="legal-chip">{{ actionLabel(item) }}</span>
-        <span class="position-chip">{{ turn.header.position === "button" ? "BTN / SB" : "BB" }}</span>
-      </div>
 
       <details v-if="turn.stateText" class="state-input">
         <summary>
@@ -292,45 +283,7 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
 
 .turn-time { font-size: calc(8.5px * var(--type-scale)); color: var(--faint); }
 
-.turn-stats {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  flex-wrap: wrap;
-}
-
-.stat {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: calc(9px * var(--type-scale));
-  color: var(--faint);
-}
-
-.stat strong { font-size: calc(9.5px * var(--type-scale)); color: var(--text-soft); font-weight: 600; }
-.stat-key { font-size: calc(8.5px * var(--type-scale)); }
-.stat.call strong { color: var(--red); }
-
-.legal-line {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
-  padding: 5px 10px;
-  border-bottom: 1px solid var(--line);
-  font-size: calc(8.5px * var(--type-scale));
-}
-
-.legal-chip {
-  padding: 1px 5px;
-  border-radius: 4px;
-  border: 1px solid var(--line);
-  color: var(--muted);
-  font-size: calc(8.5px * var(--type-scale));
-}
-
 .position-chip {
-  margin-left: auto;
   font-family: var(--font-mono);
   font-size: calc(8px * var(--type-scale));
   color: var(--faint);

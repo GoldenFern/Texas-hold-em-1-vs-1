@@ -57,10 +57,6 @@ const potOdds = computed(() => {
   if (toCall.value <= 0) return 0;
   return toCall.value / (pot.value + toCall.value);
 });
-const assessment = computed(() => {
-  const seat = snapshot.value?.acting_seat;
-  return snapshot.value?.players?.find((player) => player.seat === seat)?.assessment || null;
-});
 const actingName = computed(() => {
   const seat = snapshot.value?.acting_seat;
   return snapshot.value?.players?.find((player) => player.seat === seat)?.name || "对手";
@@ -101,7 +97,7 @@ function targetFor(fraction: number): number {
 
 function setFraction(fraction: number, label: string): void {
   quickFraction.value = label;
-  raiseTo.value = label === "allin" ? maxRaise.value : targetFor(fraction);
+  raiseTo.value = targetFor(fraction);
 }
 
 function setRaise(value: number): void {
@@ -197,23 +193,9 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
         <span v-else-if="snapshot?.street === 'finished' || match?.match_over" class="dot"></span>
         <span v-else class="spinner"></span>
         <span class="status-text">{{ phaseText }}</span>
-        <span
-          v-if="displayStreet && displayStreet !== 'finished' && !(board.busy && board.community.length === 0)"
-          class="chip mono street-chip"
-        >
-          {{ streetLabel(displayStreet) }}
-        </span>
       </div>
-      <div class="status-sub">
-        <template v-if="match">
-          <span>底池 <strong class="mono gold">{{ chips(pot) }}</strong></span>
-          <span v-if="canAct && toCall > 0">需跟注 <strong class="mono">{{ chips(toCall) }}</strong></span>
-          <span v-if="canAct && toCall > 0" class="pot-odds">底池赔率 <strong class="mono">{{ percent(potOdds, 0) }}</strong></span>
-          <span v-if="assessment && !boardLocked" class="chip gold">{{ assessment.category_name }}</span>
-        </template>
-        <template v-else>
-          <span>选择两个玩家，开始一局单挑。</span>
-        </template>
+      <div v-if="canAct && toCall > 0" class="status-sub">
+        <span class="pot-odds">底池赔率 <strong class="mono">{{ percent(potOdds, 0) }}</strong></span>
       </div>
     </div>
 
@@ -263,8 +245,6 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
           <button class="quick" :class="{ active: quickFraction === 'half' }" @click="setFraction(0.5, 'half')">½ 池</button>
           <button class="quick" :class="{ active: quickFraction === 'three' }" @click="setFraction(0.75, 'three')">¾ 池</button>
           <button class="quick" :class="{ active: quickFraction === 'pot' }" @click="setFraction(1, 'pot')">1 池</button>
-          <button class="quick" :class="{ active: quickFraction === 'allin' }" @click="setFraction(1, 'allin')">ALL-IN</button>
-          <span class="range-note mono">{{ chips(minRaise) }} – {{ chips(maxRaise) }}</span>
         </div>
         <div class="slider-row">
           <input
@@ -292,28 +272,11 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
           </div>
         </div>
       </div>
-      <div v-else class="raise-panel muted-note">
-        当前不能加注，只能过牌、跟注或弃牌。
-      </div>
     </div>
 
-    <div v-else class="waiting-side">
-      <template v-if="!match">
-        <button class="btn btn-primary" @click="openSetup">
-          <AppIcon name="settings" :size="15" />
-          配置对局
-        </button>
-      </template>
-      <template v-else-if="match.match_over">
-        <span class="match-end">比赛结束</span>
-        <button class="btn btn-primary" @click="openSetup">新比赛</button>
-      </template>
-      <template v-else>
-        <span class="wait-note">
-          {{ snapshot?.acting_kind === "llm" ? "思考流在右侧实时展开" : snapshot?.acting_kind === "bot" ? "RLCard 正在选择动作" : "等待牌局推进" }}
-        </span>
-        <span v-if="humanPlayer" class="mono faint">你的筹码 {{ chips(humanPlayer.chips) }}</span>
-      </template>
+    <div v-else-if="match?.match_over" class="waiting-side">
+      <span class="match-end">比赛结束</span>
+      <button class="btn btn-primary" @click="openSetup">新比赛</button>
     </div>
   </div>
 </template>
@@ -359,8 +322,6 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
-.street-chip { margin-left: 2px; }
 
 .status-sub {
   display: flex;
@@ -457,12 +418,6 @@ kbd {
 .quick:hover { color: var(--text); border-color: var(--line-strong); }
 .quick.active { color: var(--gold); border-color: rgba(232, 195, 122, 0.32); background: var(--gold-dim); }
 
-.range-note {
-  margin-left: auto;
-  font-size: calc(9px * var(--type-scale));
-  color: var(--faint);
-}
-
 .slider-row {
   display: flex;
   align-items: center;
@@ -488,13 +443,6 @@ kbd {
   text-align: right;
 }
 
-.muted-note {
-  font-size: calc(10.5px * var(--type-scale));
-  color: var(--faint);
-  border-left: 1px solid var(--line);
-  padding-left: 14px;
-}
-
 .waiting-side {
   display: flex;
   align-items: center;
@@ -504,7 +452,6 @@ kbd {
   justify-content: flex-end;
 }
 
-.wait-note { font-size: calc(11px * var(--type-scale)); color: var(--faint); }
 .match-end { font-size: calc(12px * var(--type-scale)); font-weight: 700; color: var(--gold); }
 
 .end-actions {
@@ -549,10 +496,9 @@ kbd {
 @media (max-width: 720px) {
   .action-bar { padding: 10px 12px; min-height: 0; }
   .controls { flex-direction: column; align-items: stretch; gap: 9px; }
-  .primary-actions { justify-content: stretch; }
-  .primary-actions .action-btn { flex: 1; }
+  .primary-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .primary-actions .action-btn { flex: none; }
   .raise-panel { border-left: 0; border-top: 1px solid var(--line); padding-left: 0; padding-top: 8px; }
-  .range-note { display: none; }
   .end-actions { margin-left: 0; justify-content: flex-start; }
   .waiting-side { margin-left: 0; justify-content: flex-start; }
 }

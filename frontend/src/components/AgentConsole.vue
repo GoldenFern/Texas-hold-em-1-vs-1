@@ -5,7 +5,7 @@ import AgentTurn from "./AgentTurn.vue";
 import PlayingCard from "./PlayingCard.vue";
 import { iconUrl } from "../api";
 import { describeAction } from "../actionMeta";
-import { actionLabel, chips, shortName, streetShort } from "../format";
+import { actionLabel, chips, compactSeatName, shortName, streetShort } from "../format";
 import { reasoningDefaultCollapsed, setReasoningDefaultCollapsed } from "../reasoning";
 import { agentSeats, followLive, game, humanSeat, openSetup, selectSeat } from "../store";
 import type { ActionEntry, BotDecisionView, TurnView } from "../types";
@@ -25,6 +25,12 @@ let followHandId: number | null = null;
 const selectedInfo = computed(() => {
   if (game.selectedSeat === null) return null;
   return game.snapshot?.match?.seats.find((seat) => seat.seat === game.selectedSeat) || null;
+});
+
+const selectedLabel = computed(() => {
+  const info = selectedInfo.value;
+  if (!info) return "Agent";
+  return info.kind === "llm" ? compactSeatName(info.name, info.model_name) : info.name;
 });
 
 const turns = computed<Array<TurnView | BotDecisionView>>(() => {
@@ -67,11 +73,6 @@ const anyLive = computed(() => {
     if (seatLive(seat.seat)) return true;
   }
   return false;
-});
-
-const selectedLive = computed(() => {
-  if (game.selectedSeat === null) return false;
-  return seatLive(game.selectedSeat);
 });
 
 const groups = computed(() => {
@@ -300,11 +301,25 @@ onUnmounted(() => {
     <header class="console-head">
       <div class="head-top">
         <div class="head-title">
-          <span class="eyebrow">AGENT OBSERVATORY</span>
-          <h2>
-            推理与工具调用
-            <span v-if="anyLive" class="live-badge"><span class="dot live"></span>LIVE</span>
-          </h2>
+          <h2>Agent 观测台</h2>
+        </div>
+        <div v-if="agentSeats.length" class="seat-tabs">
+          <button
+            v-for="seat in agentSeats"
+            :key="seat.seat"
+            class="seat-tab"
+            :class="{ active: game.selectedSeat === seat.seat && mode === 'stream' }"
+            :title="seat.name"
+            :aria-label="seat.name"
+            @click="clickSeat(seat.seat)"
+          >
+            <span class="tab-icon logo-tile" :class="{ provider: Boolean(tabIcon(seat)) }">
+              <img v-if="tabIcon(seat)" :src="iconUrl(tabIcon(seat))" :alt="seat.name" />
+              <AppIcon v-else :name="seat.kind === 'bot' ? 'bot' : 'sparkles'" :size="14" />
+            </span>
+            <span v-if="agentSeats.length > 1" class="tab-seat mono">{{ seat.seat + 1 }}</span>
+            <span v-if="seatLive(seat.seat)" class="dot live"></span>
+          </button>
         </div>
         <div class="head-actions">
           <button
@@ -321,52 +336,6 @@ onUnmounted(() => {
             <button :class="{ active: mode === 'log' }" @click="setMode('log')">日志</button>
           </div>
         </div>
-      </div>
-
-      <div v-if="agentSeats.length" class="seat-tabs">
-        <button
-          v-for="seat in agentSeats"
-          :key="seat.seat"
-          class="seat-tab"
-          :class="{ active: game.selectedSeat === seat.seat && mode === 'stream' }"
-          @click="clickSeat(seat.seat)"
-        >
-          <span class="tab-icon logo-tile" :class="{ provider: Boolean(tabIcon(seat)) }">
-            <img v-if="tabIcon(seat)" :src="iconUrl(tabIcon(seat))" :alt="seat.name" />
-            <AppIcon v-else :name="seat.kind === 'bot' ? 'bot' : 'sparkles'" :size="14" />
-          </span>
-          <span class="tab-text">
-            <strong>{{ shortName(seat.name, 16) }}</strong>
-            <small>{{ seat.model_name || (seat.kind === "bot" ? (seat.agent?.agent_type?.startsWith("project_") ? "Project RL" : "RLCard") : seat.kind === "human" ? "人类" : "Agent") }}</small>
-          </span>
-          <span v-if="seatLive(seat.seat)" class="dot live"></span>
-          <span v-else-if="game.pinned && game.selectedSeat === seat.seat" class="pinned-mark">PIN</span>
-        </button>
-      </div>
-
-      <div v-if="mode === 'stream' && selectedInfo" class="console-meta">
-        <span class="chip" :class="selectedInfo.kind === 'llm' ? 'gold' : 'blue'">
-          {{ selectedInfo.kind === "llm" ? "LLM" : selectedInfo.agent?.agent_type?.startsWith("project_") ? "PROJECT" : selectedInfo.kind === "bot" ? "RLCARD" : "HUMAN" }}
-        </span>
-        <span v-if="selectedInfo.model_name" class="chip mono">{{ selectedInfo.model_name }}</span>
-        <span v-if="selectedInfo.agent?.agent_type" class="chip mono">{{ selectedInfo.agent.agent_type }}</span>
-        <span v-if="selectedLive" class="chip emerald"><span class="dot live"></span>生成中</span>
-        <span class="chip faint">{{ turns.length }} turns</span>
-        <button
-          v-if="reasoningDefaultCollapsed"
-          class="chip action"
-          type="button"
-          title="新思考默认折叠，点击恢复自动折叠"
-          @click="setReasoningDefaultCollapsed(false)"
-        >
-          <AppIcon name="eyeOff" :size="11" />
-          思考默认折叠
-        </button>
-      </div>
-      <div v-else-if="mode === 'log'" class="console-meta">
-        <span class="chip">全部玩家</span>
-        <span class="chip mono">{{ game.actionFeed.length }} actions</span>
-        <span class="chip faint">最近 {{ groups.length }} 手</span>
       </div>
     </header>
 
@@ -391,7 +360,7 @@ onUnmounted(() => {
 
         <div v-else-if="!turns.length" class="empty-state">
           <div class="empty-orb"><AppIcon name="brain" :size="28" /></div>
-          <h3>等待 {{ selectedInfo?.name || "Agent" }} 的第一回合</h3>
+          <h3>等待 {{ selectedLabel }} 的第一回合</h3>
           <p>轮到它行动时，模型会先阅读牌局，然后调用牌型概率与执行动作工具。</p>
           <div class="empty-flow">
             <span>读取牌局</span>
@@ -517,12 +486,19 @@ onUnmounted(() => {
 
     <footer class="console-foot">
       <span class="foot-dot" :class="{ live: anyLive }"></span>
-      <span>{{ anyLive ? "Agent 正在生成" : "空闲" }}</span>
-      <span class="foot-sep"></span>
-      <span class="mono">{{ game.connected ? "socket connected" : "socket offline" }}</span>
+      <span>{{ anyLive ? "Agent 正在生成" : game.connected ? "空闲" : "连接已断开" }}</span>
       <span class="foot-spacer"></span>
-      <span v-if="game.pinned" class="pin-note">已固定当前 Agent</span>
-      <span v-else class="pin-note">自动跟随行动方</span>
+      <span v-if="mode === 'log'" class="mono">{{ game.actionFeed.length }} actions</span>
+      <button
+        v-if="reasoningDefaultCollapsed"
+        class="foot-action"
+        type="button"
+        title="恢复思考自动折叠"
+        @click="setReasoningDefaultCollapsed(false)"
+      >
+        <AppIcon name="eyeOff" :size="11" />
+        思考默认折叠
+      </button>
     </footer>
   </aside>
 </template>
@@ -553,38 +529,22 @@ onUnmounted(() => {
 
 .head-top {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 14px 14px 10px;
+  padding: 12px 14px 9px;
 }
 
-.head-title { min-width: 0; }
+.head-title { min-width: 0; flex: none; }
 
 .head-title h2 {
-  margin: 3px 0 0;
-  font-size: calc(15px * var(--type-scale));
+  margin: 0;
+  font-size: calc(14px * var(--type-scale));
   font-weight: 750;
   letter-spacing: -0.015em;
   display: flex;
   align-items: center;
   gap: 7px;
-}
-
-.live-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 1px 5px;
-  border-radius: 4px;
-  border: 1px solid rgba(84, 214, 168, 0.3);
-  background: var(--emerald-dim);
-  color: var(--emerald);
-  font-family: var(--font-mono);
-  font-size: calc(7px * var(--type-scale));
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  vertical-align: 2px;
 }
 
 .head-actions {
@@ -600,23 +560,23 @@ onUnmounted(() => {
 
 .seat-tabs {
   display: flex;
-  gap: 4px;
-  padding: 0 12px 8px;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
   overflow-x: auto;
 }
 
 .seat-tab {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  padding: 6px 8px;
+  position: relative;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
   border-radius: 9px;
   border: 1px solid transparent;
-  text-align: left;
   transition: background 0.15s ease, border-color 0.15s ease;
-  flex: none;
-  max-width: 210px;
 }
 
 .seat-tab:hover { background: rgba(255, 255, 255, 0.04); }
@@ -640,59 +600,19 @@ onUnmounted(() => {
 .tab-icon.provider { background: #f1ecdf; }
 .logo-tile img { width: 17px; height: 17px; object-fit: contain; }
 
-.tab-text {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  min-width: 0;
-}
-
-.tab-text strong {
-  font-size: calc(10.5px * var(--type-scale));
-  font-weight: 700;
-  color: var(--text-soft);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.tab-text small {
-  font-size: calc(8.5px * var(--type-scale));
+.tab-seat {
+  position: absolute;
+  right: 1px;
+  bottom: 0;
+  font-size: calc(6px * var(--type-scale));
   color: var(--faint);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  letter-spacing: 0;
 }
 
-.pinned-mark {
-  font-family: var(--font-mono);
-  font-size: calc(6.5px * var(--type-scale));
-  font-weight: 800;
-  color: var(--gold);
-  border: 1px solid rgba(232, 195, 122, 0.3);
-  border-radius: 3px;
-  padding: 0 3px;
-}
-
-.console-meta {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-wrap: wrap;
-  padding: 0 14px 9px;
-}
-
-.console-meta .chip { font-size: calc(8.5px * var(--type-scale)); padding: 2px 6px; }
-
-.console-meta .chip.action {
-  cursor: pointer;
-  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
-}
-
-.console-meta .chip.action:hover {
-  color: var(--gold);
-  border-color: rgba(232, 195, 122, 0.35);
-  background: var(--gold-dim);
+.seat-tab .dot.live {
+  position: absolute;
+  top: 2px;
+  right: 2px;
 }
 
 .console-scroll {
@@ -954,9 +874,18 @@ onUnmounted(() => {
 
 .foot-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--faint); }
 .foot-dot.live { background: var(--emerald); box-shadow: 0 0 8px rgba(84, 214, 168, 0.5); }
-.foot-sep { width: 1px; height: 9px; background: var(--line); margin: 0 3px; }
 .foot-spacer { flex: 1; }
-.pin-note { color: var(--faint); }
+
+.foot-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--faint);
+  font-size: calc(8.5px * var(--type-scale));
+  transition: color 0.16s ease;
+}
+
+.foot-action:hover { color: var(--gold); }
 
 .jump-latest {
   position: absolute;
@@ -993,9 +922,7 @@ onUnmounted(() => {
 @media (max-width: 720px) {
   .agent-console { height: 620px; border-radius: 16px; }
   .head-top { padding: 12px 12px 8px; }
-  .seat-tabs { padding: 0 10px 7px; }
   .console-scroll { padding: 6px 7px 16px; }
-  .seat-tab { max-width: 170px; }
   .mode-switch button { padding: 4px 7px; font-size: calc(9px * var(--type-scale)); }
 }
 </style>

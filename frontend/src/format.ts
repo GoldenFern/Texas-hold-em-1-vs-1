@@ -110,6 +110,38 @@ export function shortName(name: string, max = 18): string {
   return name.length > max ? `${name.slice(0, max - 1)}…` : name;
 }
 
+/**
+ * Build a default agent label without repeating the provider name.
+ *
+ * Some model names already start with the provider (for example
+ * "DeepSeek V4.1 Flash"), so prefixing the provider again produces
+ * noisy labels such as "DeepSeek · DeepSeek V4.1 Flash".
+ */
+export function agentNameFor(providerName: string, modelName: string): string {
+  const provider = String(providerName || "").trim();
+  const model = String(modelName || "").trim();
+  if (!provider) return model;
+  if (!model) return provider;
+  if (model.toLowerCase().startsWith(provider.toLowerCase())) return model;
+  return `${provider} · ${model}`;
+}
+
+/**
+ * Short label for an agent seat. The provider icon already identifies the
+ * vendor, so prefer the model part and strip a duplicated provider prefix.
+ */
+export function compactSeatName(name: string, modelName?: string): string {
+  const full = String(name || "").trim();
+  const model = String(modelName || "").trim();
+  if (!model) return full;
+  const provider = full.includes(" · ") ? full.split(" · ")[0].trim() : "";
+  if (!provider || !model.toLowerCase().startsWith(provider.toLowerCase())) {
+    return model;
+  }
+  const rest = model.slice(provider.length).replace(/^[\s·:_-]+/, "").trim();
+  return rest || model;
+}
+
 export function tokenText(value: number | undefined): string {
   const number = Number(value ?? 0);
   if (!number) return "0";

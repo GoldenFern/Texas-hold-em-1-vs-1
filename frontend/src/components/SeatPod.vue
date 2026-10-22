@@ -4,7 +4,7 @@ import AppIcon from "./AppIcon.vue";
 import FlipCard from "./FlipCard.vue";
 import { iconUrl } from "../api";
 import { describeAction } from "../actionMeta";
-import { chips, shortName } from "../format";
+import { chips, compactSeatName, shortName } from "../format";
 import type { ActionLog, HandResult, PlayerState, SeatInfo } from "../types";
 
 const props = withDefaults(
@@ -33,8 +33,13 @@ const props = withDefaults(
   },
 );
 
-const name = computed(() => props.player?.name || props.seatInfo?.name || "等待入座");
+const fullName = computed(() => props.player?.name || props.seatInfo?.name || "等待入座");
 const kind = computed(() => props.player?.kind || props.seatInfo?.kind || "human");
+const name = computed(() => (
+  kind.value === "llm"
+    ? compactSeatName(fullName.value, props.seatInfo?.model_name)
+    : fullName.value
+));
 const stack = computed(() => props.player?.chips ?? 0);
 const isFolded = computed(() => props.player?.status === "folded");
 const isAllIn = computed(() => props.player?.status === "all_in");
@@ -120,7 +125,7 @@ function dealOrder(index: number): number {
 
       <div class="identity">
         <div class="name-row">
-          <span class="name">{{ shortName(name, 22) }}</span>
+          <span class="name" :title="fullName">{{ shortName(name, 22) }}</span>
           <span class="kind-tag" :class="kind">{{ kind === "llm" ? "LLM" : kind === "bot" ? "BOT" : "HUMAN" }}</span>
         </div>
         <div class="meta-row">
@@ -136,17 +141,13 @@ function dealOrder(index: number): number {
               <span class="action-text">{{ actionText }}</span>
               <span v-if="action?.auto" class="auto-tag">AUTO</span>
             </span>
-            <span v-else key="role" class="role">{{ roleLabel }}</span>
           </Transition>
         </div>
       </div>
 
       <div class="badges">
         <span v-if="player?.is_button" class="badge dealer" title="庄家 / 小盲">D</span>
-        <span v-if="player?.is_small_blind" class="badge blind">SB</span>
-        <span v-if="player?.is_big_blind" class="badge blind">BB</span>
         <span v-if="isAllIn" class="badge allin">ALL-IN</span>
-        <span v-if="isFolded" class="badge folded">已弃牌</span>
       </div>
 
       <div v-if="active" class="turn-flag">
@@ -409,16 +410,6 @@ function dealOrder(index: number): number {
   color: var(--gold-bright);
 }
 
-.role {
-  flex: 1;
-  min-width: 0;
-  font-size: calc(9.5px * var(--type-scale));
-  color: var(--faint);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .pod-action {
   flex: 1;
   min-width: 0;
@@ -488,9 +479,7 @@ function dealOrder(index: number): number {
   padding: 0;
 }
 
-.badge.blind { color: var(--muted); border: 1px solid var(--line); }
 .badge.allin { color: var(--purple); border: 1px solid rgba(196, 140, 255, 0.4); background: var(--purple-dim); }
-.badge.folded { color: var(--red); border: 1px solid rgba(226, 112, 95, 0.3); background: var(--red-dim); }
 
 .turn-flag {
   position: absolute;
@@ -545,11 +534,11 @@ function dealOrder(index: number): number {
 .seat.bottom .winner-badge { bottom: auto; top: -30px; }
 
 @media (max-width: 720px) {
-  .seat { width: min(280px, 60%); }
+  .seat { width: min(300px, 66%); }
   .pod { padding: 7px 9px; gap: 8px; }
   .avatar { width: 32px; height: 32px; }
   .name { font-size: calc(11.5px * var(--type-scale)); }
-  .role { display: none; }
+  .winner-badge { display: none; }
   .seat.top { top: 1%; }
   .seat.bottom { bottom: 1%; }
 }

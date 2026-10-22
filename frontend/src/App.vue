@@ -53,14 +53,7 @@ function reload(): void {
     <main class="app-main">
       <div class="stage-column">
         <TableView />
-        <AnalysisPanel />
-        <footer class="stage-foot">
-          <span>HEADS-UP LAB · 本地实验环境</span>
-          <span class="foot-sep"></span>
-          <span>Agent 只读取自己的底牌</span>
-          <span class="foot-spacer"></span>
-          <span class="mono">API keys stay in .env</span>
-        </footer>
+        <AnalysisPanel v-if="game.snapshot?.has_match" />
       </div>
       <div class="console-column">
         <AgentConsole />
@@ -93,19 +86,6 @@ function reload(): void {
 }
 
 .global-banner .btn { margin-left: auto; }
-
-.stage-foot {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 4px 0;
-  font-size: calc(8.5px * var(--type-scale));
-  color: var(--faint);
-  letter-spacing: 0.05em;
-}
-
-.foot-sep { width: 1px; height: 8px; background: var(--line); }
-.foot-spacer { flex: 1; }
 
 .loading-cover {
   position: fixed;
@@ -163,6 +143,5 @@ function reload(): void {
 
 @media (max-width: 720px) {
   .global-banner { margin: 8px 12px 0; }
-  .stage-foot { display: none; }
 }
 </style>
