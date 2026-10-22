@@ -87,7 +87,7 @@ python scripts/eval_llm_vs_bot.py --hands 25 --workers 25   # LLM vs Project DQN
   2. `get_random_number()`：返回 `[0, 1)` 均匀随机数；只在分析后仍难以取舍时用于打破僵局，每次调用重新抽取，不能替代估算
   3. `apply_action(action, amount?)`：`amount` 是 raise-to 总额
 - 每回合必须调用 `apply_action` 恰好一次；非法则把错误 + 约束 + 合法动作作为 tool 消息回传，让模型重试。
-- 估算工具是可选辅助，默认不强制（`require_estimate_first: false`）。打开后只会在每条街第一次 `apply_action` 前软提醒一次，不计入三次失败；`get_random_number` 不能满足这个开关。默认关闭，避免模型机械地在每条街、甚至河牌公共牌发完后仍调用估算。
+- 估算工具是可选辅助，默认不强制（`require_estimate_first: false`）。系统提示词和工具描述只说明用途与可选性，不引导也不劝阻调用，由模型自行判断。打开开关后只会在每条街第一次 `apply_action` 前软提醒一次，不计入三次失败；`get_random_number` 不能满足这个开关。
 - 估算工具单回合默认最多 2 次、总采样 50000 次（`config/game.json`），避免阻塞游戏线程。
 - 上下文预算会计入 `reasoning_content`、工具名、参数和 tool id；每轮模型调用前都会重新检查并裁剪。
 - `LLMAgent.cancel()` 会设置取消标记，客户端在每次流式读取前检查，旧比赛不会继续烧模型调用。
