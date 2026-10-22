@@ -70,6 +70,10 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
             {{ turn.header.position === "button" ? "BTN / SB" : "BB" }}
           </span>
           <span class="faint mono hand-no">#{{ turn.header.handId }}</span>
+          <span v-if="turn.header.receivedTalk" class="talk-received">
+            <AppIcon name="message" :size="10" />
+            收到 {{ turn.header.receivedTalk }} 条喊话
+          </span>
           <span class="turn-status" :class="{ live, auto: turn.auto }">
             <span v-if="turn.status === 'running'" class="dot live"></span>
             <AppIcon v-else-if="turn.auto" name="alert" :size="11" />
@@ -288,6 +292,20 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
   font-size: calc(8px * var(--type-scale));
   color: var(--faint);
   letter-spacing: 0.08em;
+}
+
+.talk-received {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  border: 1px solid rgba(232, 195, 122, 0.24);
+  background: rgba(232, 195, 122, 0.06);
+  color: var(--gold);
+  font-size: calc(8px * var(--type-scale));
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .state-input {

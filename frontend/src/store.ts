@@ -20,10 +20,13 @@ import type {
   MessageView,
   ProviderModel,
   SeatSetup,
+  TableTalkEntry,
   Toast,
   ToolView,
   TurnView,
 } from "./types";
+
+export type ConsoleMode = "stream" | "log" | "talk";
 
 const STORAGE_KEY = "heads-up-lab.setup.v1";
 
@@ -42,6 +45,9 @@ interface StoreState {
   actionKeys: Set<string>;
   selectedSeat: number | null;
   pinned: boolean;
+  consoleMode: ConsoleMode;
+  tableTalk: TableTalkEntry[];
+  tableTalkSeen: Set<string>;
   selectedAnalysisSeat: number | null;
   analysis: Record<number, AnalysisResult | null>;
   analysisLoading: boolean;
@@ -72,6 +78,9 @@ const state = reactive<StoreState>({
   actionKeys: new Set<string>(),
   selectedSeat: null,
   pinned: false,
+  consoleMode: "stream",
+  tableTalk: [],
+  tableTalkSeen: new Set<string>(),
   selectedAnalysisSeat: null,
   analysis: {},
   analysisLoading: false,
@@ -191,6 +200,7 @@ export function buildDefaultSetup(): MatchSetupPayload {
     max_hands: 0,
     seed: null,
     god_view: true,
+    table_talk: true,
   };
   const model = pickDefaultModel();
   const saved = loadSavedSetup();
@@ -207,6 +217,7 @@ export function buildDefaultSetup(): MatchSetupPayload {
       seed: defaults.seed,
       god_view: defaults.god_view,
     },
+    table_talk: defaults.table_talk ?? true,
   };
 }
 
@@ -224,6 +235,7 @@ function loadSavedSetup(): MatchSetupPayload | null {
         if (!exists) return null;
       }
     }
+    if (typeof parsed.table_talk !== "boolean") parsed.table_talk = true;
     return parsed;
   } catch {
     return null;
@@ -334,6 +346,7 @@ function applySnapshot(snapshot: GameSnapshot): void {
   ingestSnapshot(snapshot, previousSnapshot, sameMatch);
   state.snapshot = snapshot;
   state.godView = Boolean(snapshot.match?.god_view ?? true);
+  mergeTableTalk(snapshot.table_talk || []);
 
   if (snapshot.match) {
     if (state.selectedSeat === null || !state.pinned) {
@@ -407,6 +420,36 @@ function addActions(snapshot: GameSnapshot): void {
   }
 }
 
+function mergeTableTalk(entries: TableTalkEntry[]): void {
+  let added = false;
+  for (const entry of entries) {
+    if (!entry?.id || state.tableTalkSeen.has(entry.id)) continue;
+    state.tableTalkSeen.add(entry.id);
+    state.tableTalk.push({ ...entry });
+    added = true;
+  }
+  if (!added) return;
+  state.tableTalk.sort((a, b) => Number(a.seq || 0) - Number(b.seq || 0));
+  if (state.tableTalk.length > 200) {
+    state.tableTalk.splice(0, state.tableTalk.length - 200);
+    state.tableTalkSeen = new Set(state.tableTalk.map((item) => item.id));
+  }
+}
+
+function tableTalkFromEvent(event: AgentEvent): TableTalkEntry {
+  return {
+    id: String(event.id || `talk-${event.event_id || Date.now()}`),
+    seq: Number(event.seq || 0),
+    hand_id: Number(event.hand_id || state.snapshot?.hand_id || 0),
+    street: String(event.street || state.snapshot?.street || ""),
+    seat: Number(event.seat ?? 0),
+    name: String(event.name || ""),
+    text: String(event.text || ""),
+    turn_id: event.turn_id ? String(event.turn_id) : undefined,
+    created_at: Number(event.created_at || 0) || undefined,
+  };
+}
+
 function resetMatchLocalState(): void {
   analysisSeq += 1;
   state.turns = {};
@@ -415,6 +458,9 @@ function resetMatchLocalState(): void {
   state.lastEventIds = {};
   state.actionFeed = [];
   state.actionKeys = new Set();
+  state.tableTalk = [];
+  state.tableTalkSeen = new Set();
+  state.consoleMode = "stream";
   state.analysis = {};
   state.analysisKey = "";
   state.analysisError = "";
@@ -543,6 +589,9 @@ function handleAgentEvent(event: AgentEvent, replay = false): void {
     case "error":
       onError(seat, event);
       break;
+    case "table_talk":
+      mergeTableTalk([tableTalkFromEvent(event)]);
+      break;
     case "bot_decision":
       onBotDecision(seat, event);
       break;
@@ -579,6 +628,7 @@ function onTurnStart(seat: number, event: AgentEvent): void {
       toCall: Number(event.to_call || 0),
       legalActions: Array.isArray(event.legal_actions) ? (event.legal_actions as string[]) : [],
       position: String(event.position || ""),
+      receivedTalk: Number(event.table_talk_received || 0),
     },
     messages: [],
     notes: [],
@@ -921,6 +971,15 @@ export function closeSetup(): void {
 export function selectSeat(seat: number, pin = false): void {
   state.selectedSeat = seat;
   if (pin) state.pinned = true;
+}
+
+export function setConsoleMode(mode: ConsoleMode): void {
+  state.consoleMode = mode;
+}
+
+export function openTableTalk(): void {
+  if (!state.snapshot?.match?.table_talk && !state.tableTalk.length) return;
+  state.consoleMode = "talk";
 }
 
 export function followLive(): void {

@@ -114,6 +114,9 @@ beforeEach(async () => {
   game.currentTurns = {};
   game.seenEvents = {};
   game.lastEventIds = {};
+  game.tableTalk = [];
+  game.tableTalkSeen = new Set();
+  game.consoleMode = "stream";
   game.analysis = {};
   game.analysisKey = "";
   game.analysisLoading = false;
@@ -185,6 +188,59 @@ describe("hand result", () => {
 
     expect(game.lastResult?.hand_id).toBe(1);
     expect(game.snapshot?.street).toBe("finished");
+  });
+});
+
+function talkEntry(overrides: Record<string, any> = {}) {
+  return {
+    id: "talk-1",
+    seq: 1,
+    hand_id: 1,
+    street: "flop",
+    seat: 0,
+    name: "Agent A",
+    text: "我这次不会再让你便宜看牌。",
+    turn_id: "turn-1",
+    created_at: 1,
+    ...overrides,
+  };
+}
+
+describe("table talk", () => {
+  it("merges live events and snapshot entries without duplicates", () => {
+    const entry = talkEntry();
+    socketMock.handlers.agent_event?.({
+      match_id: "m1",
+      event_id: 50,
+      type: "table_talk",
+      ...entry,
+    });
+    expect(game.tableTalk).toHaveLength(1);
+
+    socketMock.handlers.state?.(snapshot({ seq: 2, table_talk: [entry] }));
+    expect(game.tableTalk).toHaveLength(1);
+    expect(game.tableTalk[0].text).toContain("便宜看牌");
+  });
+
+  it("drops entries from a previous match", () => {
+    socketMock.handlers.agent_event?.({
+      match_id: "m1",
+      event_id: 51,
+      type: "table_talk",
+      ...talkEntry({ id: "old", seq: 2 }),
+    });
+    expect(game.tableTalk).toHaveLength(1);
+
+    socketMock.handlers.state?.(snapshot({
+      seq: 1,
+      table_talk: [],
+      match: {
+        ...snapshot().match,
+        id: "m2",
+        started_at: 2,
+      },
+    }));
+    expect(game.tableTalk).toHaveLength(0);
   });
 });
 

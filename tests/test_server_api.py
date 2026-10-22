@@ -56,6 +56,30 @@ def test_god_view_accepts_only_explicit_booleans() -> None:
         session.shutdown()
 
 
+def test_table_talk_requires_boolean_and_two_llm_seats() -> None:
+    client, session = make_client()
+    try:
+        payload = {
+            "seats": [
+                {"kind": "human", "name": "You"},
+                {"kind": "bot", "name": "Bot", "bot": {"agent_type": "random"}},
+            ],
+            "rules": {"starting_chips": 1000},
+            "table_talk": "yes",
+        }
+        response = client.post("/api/game/new", json=payload)
+        assert response.status_code == 400
+        assert "table_talk" in response.get_json()["error"]
+
+        payload["table_talk"] = True
+        response = client.post("/api/game/new", json=payload)
+        assert response.status_code == 200
+        assert session.table_talk_enabled is False
+        assert response.get_json()["state"]["match"]["table_talk"] is False
+    finally:
+        session.shutdown()
+
+
 def test_invalid_rules_return_400() -> None:
     client, session = make_client()
     try:

@@ -35,9 +35,11 @@ const storeMock = vi.hoisted(() => {
     game: {
       selectedSeat: 0,
       pinned: false,
+      consoleMode: "stream",
       matchId: "match-1",
       connected: true,
       actionFeed: [] as unknown[],
+      tableTalk: [] as unknown[],
       lastResult: null,
       snapshot: {
         has_match: true,
@@ -47,6 +49,7 @@ const storeMock = vi.hoisted(() => {
           { seat: 1, name: "Agent B", kind: "llm" },
         ],
         match: {
+          table_talk: true,
           seats: [
             { seat: 0, name: "Agent A", kind: "llm", model_name: "Model A", icon: "", agent: {} },
             { seat: 1, name: "Agent B", kind: "llm", model_name: "Model B", icon: "", agent: {} },
@@ -70,6 +73,7 @@ vi.mock("../store", async () => {
     humanSeat: ref(null),
     followLive: vi.fn(),
     selectSeat: vi.fn(),
+    setConsoleMode: (mode: string) => { storeMock.game.consoleMode = mode; },
     openSetup: vi.fn(),
   };
 });
@@ -79,6 +83,30 @@ import AgentConsole from "./AgentConsole.vue";
 describe("AgentConsole stream", () => {
   beforeEach(() => {
     storeMock.game.snapshot.hand_id = 0;
+    storeMock.game.consoleMode = "stream";
+    storeMock.game.tableTalk = [];
+  });
+
+  it("shows the table-talk tab and renders the conversation", async () => {
+    storeMock.game.consoleMode = "talk";
+    storeMock.game.tableTalk = [
+      {
+        id: "talk-1",
+        seq: 1,
+        hand_id: 1,
+        street: "flop",
+        seat: 0,
+        name: "Agent A",
+        text: "我这次不会再让你便宜看牌。",
+      },
+    ];
+    const wrapper = mount(AgentConsole);
+    await nextTick();
+
+    expect(wrapper.find(".talk-tab").exists()).toBe(true);
+    expect(wrapper.text()).toContain("不做真伪核查");
+    expect(wrapper.text()).toContain("我这次不会再让你便宜看牌。");
+    wrapper.unmount();
   });
 
   it("renders a visual divider at the start of every hand", async () => {

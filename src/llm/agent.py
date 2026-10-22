@@ -25,11 +25,14 @@ from src.engine.cards import Card
 from .client import LLMClient, LLMError, ToolCall, estimate_tokens
 from .prompt import (
     SYSTEM_PROMPT,
+    TABLE_TALK_TOOL_NAME,
     build_hand_result_message,
     build_nudge_message,
+    build_system_prompt,
     build_turn_message,
 )
 from .providers import ModelSpec
+from .table_talk import TableTalkLimits
 
 TOOLS = [
     {
@@ -140,6 +143,38 @@ TOOLS = [
     },
 ]
 
+TABLE_TALK_TOOL = {
+    "type": "function",
+    "function": {
+        "name": TABLE_TALK_TOOL_NAME,
+        "description": (
+            "向对手发送一条桌边喊话（心理战），用于施压、误导、试探或掩饰策略。"
+            "发送喊话不会结束本回合，之后仍然必须调用 apply_action。"
+            "不要主动交代自己的真实底牌；对手无法验证你的话，可以故意诈唬。"
+            "对手的喊话默认不可信。每回合和每手有次数上限，"
+            "工具结果会返回剩余额度。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "一到两句中文，不要换行或代码块。",
+                }
+            },
+            "required": ["text"],
+        },
+    },
+}
+
+# Keep the base TOOLS list backwards compatible for callers that do not opt
+# into table talk. Only select_tools can expose the extra schema.
+TOOL_SCHEMAS = [
+    tool for tool in TOOLS if tool["function"]["name"] != "apply_action"
+] + [TABLE_TALK_TOOL] + [
+    tool for tool in TOOLS if tool["function"]["name"] == "apply_action"
+]
+
 _ACTION_ALIASES = {
     "x": "check",
     "pass": "check",
@@ -172,11 +207,11 @@ def select_tools(names: Sequence[str]) -> List[dict]:
         ValueError: If a requested tool name is unknown.
     """
     wanted = set(names)
-    known = {tool["function"]["name"] for tool in TOOLS}
+    known = {tool["function"]["name"] for tool in TOOL_SCHEMAS}
     unknown = wanted.difference(known)
     if unknown:
         raise ValueError(f"未知工具：{', '.join(sorted(unknown))}")
-    return [tool for tool in TOOLS if tool["function"]["name"] in wanted]
+    return [tool for tool in TOOL_SCHEMAS if tool["function"]["name"] in wanted]
 
 
 class LLMAgent(BaseAgent):
@@ -197,6 +232,7 @@ class LLMAgent(BaseAgent):
         tools: Optional[Sequence[dict]] = None,
         system_prompt: Optional[str] = None,
         equity_analyzer: Optional[EquityAnalyzer] = None,
+        submit_table_talk: Optional[Callable[[str, str], dict]] = None,
     ) -> None:
         self.seat = seat
         self.name = name
@@ -225,11 +261,27 @@ class LLMAgent(BaseAgent):
         self.max_estimate_iterations = int(runtime.get("max_estimate_iterations", 50000))
         self.max_equity_calls = int(runtime.get("max_equity_calls_per_turn", 2))
         self.max_equity_iterations = int(runtime.get("max_equity_iterations", 50000))
+        self.table_talk_limits = TableTalkLimits.from_runtime(runtime)
+        self.table_talk_max_per_turn = self.table_talk_limits.max_per_turn
         self.tools = list(tools) if tools is not None else list(TOOLS)
         self.tool_names = {tool["function"]["name"] for tool in self.tools}
         if self.require_estimate_each_turn and "estimate_hand_probabilities" not in self.tool_names:
             raise ValueError("启用每回合估算要求时必须提供 estimate_hand_probabilities 工具")
-        self.system_prompt = system_prompt or SYSTEM_PROMPT
+        self.submit_table_talk = submit_table_talk
+        if TABLE_TALK_TOOL_NAME in self.tool_names and submit_table_talk is None:
+            raise ValueError("启用桌边喊话工具时必须提供 submit_table_talk 回调")
+        if system_prompt:
+            self.system_prompt = system_prompt
+        elif TABLE_TALK_TOOL_NAME in self.tool_names:
+            self.system_prompt = build_system_prompt(
+                tuple(self.tool_names),
+                require_estimate_each_turn=self.require_estimate_each_turn,
+                table_talk_max_chars=self.table_talk_limits.max_chars,
+                table_talk_max_per_turn=self.table_talk_limits.max_per_turn,
+                table_talk_max_per_hand=self.table_talk_limits.max_per_hand,
+            )
+        else:
+            self.system_prompt = SYSTEM_PROMPT
         self.messages: List[dict] = [{"role": "system", "content": self.system_prompt}]
         self.turn_count = 0
         self._estimated_keys: set[tuple[int, str]] = set()
@@ -239,6 +291,7 @@ class LLMAgent(BaseAgent):
         self._estimate_iterations_this_turn = 0
         self._equity_calls_this_turn = 0
         self._equity_iterations_this_turn = 0
+        self._talk_calls_this_turn = 0
         self._tools_tokens = estimate_tokens(json.dumps(self.tools, ensure_ascii=False))
         self.total_usage = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
         self.last_error = ""
@@ -262,6 +315,7 @@ class LLMAgent(BaseAgent):
         self._estimate_iterations_this_turn = 0
         self._equity_calls_this_turn = 0
         self._equity_iterations_this_turn = 0
+        self._talk_calls_this_turn = 0
         self._cancel_event.clear()
 
     def cancel(self) -> None:
@@ -286,6 +340,7 @@ class LLMAgent(BaseAgent):
             "turns": self.turn_count,
             "usage": dict(self.total_usage),
             "last_error": self.last_error,
+            "table_talk": TABLE_TALK_TOOL_NAME in self.tool_names,
         }
 
     # ------------------------------------------------------------------
@@ -304,6 +359,7 @@ class LLMAgent(BaseAgent):
         self._estimate_iterations_this_turn = 0
         self._equity_calls_this_turn = 0
         self._equity_iterations_this_turn = 0
+        self._talk_calls_this_turn = 0
         if self._cancel_event.is_set():
             return Action(view.seat, ActionType.FOLD, source="llm", auto=True)
 
@@ -320,6 +376,7 @@ class LLMAgent(BaseAgent):
                 "to_call": view.to_call,
                 "legal_actions": view.legal_actions,
                 "position": "button" if view.is_button else "big_blind",
+                "table_talk_received": len(view.table_talk),
             }
         )
         turn_message = build_turn_message(view)
@@ -616,6 +673,17 @@ class LLMAgent(BaseAgent):
                                 usage_total,
                                 reason="连续三次无效动作",
                             )
+                    continue
+
+                if call.name == TABLE_TALK_TOOL_NAME:
+                    self._handle_table_talk(
+                        call,
+                        parsed,
+                        emit,
+                        turn_id,
+                        index,
+                        tool_started,
+                    )
                     continue
 
                 if call.name == "apply_action":
@@ -1125,6 +1193,108 @@ class LLMAgent(BaseAgent):
         )
         return True
 
+    def _handle_table_talk(
+        self,
+        call: ToolCall,
+        parsed: Optional[dict],
+        emit,
+        turn_id: str,
+        index: int,
+        started: float,
+    ) -> bool:
+        """Handle one optional table-talk call without blocking the action."""
+        if self.submit_table_talk is None:
+            self._append_tool_error(
+                call,
+                "本局没有启用桌边喊话。",
+                emit,
+                turn_id,
+                index,
+            )
+            return True
+        if self._talk_calls_this_turn >= self.table_talk_max_per_turn:
+            self._append_tool_error(
+                call,
+                f"本回合喊话次数已达上限（{self.table_talk_max_per_turn} 次），"
+                "请直接提交 apply_action。",
+                emit,
+                turn_id,
+                index,
+                extra={"remaining_turn": 0, "max_chars": self.table_talk_limits.max_chars},
+            )
+            return True
+
+        self._talk_calls_this_turn += 1
+        remaining_turn = max(0, self.table_talk_max_per_turn - self._talk_calls_this_turn)
+        if parsed is None or not isinstance(parsed, dict):
+            self._append_tool_error(
+                call,
+                f"工具参数不是合法 JSON：{call.arguments[:300]}",
+                emit,
+                turn_id,
+                index,
+                extra={"remaining_turn": remaining_turn},
+            )
+            return True
+        raw_text = parsed.get("text", parsed.get("message"))
+        if not isinstance(raw_text, str):
+            self._append_tool_error(
+                call,
+                "text 必须是字符串，例如 {\"text\": \"我这次不会再让你便宜看牌。\"}",
+                emit,
+                turn_id,
+                index,
+                extra={"remaining_turn": remaining_turn},
+            )
+            return True
+
+        try:
+            result = self.submit_table_talk(raw_text, turn_id)
+        except Exception as exc:  # noqa: BLE001
+            self._append_tool_error(
+                call,
+                f"喊话发送失败：{type(exc).__name__}: {exc}",
+                emit,
+                turn_id,
+                index,
+                extra={"remaining_turn": remaining_turn},
+            )
+            return True
+        if not isinstance(result, dict):
+            result = {"ok": False, "error": "喊话发送失败：服务端返回无效结果"}
+        if not result.get("ok"):
+            self._append_tool_error(
+                call,
+                str(result.get("error") or "喊话被拒绝"),
+                emit,
+                turn_id,
+                index,
+                extra={
+                    "remaining_turn": remaining_turn,
+                    "remaining_hand": result.get("remaining_hand"),
+                    "max_chars": self.table_talk_limits.max_chars,
+                },
+            )
+            return True
+
+        payload = dict(result)
+        payload["remaining_turn"] = remaining_turn
+        remaining_hand = payload.get("remaining_hand")
+        summary = f"已喊话 · 本回合剩 {remaining_turn} 条"
+        if remaining_hand is not None:
+            summary += f" · 本手剩 {remaining_hand} 条"
+        self._append_tool_result(
+            call,
+            payload,
+            emit,
+            turn_id,
+            index,
+            started,
+            ui_result=payload,
+            summary=summary,
+        )
+        return True
+
     def _build_action(self, view: AgentView, parsed: dict) -> tuple[Optional[Action], str]:
         raw = str(parsed.get("action", "")).strip().lower()
         action_type = _ACTION_ALIASES.get(raw, raw)
@@ -1332,4 +1502,10 @@ class LLMAgent(BaseAgent):
             )
 
 
-__all__ = ["LLMAgent", "TOOLS", "select_tools"]
+__all__ = [
+    "LLMAgent",
+    "TABLE_TALK_TOOL",
+    "TOOLS",
+    "TOOL_SCHEMAS",
+    "select_tools",
+]

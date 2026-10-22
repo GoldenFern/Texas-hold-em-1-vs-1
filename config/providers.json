@@ -267,6 +267,82 @@
           }
         }
       ]
+    },
+    {
+      "id": "mimo",
+      "name": "MiMo",
+      "icon": "mimo.svg",
+      "accent": "#FF6900",
+      "base_url": "https://api.xiaomimimo.com/v1",
+      "api_key_env": "MIMO_API_KEY",
+      "docs_url": "https://mimo.mi.com/docs/zh-CN/api/chat/openai-api",
+      "request": {
+        "thinking_style": "thinking",
+        "reasoning_effort_style": "none",
+        "reasoning_echo": true,
+        "stream_usage": true
+      },
+      "models": [
+        {
+          "id": "mimo-v2.6-flash",
+          "name": "MiMo V2.6 Flash",
+          "tagline": "1M 上下文 · 全模态 · 深度思考",
+          "context_window": 1000000,
+          "max_output": 131072,
+          "defaults": {
+            "temperature": 1.0,
+            "top_p": 0.95,
+            "max_tokens": 32768,
+            "thinking": true,
+            "reasoning_effort": ""
+          },
+          "controls": {
+            "temperature": {"show": true, "min": 0, "max": 1.5, "step": 0.1, "hint": "思考模式下固定 1.0，设置会被忽略"},
+            "top_p": {"show": true, "min": 0, "max": 1, "step": 0.05, "hint": "思考模式下固定 0.95，设置会被忽略"},
+            "max_tokens": {"show": true, "min": 1024, "max": 131072, "step": 1024, "hint": "输出上限 128K"},
+            "thinking": {"mode": "toggle", "label": "深度思考", "hint": "thinking.type 开关；关闭可降低延迟"},
+            "reasoning_effort": {"show": false, "options": []}
+          }
+        }
+      ]
+    },
+    {
+      "id": "4router",
+      "name": "4Router",
+      "icon": "4router.svg",
+      "accent": "#E0A458",
+      "base_url": "https://4router.net/v1",
+      "api_key_env": "FOURROUTER_API_KEY",
+      "docs_url": "https://4router.net",
+      "request": {
+        "thinking_style": "none",
+        "reasoning_effort_style": "openai",
+        "reasoning_echo": false,
+        "stream_usage": true
+      },
+      "models": [
+        {
+          "id": "gpt-6-luna",
+          "name": "GPT-6 Luna",
+          "tagline": "1M 上下文 · 推理模型 · 4Router 0.45 分组",
+          "context_window": 1050000,
+          "max_output": 128000,
+          "defaults": {
+            "temperature": 1.0,
+            "top_p": 1.0,
+            "max_tokens": 32768,
+            "thinking": true,
+            "reasoning_effort": "high"
+          },
+          "controls": {
+            "temperature": {"show": true, "min": 0, "max": 2, "step": 0.1, "hint": "推理模型通常忽略采样参数，建议保持 1.0"},
+            "top_p": {"show": true, "min": 0, "max": 1, "step": 0.05, "hint": "建议保持 1.0"},
+            "max_tokens": {"show": true, "min": 1024, "max": 128000, "step": 1024, "hint": "输出上限 128K"},
+            "thinking": {"mode": "always", "label": "推理模式", "hint": "GPT-6 Luna 始终推理；4Router 暂不回传思考正文"},
+            "reasoning_effort": {"show": true, "options": ["none", "low", "medium", "high", "xhigh", "max"], "hint": "推理深度，默认 high"}
+          }
+        }
+      ]
     }
   ]
 }

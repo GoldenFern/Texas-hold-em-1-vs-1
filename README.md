@@ -3,10 +3,11 @@
 一个专门为 **单挑（Heads-Up）无限注德州扑克** 做的实验台：人类、LLM、RLCard 三者任选其二上桌。它把重点放在把 LLM 的**思考、工具调用、参数与结果**完整地摊开在牌桌旁边。
 
 - 游戏引擎：严格双人规则，Treys 牌力评估
-- Agent：每次行动发一条新的牌局消息，保留上下文；五个工具：牌型概率 + 胜率 + 随机数 + 跟注 EV + 执行动作
-- 可视化：实时思考流、工具卡片、Token/延迟、最终牌型分布、胜率/跟注 EV
+- Agent：每次行动发一条新的牌局消息，保留上下文；五个基础工具：牌型概率 + 胜率 + 随机数 + 跟注 EV + 执行动作
+- 桌边喊话：LLM vs LLM 时双方可在自己的回合向对手施压或诈唬，对手下一次决策时看到不可信标记；人类对 LLM 暂不开放
+- 可视化：实时思考流、工具卡片、Token/延迟、最终牌型分布、胜率/跟注 EV、双方对话
 - 上帝视角：双方底牌、烧牌、完整牌堆
-- LLM：DeepSeek / 火山引擎 / MiniMax / Qwen / 智谱 GLM / Kimi / LongCat
+- LLM：DeepSeek / 火山引擎 / MiniMax / Qwen / 智谱 GLM / Kimi / LongCat / MiMo / 4Router
 - Bot：RLCard（RandomAgent 开箱可用，支持加载 DQN/NFSP/DMC checkpoint）
 
 ---
@@ -38,6 +39,8 @@ QWEN_API_KEY=
 GLM_API_KEY=
 KIMI_API_KEY=
 LONGCAT_API_KEY=
+MIMO_API_KEY=
+FOURROUTER_API_KEY=
 ```
 
 `.env` 已在 `.gitignore` 中，不会入库。页面上只显示“Key 已配置/缺失”，永远不会把 Key 发到浏览器。
@@ -102,11 +105,12 @@ cd frontend && npm run dev     # 终端 2，:5173，代理到 :5050
 4. `estimate_equity` 返回当前摊牌 equity（`胜率 + 平局率/2`），默认假设对手随机手牌。河牌和转牌精确枚举，翻牌和翻前各 20000 次蒙特卡洛，并走 LRU 缓存。
 5. `call_ev` 用当前底池、跟注额和筹码计算静态跟注 EV。`equity` 参数可以省略，省略时自动估算；短码全下会先扣掉对手匹配不上的退款。
 6. 如果分析后仍难以在几个接近的方案中取舍，Agent 可以调用 `get_random_number` 抽一个 `[0, 1)` 随机数。它只是打破僵局的备选方案，不能替代分析。
-7. `apply_action` 合法就进入下一回合；不合法会把错误、最新约束和合法动作回传给模型，让它重试。
-8. 连续三次无效动作：自动 **call**；无法 call 则 **fold**。网络/超时等非动作失败则优先 check/call，避免无意义弃牌。
-9. 厂商要求回传 `reasoning_content` 的（DeepSeek / Qwen / MiniMax / Kimi / GLM 等）会原样回传；不支持的可选参数在 400 时会自动降级重试。
+7. LLM vs LLM 且开局启用「桌边喊话」时，Agent 可以调用 `send_table_message` 向对手发一句话。它不会结束回合，对手在下一次决策时看到，内容默认不可信。系统只限制长度、格式和频率，不核查真伪。
+8. `apply_action` 合法就进入下一回合；不合法会把错误、最新约束和合法动作回传给模型，让它重试。
+9. 连续三次无效动作：自动 **call**；无法 call 则 **fold**。网络/超时等非动作失败则优先 check/call，避免无意义弃牌。
+10. 厂商要求回传 `reasoning_content` 的（DeepSeek / Qwen / MiniMax / Kimi / GLM 等）会原样回传；不支持的可选参数在 400 时会自动降级重试。
 
-五个工具的协议见 [`docs/protocol.md`](docs/protocol.md)。
+五个基础工具加可选桌边喊话的协议见 [`docs/protocol.md`](docs/protocol.md)。
 
 ### 离线 LLM 对 LLM 评测
 
@@ -176,6 +180,8 @@ python scripts/eval_project_bots.py --hands 2000
 | 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-5.3-flash` | `GLM_API_KEY` | 思考常开，`reasoning_effort` low/high/max，流式工具调用 |
 | Kimi | `https://api.moonshot.cn/v1` | `kimi-k2.7-code` | `KIMI_API_KEY` | 强制思考，262K 上下文，工具调用 |
 | LongCat | `https://api.longcat.chat/openai/v1` | `LongCat-2.5-Preview` | `LONGCAT_API_KEY` | `thinking.type` 开关，1M 上下文，原生工具 |
+| MiMo | `https://api.xiaomimimo.com/v1` | `mimo-v2.6-flash` | `MIMO_API_KEY` | `thinking.type` 开关，1M 上下文，回传 reasoning_content |
+| 4Router | `https://4router.net/v1` | `gpt-6-luna` | `FOURROUTER_API_KEY` | 中转站 0.45 分组；始终推理，用 `reasoning_effort` 调档；不回传思考正文 |
 
 参数不是“越保守越好”：默认 `max_tokens` 为 **32,768**，各家允许的上限不同，UI 里会显示范围与建议值。默认温度按厂商推荐设置（如 DeepSeek/GLM 1.0、Qwen 0.7、MiniMax 忽略）。
 
@@ -189,7 +195,7 @@ python scripts/eval_project_bots.py --hands 2000
 main.py                       # 启动入口
 config/
   game.json                   # 规则默认值 / 限制 / LLM 运行时
-  providers.json              # 7 家 Provider、模型、参数控件
+  providers.json              # 9 家 Provider、模型、参数控件
 src/
   engine/                     # Card / Deck / Treys 评估 / 双人状态机
   analysis/                   # 牌型分布（精确枚举 + 蒙特卡洛 + 缓存）

@@ -39,6 +39,7 @@ const setup = reactive<SetupDraft>({
     { kind: "human", name: "你" },
   ],
   rules: { ...FALLBACK_RULES },
+  table_talk: true,
 });
 
 const boot = computed(() => game.boot);
@@ -46,7 +47,23 @@ const providers = computed<ProviderInfo[]>(() => boot.value?.providers || []);
 const rlcard = computed(() => boot.value?.rlcard || null);
 const limits = computed(() => boot.value?.game?.limits || {});
 const busy = computed(() => game.busy);
+const canTableTalk = computed(() => setup.seats.every((item) => item.kind === "llm"));
+const tableTalkTouched = ref(false);
 const modalRef = ref<HTMLElement | null>(null);
+
+watch(canTableTalk, (enabled) => {
+  if (!enabled) {
+    setup.table_talk = false;
+    return;
+  }
+  if (!tableTalkTouched.value) setup.table_talk = true;
+});
+
+function toggleTableTalk(): void {
+  if (!canTableTalk.value) return;
+  tableTalkTouched.value = true;
+  setup.table_talk = !setup.table_talk;
+}
 
 function deepCopy<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -64,6 +81,9 @@ function resetSetup(): void {
   const copy = deepCopy(source);
   setup.seats = copy.seats;
   setup.rules = { ...copy.rules };
+  const savedTalk = Boolean(copy.table_talk ?? true);
+  setup.table_talk = savedTalk && setup.seats.every((item) => item.kind === "llm");
+  tableTalkTouched.value = !savedTalk;
   if (!setup.rules.rebuy_amount) setup.rules.rebuy_amount = setup.rules.starting_chips;
   for (const config of setup.seats) {
     if (config.kind !== "bot") continue;
@@ -330,6 +350,8 @@ function applyPreset(kind: "human_deepseek" | "deepseek_glm" | "human_bot"): voi
     setup.seats = [defaultSeat("llm", deepseek), defaultSeat("human")];
   } else if (kind === "deepseek_glm") {
     setup.seats = [defaultSeat("llm", deepseek), defaultSeat("llm", glm)];
+    tableTalkTouched.value = false;
+    setup.table_talk = true;
   } else {
     setup.seats = [defaultSeat("bot"), defaultSeat("human")];
   }
@@ -374,12 +396,15 @@ function modelQuirk(model: ProviderModel): string {
   if (model.provider_id === "qwen") return "Qwen3.8 思考模式默认开启，历史 reasoning_content 会原样回传。";
   if (model.provider_id === "deepseek") return "DeepSeek V4 思考模式通过 thinking + reasoning_effort 控制。";
   if (model.provider_id === "longcat") return "LongCat 开启思考时 temperature 固定为 1.0。";
+  if (model.provider_id === "mimo") return "MiMo V2.6 Flash 可开关思考，思考模式下采样参数固定为 1.0 / 0.95。";
+  if (model.provider_id === "4router") return "GPT-6 Luna 始终推理，用 reasoning_effort 调深度；中转站不回传思考正文。";
   return "OpenAI 兼容接口，已按厂商文档适配工具调用参数。";
 }
 
 async function submit(): Promise<void> {
   if (!canStart.value) return;
   const payload = deepCopy(setup);
+  payload.table_talk = Boolean(payload.table_talk && canTableTalk.value);
   await startMatch(payload);
 }
 
@@ -743,6 +768,22 @@ function close(): void {
               </div>
               <button class="toggle" :class="{ on: setup.rules.god_view }" @click="setRule('god_view', !setup.rules.god_view)"></button>
             </div>
+            <div class="rule-toggle" :class="{ disabled: !canTableTalk }">
+              <div class="rule-text">
+                <strong>桌边喊话</strong>
+                <span>
+                  {{ canTableTalk
+                    ? "双方 LLM 可在自己的回合向对手发一句话，用于施压、误导或掩饰策略。内容可能是谎言，系统不做真伪核查。"
+                    : "仅双 LLM 对局可用。" }}
+                </span>
+              </div>
+              <button
+                class="toggle"
+                :class="{ on: setup.table_talk }"
+                :disabled="!canTableTalk"
+                @click="toggleTableTalk"
+              ></button>
+            </div>
           </div>
 
           <div class="blind-presets">
@@ -762,7 +803,7 @@ function close(): void {
           </span>
           <span v-else class="validation ok">
             <AppIcon name="shield" :size="12" />
-            配置有效 · 每个 Agent 只读取自己的底牌
+            配置有效 · 每个 Agent 只读取自己的底牌，喊话不改变信息边界
           </span>
           <span class="footer-hint">
             <template v-if="game.snapshot?.has_match">开始后将终止当前对局 · </template>
@@ -1147,6 +1188,8 @@ function close(): void {
 }
 
 .rule-toggle { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 220px; }
+.rule-toggle.disabled { opacity: 0.55; }
+.rule-toggle .toggle:disabled { cursor: not-allowed; }
 .rule-text { display: flex; flex-direction: column; gap: 1px; }
 .rule-text strong { font-size: calc(10.5px * var(--type-scale)); font-weight: 700; }
 .rule-text span { font-size: calc(8.5px * var(--type-scale)); color: var(--faint); line-height: 1.45; }

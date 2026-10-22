@@ -92,11 +92,12 @@ Key 值永远不会返回；只有 `key_present`。
     "max_hands": 0,
     "seed": null,
     "god_view": true
-  }
+  },
+  "table_talk": true
 }
 ```
 
-`kind` 只能是 `human` / `llm` / `bot`；两个 `human` 返回 400。
+`kind` 只能是 `human` / `llm` / `bot`；两个 `human` 返回 400。`table_talk` 必须是布尔值；只有两个座位都是 `llm` 时才真正生效，其他组合会静默关闭并在 `match.table_talk` 返回 `false`。
 Bot 座位：
 
 ```json
@@ -224,12 +225,26 @@ Bot 座位：
   "actions": [{"hand_id": 3, "street": "flop", "seat": 0, "type": "raise", "label": "加注", "amount": 40, "added": 40, "pot_after": 120, "chips_after": 920, "source": "llm", "auto": false}],
   "result": null,
   "match_over": false,
+  "table_talk": [
+    {
+      "id": "7f3a...",
+      "seq": 1,
+      "hand_id": 3,
+      "street": "flop",
+      "seat": 0,
+      "name": "DeepSeek",
+      "text": "我这次不会再让你便宜看牌。",
+      "turn_id": "1d3e...",
+      "created_at": 1760000000.0
+    }
+  ],
   "match": {
     "id": "ab12...",
     "hands_played": 2,
     "max_hands": 0,
     "match_over": false,
     "god_view": true,
+    "table_talk": true,
     "can_next_hand": false,
     "rules": {"starting_chips": 1000, "small_blind": 5, "big_blind": 10, "auto_rebuy": false, "rebuy_amount": 1000, "max_hands": 0, "seed": 123},
     "seats": [{"seat": 0, "name": "DeepSeek", "kind": "llm", "provider_id": "deepseek", "model_id": "deepseek-flash", "model_name": "DeepSeek V4.1 Flash", "icon": "deepseek.svg", "agent": {}}],
@@ -241,6 +256,7 @@ Bot 座位：
 
 - `hole_hidden=true` 时 `hole_cards` 为空数组。
 - `deck_remaining` / `burned` 只在 `god_view=true` 时返回。
+- `table_talk` 是最近 40 条喊话，可能来自之前几手；前端按 `id` 去重、按 `seq` 排序。
 - `seq` 是状态版本；前端丢弃同 match 下更小的 seq。
 
 ---
@@ -263,9 +279,12 @@ Socket.IO 事件 `agent_event` 的 payload。所有事件带：
   "street": "flop",
   "pot": 160, "my_chips": 920, "opponent_chips": 920,
   "to_call": 40, "legal_actions": ["fold", "call", "raise", "all_in"],
-  "position": "button"
+  "position": "button",
+  "table_talk_received": 1
 }
 ```
+
+`table_talk_received` 是本次决策前投递给该座位的未读喊话条数。
 
 ### `turn_state`
 
@@ -392,6 +411,39 @@ Socket.IO 事件 `agent_event` 的 payload。所有事件带：
 ```json
 {"ok": false, "error": "最小加注到 80", "legal_actions": ["fold", "call", "raise", "all_in"], "to_call": 40, "min_raise_to": 80, "max_raise_to": 920, "pot": 160}
 ```
+
+喊话工具的 `result`：
+
+```json
+{
+  "ok": true,
+  "entry": {
+    "id": "7f3a...", "seq": 1, "hand_id": 3, "street": "flop",
+    "seat": 0, "name": "DeepSeek", "text": "我这次不会再让你便宜看牌。",
+    "turn_id": "1d3e...", "created_at": 1760000000.0
+  },
+  "remaining_hand": 5,
+  "remaining_turn": 1
+}
+```
+
+被拒绝时返回 `{"ok": false, "error": "...", "remaining_hand": 5, "remaining_turn": 1}`。喊话失败不计入连续三次非法动作。
+
+### `table_talk`
+
+发送成功后立即广播：
+
+```json
+{
+  "type": "table_talk",
+  "match_id": "ab12...", "seat": 0, "event_id": 124,
+  "id": "7f3a...", "seq": 1, "hand_id": 3, "street": "flop",
+  "name": "DeepSeek", "text": "我这次不会再让你便宜看牌。",
+  "turn_id": "1d3e...", "created_at": 1760000000.0
+}
+```
+
+对手不会立刻收到；它会在下一次 `turn_state` 的`【牌局更新】`里看到未读喊话。服务端只做文本规范化、长度和频率校验，不扫描真实底牌或牌力，也不核查真伪；前端必须按普通文本渲染，不要使用 `v-html`。
 
 ### `message_end`
 

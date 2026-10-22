@@ -17,9 +17,11 @@ from src.analysis.equity import EquityAnalyzer
 from src.analysis.hand_distribution import HandDistributionAnalyzer
 from src.engine.actions import Action, ActionType
 from src.engine.heads_up import HeadsUpGame, Street
-from src.llm.agent import LLMAgent
+from src.llm.agent import LLMAgent, select_tools
 from src.llm.client import LLMClient
+from src.llm.prompt import AGENT_TOOL_NAMES, ALL_TOOL_NAMES, build_system_prompt
 from src.llm.providers import ProviderRegistry
+from src.llm.table_talk import TableTalkLimits, normalize_table_talk
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GAME_CONFIG_PATH = PROJECT_ROOT / "config" / "game.json"
@@ -71,6 +73,8 @@ class GameSession:
         self.max_hands = 0
         self.hand_history: List[dict] = []
         self.transcripts: Dict[int, List[dict]] = {0: [], 1: []}
+        self.table_talk_enabled = False
+        self.table_talk: List[dict] = []
         self.event_seq = 0
         self.state_seq = 0
         self.match_error = ""
@@ -83,6 +87,12 @@ class GameSession:
         self._thread: Optional[threading.Thread] = None
         self._last_result_hand_id = -1
         self._game_config = self._load_game_config()
+        self._table_talk_limits = TableTalkLimits.from_runtime(
+            self._game_config.get("llm_runtime", {})
+        )
+        self._table_talk_seq = 0
+        self._table_talk_cursors: Dict[int, int] = {0: 0, 1: 0}
+        self._table_talk_hand_counts: Dict[tuple[int, int], int] = {}
 
     # ------------------------------------------------------------------
     # Config
@@ -236,6 +246,13 @@ class GameSession:
             seats[1].name = seats[1].name + " B"
         return seats
 
+    @staticmethod
+    def _resolve_table_talk(seats: List[SeatConfig], requested: object) -> bool:
+        """Return the effective table-talk setting for a new match."""
+        if not isinstance(requested, bool):
+            raise ValueError("table_talk 必须是布尔值")
+        return requested and all(seat.kind == "llm" for seat in seats)
+
     # ------------------------------------------------------------------
     # Match lifecycle
     # ------------------------------------------------------------------
@@ -247,6 +264,11 @@ class GameSession:
             rules = self._normalize_rules(
                 payload.get("rules") if isinstance(payload.get("rules"), dict) else {}
             )
+            table_talk_requested = payload.get(
+                "table_talk",
+                self._game_config.get("defaults", {}).get("table_talk", True),
+            )
+            table_talk_enabled = self._resolve_table_talk(seats, table_talk_requested)
 
             # Validate LLM keys before building anything.
             for seat in seats:
@@ -277,6 +299,18 @@ class GameSession:
                 base_seed = int(time.time())
             generation_holder = {"value": 0}
             new_agents: Dict[int, object] = {}
+            llm_runtime = self._game_config.get("llm_runtime", {})
+            llm_tool_names = AGENT_TOOL_NAMES if table_talk_enabled else ALL_TOOL_NAMES
+            llm_tools = select_tools(llm_tool_names)
+            llm_system_prompt = build_system_prompt(
+                llm_tool_names,
+                require_estimate_each_turn=bool(
+                    llm_runtime.get("require_estimate_each_turn", False)
+                ),
+                table_talk_max_chars=self._table_talk_limits.max_chars,
+                table_talk_max_per_turn=self._table_talk_limits.max_per_turn,
+                table_talk_max_per_hand=self._table_talk_limits.max_per_hand,
+            )
             for seat_index, seat in enumerate(seats):
                 if seat.kind == "llm":
                     spec = self.registry.resolve(seat.provider_id, seat.model_id)
@@ -289,7 +323,14 @@ class GameSession:
                         analyzer=self.analyzer,
                         equity_analyzer=self.equity_analyzer,
                         validate_action=self._validator_for(generation_holder),
-                        runtime=self._game_config.get("llm_runtime", {}),
+                        runtime=llm_runtime,
+                        tools=llm_tools,
+                        system_prompt=llm_system_prompt,
+                        submit_table_talk=(
+                            self._table_talk_submitter(generation_holder, seat_index)
+                            if table_talk_enabled
+                            else None
+                        ),
                     )
                 elif seat.kind == "bot":
                     if str(seat.bot_agent_type).startswith("project_"):
@@ -329,6 +370,11 @@ class GameSession:
                 self.max_hands = rules["max_hands"]
                 self.hand_history = []
                 self.transcripts = {0: [], 1: []}
+                self.table_talk_enabled = table_talk_enabled
+                self.table_talk = []
+                self._table_talk_seq = 0
+                self._table_talk_cursors = {0: 0, 1: 0}
+                self._table_talk_hand_counts = {}
                 self.event_seq = 0
                 self.state_seq = 0
                 self.match_error = ""
@@ -358,6 +404,101 @@ class GameSession:
             return self._validate_for_generation(action, int(generation_holder["value"]))
 
         return validate
+
+    def _table_talk_submitter(self, generation_holder: dict, seat: int):
+        def submit(text: str, turn_id: str) -> dict:
+            return self._record_table_talk(
+                int(generation_holder["value"]),
+                seat,
+                text,
+                turn_id,
+            )
+
+        return submit
+
+    def _record_table_talk(
+        self,
+        generation: int,
+        seat: int,
+        text: str,
+        turn_id: str = "",
+    ) -> dict:
+        """Validate and store one table-talk message for the acting seat."""
+        with self.lock:
+            if not self._alive(generation) or not self.game:
+                return {"ok": False, "error": "牌局已结束或被重置"}
+            if not self.table_talk_enabled:
+                return {"ok": False, "error": "本局没有启用桌边喊话"}
+            if self.game.street == Street.FINISHED:
+                return {"ok": False, "error": "当前手牌已经结束，不能喊话"}
+            if self.game.actor != seat:
+                return {"ok": False, "error": "还没有轮到你行动，不能喊话"}
+
+            hand_id = self.game.hand_id
+            key = (seat, hand_id)
+            used = self._table_talk_hand_counts.get(key, 0)
+            remaining_before = max(0, self._table_talk_limits.max_per_hand - used)
+            if remaining_before <= 0:
+                return {
+                    "ok": False,
+                    "error": (
+                        "本手喊话次数已达上限"
+                        f"（{self._table_talk_limits.max_per_hand} 条），不要再喊话。"
+                    ),
+                    "remaining_hand": 0,
+                }
+
+            try:
+                normalized = normalize_table_talk(
+                    text,
+                    self._table_talk_limits.max_chars,
+                )
+            except ValueError as exc:
+                return {
+                    "ok": False,
+                    "error": str(exc),
+                    "remaining_hand": remaining_before,
+                }
+
+            player = self.game.players[seat]
+            self._table_talk_seq += 1
+            entry = {
+                "id": uuid.uuid4().hex[:10],
+                "seq": self._table_talk_seq,
+                "hand_id": hand_id,
+                "street": self.game.street.value,
+                "seat": seat,
+                "name": player.name,
+                "text": normalized,
+                "turn_id": str(turn_id or ""),
+                "created_at": time.time(),
+            }
+            self.table_talk.append(entry)
+            if len(self.table_talk) > 500:
+                del self.table_talk[:100]
+            self._table_talk_hand_counts[key] = used + 1
+            self._emit({"type": "table_talk", **entry})
+            return {
+                "ok": True,
+                "entry": entry,
+                "remaining_hand": remaining_before - 1,
+            }
+
+    def _pending_table_talk(self, seat: int) -> List[dict]:
+        """Return unread messages for one seat and advance its cursor."""
+        if not self.table_talk_enabled:
+            return []
+        cursor = self._table_talk_cursors.get(seat, 0)
+        pending = [
+            item
+            for item in self.table_talk
+            if int(item.get("seq", 0)) > cursor and int(item.get("seat", -1)) != seat
+        ]
+        if not pending:
+            return []
+        batch = pending[: self._table_talk_limits.history_limit]
+        self._table_talk_cursors[seat] = int(batch[-1]["seq"])
+        return [dict(item) for item in batch]
 
     def _stop_current_thread(self) -> None:
         with self.lock:
@@ -591,12 +732,17 @@ class GameSession:
         human_seats = self.game.human_seats
         snapshot = self.game.snapshot(reveal_all=reveal_all, reveal_seats=human_seats)
         snapshot["has_match"] = True
+        snapshot["table_talk"] = [
+            dict(item)
+            for item in self.table_talk[-self._table_talk_limits.snapshot_limit :]
+        ]
         snapshot["match"] = {
             "id": self.match_id,
             "hands_played": self.game.hands_played,
             "max_hands": self.game.max_hands,
             "match_over": self.game.match_over,
             "god_view": self.god_view,
+            "table_talk": self.table_talk_enabled,
             "can_next_hand": self.game.street == Street.FINISHED and not self.game.match_over,
             "started_at": self.started_at,
             "error": self.match_error,
@@ -677,6 +823,7 @@ class GameSession:
             hand_number=self.game.hand_id,
             match_note=self._match_note(seat),
             history_summary=[self._llm_history_item(item, seat) for item in self.hand_history[-3:]],
+            table_talk=self._pending_table_talk(seat),
         )
 
     def _match_note(self, seat: int) -> str:

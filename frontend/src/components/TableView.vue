@@ -10,8 +10,8 @@ import AppIcon from "./AppIcon.vue";
 import { lastActionForSeat } from "../actionMeta";
 import { chips, streetLabel } from "../format";
 import { board, prefersReducedMotion, streetForCommunity } from "../boardReveal";
-import { game, openSetup } from "../store";
-import type { ActionLog, CardInfo, PlayerState } from "../types";
+import { game, openSetup, openTableTalk } from "../store";
+import type { ActionLog, CardInfo, PlayerState, TableTalkEntry } from "../types";
 
 const snapshot = computed(() => (
   (board.busy || board.holeHold) && board.baseSnapshot ? board.baseSnapshot : game.snapshot
@@ -48,6 +48,17 @@ const bottomLastAction = computed<ActionLog | null>(() => lastActionForSeat(
 
 function playerAt(seat: number): PlayerState | null {
   return players.value.find((player) => player.seat === seat) || null;
+}
+
+function openTalkFromTable(): void {
+  openTableTalk();
+  if (window.innerWidth > 1180) return;
+  requestAnimationFrame(() => {
+    document.querySelector<HTMLElement>(".agent-console")?.scrollIntoView({
+      behavior: prefersReducedMotion() ? "auto" : "smooth",
+      block: "start",
+    });
+  });
 }
 
 function seatInfoAt(seat: number) {
@@ -115,6 +126,8 @@ const potEl = ref<HTMLElement | null>(null);
 const flyChip = ref<HTMLElement | null>(null);
 const dealing = ref(false);
 const potShockKey = ref(0);
+const talkTicker = ref<TableTalkEntry | null>(null);
+let talkTimer = 0;
 let lastDealNonce = board.dealNonce;
 let dealTimer = 0;
 let dealToken = 0;
@@ -295,9 +308,28 @@ watch(
   { immediate: true },
 );
 
+watch(
+  () => [game.tableTalk.length, board.busy, board.holeHold] as const,
+  ([length, busy, hold]) => {
+    if (!length) {
+      talkTicker.value = null;
+      return;
+    }
+    if (busy || hold) return;
+    const latest = game.tableTalk[length - 1];
+    if (!latest || talkTicker.value?.id === latest.id) return;
+    talkTicker.value = latest;
+    window.clearTimeout(talkTimer);
+    talkTimer = window.setTimeout(() => {
+      if (talkTicker.value?.id === latest.id) talkTicker.value = null;
+    }, 12000);
+  },
+);
+
 onUnmounted(() => {
   dealToken += 1;
   window.clearTimeout(dealTimer);
+  window.clearTimeout(talkTimer);
   clearDealAnimations();
   clearChipFx();
 });
@@ -318,6 +350,17 @@ onUnmounted(() => {
           ></span>
         </div>
       </div>
+      <button
+        v-if="talkTicker && !board.busy && !board.holeHold"
+        class="talk-ticker"
+        type="button"
+        :title="`${talkTicker.name}：${talkTicker.text}`"
+        @click="openTalkFromTable"
+      >
+        <AppIcon name="message" :size="12" />
+        <span class="talk-ticker-name">{{ talkTicker.name }}</span>
+        <span class="talk-ticker-text">{{ talkTicker.text }}</span>
+      </button>
     </div>
 
     <div class="felt-wrap">
@@ -446,6 +489,47 @@ onUnmounted(() => {
   align-items: center;
   gap: 12px;
   min-width: 0;
+}
+
+.talk-ticker {
+  margin-left: auto;
+  min-width: 0;
+  max-width: min(58%, 560px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(232, 195, 122, 0.24);
+  background: rgba(232, 195, 122, 0.06);
+  color: var(--muted);
+  font-size: calc(9.5px * var(--type-scale));
+  text-align: left;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.talk-ticker:hover {
+  border-color: rgba(232, 195, 122, 0.42);
+  background: rgba(232, 195, 122, 0.1);
+}
+
+.talk-ticker .app-icon { color: var(--gold); }
+
+.talk-ticker-name {
+  flex: none;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--gold);
+  font-weight: 700;
+}
+
+.talk-ticker-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .street-now {
@@ -777,6 +861,7 @@ onUnmounted(() => {
 
 @media (max-width: 720px) {
   .table-toolbar { padding: 8px 10px; }
+  .talk-ticker { display: none; }
   .phase-track { gap: 9px; }
   .phase-dot { width: 12px; }
   .phase-dot.active { width: 22px; }

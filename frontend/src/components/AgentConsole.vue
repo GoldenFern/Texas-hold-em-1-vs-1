@@ -3,14 +3,24 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import AppIcon from "./AppIcon.vue";
 import AgentTurn from "./AgentTurn.vue";
 import PlayingCard from "./PlayingCard.vue";
+import TableTalkPanel from "./TableTalkPanel.vue";
 import { iconUrl } from "../api";
 import { describeAction } from "../actionMeta";
 import { actionLabel, chips, compactSeatName, shortName, streetShort } from "../format";
 import { reasoningDefaultCollapsed, setReasoningDefaultCollapsed } from "../reasoning";
-import { agentSeats, followLive, game, humanSeat, openSetup, selectSeat } from "../store";
+import {
+  agentSeats,
+  followLive,
+  game,
+  humanSeat,
+  openSetup,
+  selectSeat,
+  setConsoleMode,
+} from "../store";
+import type { ConsoleMode } from "../store";
 import type { ActionEntry, BotDecisionView, TurnView } from "../types";
 
-const mode = ref<"stream" | "log">("stream");
+const mode = computed<ConsoleMode>(() => game.consoleMode);
 const scrollEl = ref<HTMLElement | null>(null);
 const stick = ref(true);
 const showJump = ref(false);
@@ -75,6 +85,11 @@ const anyLive = computed(() => {
   return false;
 });
 
+const talkEnabled = computed(() => Boolean(
+  game.snapshot?.match?.table_talk || game.tableTalk.length,
+));
+const talkUnread = ref(false);
+
 const groups = computed(() => {
   const map = new Map<number, ActionEntry[]>();
   for (const action of game.actionFeed) {
@@ -121,7 +136,7 @@ function resultLine(group: (typeof groups.value)[number]): string {
 
 function clickSeat(seat: number): void {
   clearAnchor();
-  mode.value = "stream";
+  setConsoleMode("stream");
   selectSeat(seat, true);
   stick.value = true;
   nextTick(scrollToBottom);
@@ -136,7 +151,7 @@ function onScroll(): void {
     followHandId = null;
   }
   stick.value = atBottom;
-  showJump.value = !atBottom && mode.value === "stream";
+  showJump.value = !atBottom && mode.value !== "log";
   if (atBottom && followHandId === null && anchorTail.value > 0) {
     anchorTail.value = 0;
   }
@@ -214,14 +229,18 @@ async function anchorNewHand(handId: number): Promise<void> {
 
 function jumpLatest(): void {
   clearAnchor();
-  mode.value = "stream";
+  setConsoleMode("stream");
   stick.value = true;
   nextTick(scrollToBottom);
 }
 
-function setMode(next: "stream" | "log"): void {
+function setMode(next: ConsoleMode): void {
   clearAnchor();
-  mode.value = next;
+  setConsoleMode(next);
+}
+
+watch(mode, (next) => {
+  if (next === "talk") talkUnread.value = false;
   if (next === "log") {
     stick.value = false;
     showJump.value = false;
@@ -232,7 +251,20 @@ function setMode(next: "stream" | "log"): void {
     stick.value = true;
     nextTick(scrollToBottom);
   }
-}
+});
+
+watch(
+  () => game.tableTalk.length,
+  (next, previous) => {
+    if (next > previous && mode.value !== "talk") talkUnread.value = true;
+  },
+);
+
+watch(talkEnabled, (enabled) => {
+  if (!enabled && mode.value === "talk") {
+    setConsoleMode(agentSeats.value.length ? "stream" : "log");
+  }
+});
 
 watch(
   () => game.selectedSeat,
@@ -249,8 +281,9 @@ watch(
   () => {
     clearAnchor();
     seenHandId = null;
-    mode.value = agentSeats.value.length ? "stream" : "log";
+    setConsoleMode(agentSeats.value.length ? "stream" : "log");
     stick.value = true;
+    talkUnread.value = false;
     nextTick(scrollToBottom);
   },
 );
@@ -285,7 +318,7 @@ onMounted(() => {
     observer.observe(el, { childList: true, subtree: true, characterData: true });
     scrollToBottom();
   }
-  mode.value = agentSeats.value.length ? "stream" : "log";
+  if (!agentSeats.value.length) setConsoleMode("log");
   seenHandId = streamHandId.value;
 });
 
@@ -334,6 +367,15 @@ onUnmounted(() => {
           <div class="segmented mode-switch">
             <button :class="{ active: mode === 'stream' }" @click="setMode('stream')">思考流</button>
             <button :class="{ active: mode === 'log' }" @click="setMode('log')">日志</button>
+            <button
+              v-if="talkEnabled"
+              class="talk-tab"
+              :class="{ active: mode === 'talk' }"
+              @click="setMode('talk')"
+            >
+              对话
+              <span v-if="talkUnread" class="talk-unread" aria-label="有新喊话"></span>
+            </button>
           </div>
         </div>
       </div>
@@ -440,7 +482,7 @@ onUnmounted(() => {
         </template>
       </div>
 
-      <div v-else class="log-body">
+      <div v-else-if="mode === 'log'" class="log-body">
         <div v-if="!groups.length" class="empty-state">
           <div class="empty-orb"><AppIcon name="list" :size="28" /></div>
           <h3>还没有行动记录</h3>
@@ -475,6 +517,10 @@ onUnmounted(() => {
           </div>
         </section>
       </div>
+
+      <div v-else class="talk-body">
+        <TableTalkPanel :entries="game.tableTalk" :seats="game.snapshot?.match?.seats || []" />
+      </div>
     </div>
 
     <transition name="jump">
@@ -489,6 +535,7 @@ onUnmounted(() => {
       <span>{{ anyLive ? "Agent 正在生成" : game.connected ? "空闲" : "连接已断开" }}</span>
       <span class="foot-spacer"></span>
       <span v-if="mode === 'log'" class="mono">{{ game.actionFeed.length }} actions</span>
+      <span v-else-if="mode === 'talk'" class="mono">{{ game.tableTalk.length }} messages</span>
       <button
         v-if="reasoningDefaultCollapsed"
         class="foot-action"
@@ -531,7 +578,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px 10px;
   padding: 12px 14px 9px;
 }
 
@@ -557,6 +605,15 @@ onUnmounted(() => {
 .follow-btn { padding: 4px 8px; font-size: calc(10px * var(--type-scale)); }
 .follow-btn.active { color: var(--emerald); }
 .mode-switch button { padding: 4px 8px; font-size: calc(10px * var(--type-scale)); }
+.mode-switch .talk-tab { position: relative; display: inline-flex; align-items: center; gap: 4px; }
+
+.talk-unread {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 7px rgba(232, 195, 122, 0.6);
+}
 
 .seat-tabs {
   display: flex;
@@ -626,6 +683,7 @@ onUnmounted(() => {
 
 .stream-body { display: flex; flex-direction: column; }
 .log-body { display: flex; flex-direction: column; gap: 12px; padding: 4px 2px; }
+.talk-body { display: flex; flex-direction: column; padding: 4px 2px; }
 
 .hand-divider {
   display: flex;

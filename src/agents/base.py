@@ -45,6 +45,7 @@ class AgentView:
     hand_number: int
     match_note: str = ""
     history_summary: List[dict] = field(default_factory=list)
+    table_talk: List[dict] = field(default_factory=list)
 
     @property
     def is_button(self) -> bool:

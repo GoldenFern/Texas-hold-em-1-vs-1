@@ -131,12 +131,25 @@ export interface HistoryItem {
   players: HandResultPlayer[];
 }
 
+export interface TableTalkEntry {
+  id: string;
+  seq: number;
+  hand_id: number;
+  street: string;
+  seat: number;
+  name: string;
+  text: string;
+  turn_id?: string;
+  created_at?: number;
+}
+
 export interface MatchState {
   id: string;
   hands_played: number;
   max_hands: number;
   match_over: boolean;
   god_view: boolean;
+  table_talk?: boolean;
   can_next_hand: boolean;
   started_at: number;
   error: string;
@@ -175,6 +188,7 @@ export interface GameSnapshot {
   big_blind?: number;
   starting_chips?: number;
   transcript_counts?: Record<string, number>;
+  table_talk?: TableTalkEntry[];
   server_time?: number;
   seq?: number;
 }
@@ -254,7 +268,7 @@ export interface RLCardInfo {
 }
 
 export interface GameConfig {
-  defaults: Rules & { god_view: boolean };
+  defaults: Rules & { god_view: boolean; table_talk?: boolean };
   limits: Record<string, { min: number; max: number }>;
   llm_runtime: Record<string, number>;
 }
@@ -280,6 +294,7 @@ export interface SeatSetup {
 export interface MatchSetupPayload {
   seats: [SeatSetup, SeatSetup];
   rules: Rules & { god_view: boolean };
+  table_talk?: boolean;
 }
 
 export interface DistributionItem {
@@ -352,6 +367,7 @@ export interface TurnView {
     toCall: number;
     legalActions: string[];
     position: string;
+    receivedTalk?: number;
   };
   messages: MessageView[];
   notes: { level: string; text: string }[];

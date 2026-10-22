@@ -11,6 +11,7 @@ const isEquity = computed(() => props.tool.name === "estimate_equity");
 const isAction = computed(() => props.tool.name === "apply_action");
 const isRandom = computed(() => props.tool.name === "get_random_number");
 const isCallEv = computed(() => props.tool.name === "call_ev");
+const isTalk = computed(() => props.tool.name === "send_table_message");
 const parsed = computed<Record<string, unknown>>(() => {
   if (props.tool.parsed) return props.tool.parsed;
   try {
@@ -61,6 +62,21 @@ const streetLabel = computed(() => {
 const action = computed(() => String(parsed.value.action || result.value.action || ""));
 const amount = computed(() => Number(parsed.value.amount || result.value.amount || 0));
 const errorText = computed(() => String(result.value.error || props.tool.summary || ""));
+const talkText = computed(() => String(
+  parsed.value.text
+  || result.value.entry?.text
+  || result.value.text
+  || "",
+));
+const talkAccepted = computed(() => props.tool.status !== "error" && result.value.ok !== false);
+const remainingTurn = computed(() => {
+  const value = result.value.remaining_turn;
+  return value === undefined || value === null ? -1 : Number(value);
+});
+const remainingHand = computed(() => {
+  const value = result.value.remaining_hand;
+  return value === undefined || value === null ? -1 : Number(value);
+});
 const constraint = computed(() => {
   if (!isAction.value || !result.value || result.value.ok !== false) return null;
   if (result.value.legal_actions === undefined && result.value.to_call === undefined) return null;
@@ -82,6 +98,7 @@ const variant = computed(() => {
   if (isAction.value) return "action";
   if (isRandom.value) return "random";
   if (isCallEv.value) return "call-ev";
+  if (isTalk.value) return "talk";
   return "generic";
 });
 const icon = computed(() =>
@@ -93,7 +110,9 @@ const icon = computed(() =>
         ? "dice"
         : isCallEv.value
           ? "coins"
-          : "wrench",
+          : isTalk.value
+            ? "message"
+            : "wrench",
 );
 const title = computed(() =>
   isEstimate.value
@@ -106,7 +125,9 @@ const title = computed(() =>
           ? "随机数"
           : isCallEv.value
             ? "跟注 EV"
-            : props.tool.name || "工具",
+            : isTalk.value
+              ? "桌边喊话"
+              : props.tool.name || "工具",
 );
 const detail = computed(() => {
   if (isEstimate.value || isEquity.value) {
@@ -124,6 +145,10 @@ const detail = computed(() => {
   if (isCallEv.value) {
     if (result.value.applicable === false) return "当前不适用";
     return `EV ${evCall.value > 0 ? "+" : ""}${evCall.value.toFixed(1)}`;
+  }
+  if (isTalk.value) {
+    if (props.tool.status === "running") return "发送中";
+    return talkAccepted.value ? "已发送" : "被拒绝";
   }
   return props.tool.name || "";
 });
@@ -371,6 +396,22 @@ function percent(value: number): string {
         </template>
       </div>
 
+      <!-- Table talk result -->
+      <div v-else-if="isTalk" class="talk-block">
+        <div v-if="!talkAccepted" class="generic-error">
+          <AppIcon name="alert" :size="13" />
+          {{ errorText || "喊话被拒绝" }}
+        </div>
+        <template v-else>
+          <div class="talk-quote">「{{ talkText || "空消息" }}」</div>
+          <div class="talk-meta-row">
+            <span class="chip gold">对手下一次决策时看到</span>
+            <span v-if="remainingTurn >= 0" class="chip">本回合剩 {{ remainingTurn }} 条</span>
+            <span v-if="remainingHand >= 0" class="chip">本手剩 {{ remainingHand }} 条</span>
+          </div>
+        </template>
+      </div>
+
       <!-- Generic result -->
       <div v-else-if="tool.status === 'error'" class="generic-error">
         <AppIcon name="alert" :size="13" />
@@ -421,6 +462,7 @@ function percent(value: number): string {
 .tool-card.action { border-left-color: rgba(84, 214, 168, 0.5); }
 .tool-card.random { border-left-color: rgba(121, 169, 255, 0.55); }
 .tool-card.call-ev { border-left-color: rgba(121, 169, 255, 0.55); }
+.tool-card.talk { border-left-color: rgba(232, 195, 122, 0.7); }
 .tool-card.action.error { border-left-color: rgba(226, 112, 95, 0.6); }
 .tool-card.running { border-left-color: rgba(121, 169, 255, 0.55); }
 .tool-card:hover { background: rgba(255, 255, 255, 0.035); }
@@ -448,6 +490,7 @@ function percent(value: number): string {
 .tool-card.action .tool-icon { color: var(--emerald); }
 .tool-card.random .tool-icon,
 .tool-card.call-ev .tool-icon { color: var(--blue); }
+.tool-card.talk .tool-icon { color: var(--gold); }
 .tool-card.action.error .tool-icon { color: var(--red); }
 
 .tool-title {
@@ -857,6 +900,31 @@ function percent(value: number): string {
 }
 
 .legal-row .chip { font-size: calc(8.5px * var(--type-scale)); padding: 2px 6px; }
+
+.talk-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px 9px;
+}
+
+.talk-quote {
+  padding: 8px 10px;
+  border-radius: 3px 10px 10px 10px;
+  border: 1px solid rgba(232, 195, 122, 0.22);
+  background: rgba(232, 195, 122, 0.055);
+  color: var(--text-soft);
+  font-size: calc(11.5px * var(--type-scale));
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.talk-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
 
 .generic-error {
   display: flex;

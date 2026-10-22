@@ -6,9 +6,10 @@ import pytest
 import time
 
 from src.analysis.hand_distribution import HandDistributionAnalyzer
+from src.engine.heads_up import HeadsUpGame
 from src.llm.client import LLMClient
 from src.llm.providers import ProviderRegistry
-from src.server.session import GameSession
+from src.server.session import GameSession, SeatConfig
 
 
 class FakeSocketIO:
@@ -132,5 +133,102 @@ def test_next_hand_requires_live_thread() -> None:
         session._thread = None
         with pytest.raises(ValueError):
             session.next_hand()
+    finally:
+        session.shutdown()
+
+
+def test_table_talk_requires_two_llm_seats() -> None:
+    llm = SeatConfig(kind="llm", name="A", provider_id="deepseek", model_id="deepseek-flash")
+    other = SeatConfig(kind="llm", name="B", provider_id="deepseek", model_id="deepseek-flash")
+    bot = SeatConfig(kind="bot", name="Bot")
+
+    assert GameSession._resolve_table_talk([llm, other], True) is True
+    assert GameSession._resolve_table_talk([llm, other], False) is False
+    assert GameSession._resolve_table_talk([llm, bot], True) is False
+    with pytest.raises(ValueError):
+        GameSession._resolve_table_talk([llm, other], "yes")
+
+
+def make_table_talk_session():
+    session = make_session()
+    game = HeadsUpGame(
+        starting_chips=1000,
+        small_blind=5,
+        big_blind=10,
+        seed=42,
+    )
+    game.configure_players(
+        {"name": "Agent A", "kind": "llm"},
+        {"name": "Agent B", "kind": "llm"},
+    )
+    game.start_hand()
+    session.game = game
+    session.match_id = "talk-match"
+    session.table_talk_enabled = True
+    session._generation = 0
+    session._stop_event.clear()
+    return session, game
+
+
+def test_table_talk_records_event_and_delivers_once() -> None:
+    session, game = make_table_talk_session()
+    try:
+        sender = game.actor
+        assert sender is not None
+        receiver = 1 - sender
+        result = session._record_table_talk(0, sender, "  我这次\n不会再让你便宜看牌。  ", "turn-1")
+        assert result["ok"] is True
+        assert result["remaining_hand"] == 5
+        entry = result["entry"]
+        assert entry["text"] == "我这次 不会再让你便宜看牌。"
+        assert entry["seat"] == sender
+        assert entry["hand_id"] == game.hand_id
+
+        talk_events = [
+            args[1]
+            for args, _kwargs in session.socketio.events
+            if len(args) > 1
+            and isinstance(args[1], dict)
+            and args[1].get("type") == "table_talk"
+        ]
+        assert talk_events and talk_events[-1]["text"] == entry["text"]
+
+        view = session._build_view(receiver)
+        assert len(view.table_talk) == 1
+        assert view.table_talk[0]["text"] == entry["text"]
+        assert session._build_view(receiver).table_talk == []
+
+        snapshot = session._snapshot_locked()
+        assert snapshot["match"]["table_talk"] is True
+        assert snapshot["table_talk"][-1]["text"] == entry["text"]
+    finally:
+        session.shutdown()
+
+
+def test_table_talk_rejects_non_actor_and_enforces_hand_quota() -> None:
+    session, game = make_table_talk_session()
+    try:
+        sender = game.actor
+        assert sender is not None
+        for _ in range(6):
+            assert session._record_table_talk(0, sender, "施压。", "turn")["ok"] is True
+        blocked = session._record_table_talk(0, sender, "再说一句。", "turn")
+        assert blocked["ok"] is False
+        assert "上限" in blocked["error"]
+        wrong_turn = session._record_table_talk(0, 1 - sender, "抢话。", "turn")
+        assert wrong_turn["ok"] is False
+        assert "没有轮到" in wrong_turn["error"]
+    finally:
+        session.shutdown()
+
+
+def test_table_talk_normalizes_but_does_not_inspect_card_content() -> None:
+    session, game = make_table_talk_session()
+    try:
+        sender = game.actor
+        assert sender is not None
+        result = session._record_table_talk(0, sender, "我拿着 A♥，你信吗？", "turn")
+        assert result["ok"] is True
+        assert result["entry"]["text"] == "我拿着 A♥，你信吗？"
     finally:
         session.shutdown()
