@@ -218,6 +218,7 @@ models/rlcard/                # checkpoint 目录（文件 gitignore）
 ## 测试
 
 ```bash
+pip install -r requirements-dev.txt
 python -m pytest tests -q
 cd frontend && npm run typecheck && npm test && npm run build
 ```
@@ -242,7 +243,7 @@ cd frontend && npm run typecheck && npm test && npm run build
 - RLCard 短训练容易退化；默认用 RandomAgent 验证链路，训练模型请自行评估
 - 模型文件是 PyTorch pickle，只加载可信来源；模型路径限制在 `models/rlcard/` 下
 - LLM 调用会产生厂商费用；「测试连接」也会发一个很小的真实请求
-- 目前只做牌型分布，不做胜率/EV/范围推断
+- 不做对手范围推断；胜率和跟注 EV 默认假设对手是随机手牌
 
 ---
 
@@ -251,6 +252,10 @@ cd frontend && npm run typecheck && npm test && npm run build
 - [Treys](https://github.com/ihendley/treys)：TwoPlusTwo 查表牌力评估
 - [RLCard](https://github.com/datamllab/rlcard)：强化学习扑克环境与 agent
 - Flask / Flask-SocketIO / Vue 3 / Vite / TypeScript
-- Provider 图标来自本地 `API-Key/key-manager` 项目中的品牌 SVG；仅用于本地实验界面
+- Provider 图标是各厂商的品牌标识，仅用于界面识别，版权归各自厂商所有
+
+## 许可证
+
+MIT，详见 [LICENSE](LICENSE)。第三方品牌图标和第三方模型不在 MIT 授权范围内。
 
 人类牌桌快捷键：**F** 弃牌、**C** 过牌/跟注、**R** 聚焦加注、**A** 全下。

@@ -14,8 +14,8 @@ alwaysApply: true
 3. 可实验性：人类 / LLM / RLCard 任选其二，规则与模型可配置
 4. 一个清晰、漂亮、和旧项目完全不同的前端
 
-旧项目：`D:\YangYifei\Code\2.LargeLanguageModel\Texas-hold-em`（只作参考，不要照搬前端）。
-Agent 可视化参考：`D:\YangYifei\Code\5.Chemistry\TAGUI`（思考折叠、工具卡片、实时流）。
+旧项目：多人版 `Texas-hold-em`（只作参考，不要照搬前端）。
+Agent 可视化参考：本地 `TAGUI` 项目（思考折叠、工具卡片、实时流）。
 
 ## 启动 / 测试
 
@@ -200,7 +200,7 @@ python scripts/eval_llm_tool_matrix.py --hands 300 --workers 10  # 五组工具�
 - 引擎随机 60 手筹码守恒在 `tests/test_engine.py`。
 - 牌型分布精确/蒙特卡洛在 `tests/test_analysis.py`；equity 与 `call_ev` 在 `tests/test_equity.py`、`tests/test_pot_odds.py`。
 - LLM vs Bot 离线评测：`scripts/eval_llm_vs_bot.py`，每手独立、可并发、同牌换座，输出到 `tmp/llm_eval/`。默认对手是 `nlh_dqn_project.pth`（20k 手矩阵里最强的项目 Bot）。`--tools` 只暴露指定工具，`--recommend-tools` 在提示词里强烈推荐但不强制。
-- 五组工具消融：`scripts/eval_llm_tool_matrix.py`，同牌同座位跨组对齐，输出到 `tmp/llm_tool_matrix/`；汇总报告包含每组 bb/100、95% CI、工具调用率和相对无工具组的配对不同。2026-10-22 首次实跑因 LongCat 配额中断，`none` 和 `random` 部分可用，详见 `docs/llm_tool_eval.md` 与 `tmp/llm_tool_matrix/20261022_full/STATUS.md`。
+- 五组工具消融：`scripts/eval_llm_tool_matrix.py`，同牌同座位跨组对齐，输出到 `tmp/llm_tool_matrix/`；汇总报告包含每组 bb/100、95% CI、工具调用率和相对无工具组的配对不同。2026-10-22 首次实跑因 LongCat 配额中断，`none` 和 `random` 部分可用，详见 `docs/llm_tool_eval.md`。
 - 实验提示词附加段在 `tests/test_llm_agent.py`；工具集合解析与推荐文案在 `tests/test_eval_llm_vs_bot.py`，不发起真实请求。
 - 桌边喊话的规范化、额度在 `tests/test_table_talk.py`；工具循环、硬性前置喊话、赛后 final 和“失败不触发三次非法动作”在 `tests/test_llm_agent.py`；开关、记录、未读投递和快照在 `tests/test_server_session.py` 与 `tests/test_server_api.py`。
 - 前端喊话合并/去重在 `store.test.ts`；对话页、工具卡片和页签在 `TableTalkPanel.test.ts`、`ToolCard.test.ts`、`AgentConsole.test.ts`。

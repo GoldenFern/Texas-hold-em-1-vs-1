@@ -1,2 +1,4 @@
 -r requirements.txt
 pytest>=8.0
+# tests/test_training_env.py 和训练脚本需要
+torch>=2.2

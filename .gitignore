@@ -16,8 +16,8 @@ static/dist/
 *.tsbuildinfo
 
 # Local tooling / secrets
-.env
-.env.local
+.env*
+!.env.example
 .claude/
 .agents/
 .cursor/
@@ -27,9 +27,10 @@ static/dist/
 # Runtime
 tmp/
 logs/
-models/rlcard/*.pth
-models/rlcard/*.tar
-models/rlcard/*.pt
+models/**/*.pth
+models/**/*.pt
+models/**/*.tar
+models/**/*.ckpt
 
 # OS
 .DS_Store
