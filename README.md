@@ -105,6 +105,16 @@ cd frontend && npm run dev     # 终端 2，:5173，代理到 :5050
 
 三个工具的协议见 [`docs/protocol.md`](docs/protocol.md)。
 
+### 离线 LLM 对 LLM 评测
+
+`scripts/eval_llm_vs_llm.py` 支持两个座位使用不同的工具集和系统提示：
+
+```bash
+python scripts/eval_llm_vs_llm.py --hands 100 --workers 5
+```
+
+默认对照组只有 `apply_action`，工具组额外有 `estimate_hand_probabilities` 与 `get_random_number`，并要求公共牌少于五张时每次行动前至少估算一次。每手独立重置筹码，同牌换座，结果写到 `tmp/llm_vs_llm/`。
+
 ### 数据分析
 
 目前只做一个可视化：**最终最佳五张牌的牌型分布**（皇家同花顺、同花顺、四条、葫芦、同花、顺子、三条、两对、一对、高牌）。
@@ -189,6 +199,8 @@ frontend/                     # Vue 3 + Vite + TypeScript
 static/dist/                  # 前端构建产物（gitignore）
 tests/                        # 引擎 / 分析 / LLM 工具循环 / RLCard 适配
 scripts/train_rlcard.py       # DQN 训练
+scripts/eval_llm_vs_bot.py    # LLM vs Project Bot 离线评测
+scripts/eval_llm_vs_llm.py    # LLM vs LLM 工具使用对照
 models/rlcard/                # checkpoint 目录（文件 gitignore）
 ```
 

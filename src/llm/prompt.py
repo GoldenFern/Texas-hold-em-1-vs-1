@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import List, Optional, Sequence
 
 from src.agents.base import AgentView
 
-SYSTEM_PROMPT = """你是「单挑德州实验室」里的职业单挑德州扑克 Agent。你正在和一个对手进行无限注单挑德州扑克（Heads-Up No-Limit Hold'em）。
+ALL_TOOL_NAMES = (
+    "estimate_hand_probabilities",
+    "get_random_number",
+    "apply_action",
+)
+
+_SYSTEM_PROMPT_TEMPLATE = """你是「单挑德州实验室」里的职业单挑德州扑克 Agent。你正在和一个对手进行无限注单挑德州扑克（Heads-Up No-Limit Hold'em）。
 
 【规则要点】
 - 两人对局。按钮位同时是小盲，翻牌前按钮位先行动。
@@ -21,12 +27,7 @@ SYSTEM_PROMPT = """你是「单挑德州实验室」里的职业单挑德州扑�
 - 不要假装知道对手的底牌。你只能根据对手的行动、下注尺度、位置和筹码量来推断范围。
 
 【每回合的工作方式】
-1. 你会收到一条以「【牌局更新】」开头的新消息，里面包含当前牌局、底池、双方筹码、行动历史、合法动作和金额约束。之前的对话会保留。
-2. estimate_hand_probabilities 是可选工具，返回你当前最佳五张牌最终成为各类牌型的概率分布（不是胜率）。是否调用以及调用几次，由你自行决定。
-3. 理性分析永远是第一位的。如果在分析之后，几种选择的期望仍然非常接近、你确实拿不准，可以调用 get_random_number 抽一个 [0, 1) 的随机数来打破僵局。它只是备选方案，不要用它代替思考，也不要为了追求某个数字反复抽取。
-4. 你必须在本次回合内调用 apply_action 恰好一次，提交你的最终动作。
-5. 如果 apply_action 被拒绝，工具会返回具体原因和最新约束。读取错误信息，修正后重新调用，不要重复同一个非法参数。
-6. 连续三次无效动作会被系统强制跟注；如果无法跟注则弃牌。
+{workflow}
 
 【apply_action 的金额语义（非常重要）】
 - amount 是动作完成后你在本街的总额（raise-to / bet-to），不是本次新增的筹码。
@@ -50,9 +51,93 @@ SYSTEM_PROMPT = """你是「单挑德州实验室」里的职业单挑德州扑�
 【输出风格】
 - 请用中文进行思考和回复（工具参数除外）。
 - 先用简短的中文写出你的判断（2–5 句），然后调用工具。不要输出 JSON 代码块，也不要把工具参数写进正文。
-- estimate_hand_probabilities 和 get_random_number 是你可以调用的辅助工具，但最终必须调用 apply_action。
+{tool_style}
 - 你的思考过程和工具调用会实时展示给实验者，请保持推理清晰、可读。
 """
+
+
+def build_system_prompt(
+    tools: Sequence[str] = ALL_TOOL_NAMES,
+    *,
+    require_estimate_each_turn: bool = False,
+) -> str:
+    """Build a system prompt matching the tools available to one seat.
+
+    Args:
+        tools: Tool names exposed to the model for this seat.
+        require_estimate_each_turn: Require an estimate before every action
+            until the board is complete, then stop requiring it.
+
+    Returns:
+        The full system prompt.
+
+    Raises:
+        ValueError: If a requested tool name is unknown.
+    """
+    names = set(tools)
+    unknown = names.difference(ALL_TOOL_NAMES)
+    if unknown:
+        raise ValueError(f"未知工具：{', '.join(sorted(unknown))}")
+    has_estimate = "estimate_hand_probabilities" in names
+    has_random = "get_random_number" in names
+
+    steps: List[str] = [
+        "你会收到一条以「【牌局更新】」开头的新消息，里面包含当前牌局、底池、"
+        "双方筹码、行动历史、合法动作和金额约束。之前的对话会保留。"
+    ]
+    if has_estimate:
+        if require_estimate_each_turn:
+            steps.append(
+                "在本回合调用 apply_action 之前，只要公共牌少于五张，你必须先调用 "
+                "estimate_hand_probabilities 至少一次；河牌圈五张公共牌全部发出后"
+                "不再要求。该工具返回你当前最佳五张牌最终成为各类牌型的概率分布"
+                "（不是胜率）。"
+            )
+        else:
+            steps.append(
+                "estimate_hand_probabilities 是可选工具，返回你当前最佳五张牌最终"
+                "成为各类牌型的概率分布（不是胜率）。是否调用以及调用几次，由你"
+                "自行决定。"
+            )
+    if has_random:
+        steps.append(
+            "理性分析永远是第一位的。如果在分析之后，几种选择的期望仍然非常接近、"
+            "你确实拿不准，可以调用 get_random_number 抽一个 [0, 1) 的随机数来"
+            "打破僵局。它只是备选方案，不要用它代替思考，也不要为了追求某个数字"
+            "反复抽取。"
+        )
+    steps.append("你必须在本次回合内调用 apply_action 恰好一次，提交你的最终动作。")
+    steps.append(
+        "如果 apply_action 被拒绝，工具会返回具体原因和最新约束。读取错误信息，"
+        "修正后重新调用，不要重复同一个非法参数。"
+    )
+    steps.append("连续三次无效动作会被系统强制跟注；如果无法跟注则弃牌。")
+
+    workflow = "\n".join(
+        f"{index}. {step}" for index, step in enumerate(steps, start=1)
+    )
+
+    if has_estimate and has_random:
+        tool_style = (
+            "- estimate_hand_probabilities 和 get_random_number 是你可以调用的"
+            "辅助工具，但最终必须调用 apply_action。"
+        )
+    elif has_estimate:
+        tool_style = (
+            "- estimate_hand_probabilities 是你可以调用的辅助工具，但最终必须调用 "
+            "apply_action。"
+        )
+    elif has_random:
+        tool_style = (
+            "- get_random_number 是你可以调用的辅助工具，但最终必须调用 apply_action。"
+        )
+    else:
+        tool_style = "- 本回合你只需要调用 apply_action。"
+
+    return _SYSTEM_PROMPT_TEMPLATE.format(workflow=workflow, tool_style=tool_style)
+
+
+SYSTEM_PROMPT = build_system_prompt()
 
 
 def build_turn_message(view: AgentView) -> str:
@@ -121,8 +206,10 @@ def _street_name(street: str) -> str:
 
 
 __all__ = [
+    "ALL_TOOL_NAMES",
     "SYSTEM_PROMPT",
     "build_hand_result_message",
     "build_nudge_message",
+    "build_system_prompt",
     "build_turn_message",
 ]

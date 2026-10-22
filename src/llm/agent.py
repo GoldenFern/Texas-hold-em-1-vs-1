@@ -7,7 +7,7 @@ import random
 import threading
 import time
 import uuid
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Sequence
 
 from src.agents.base import AgentView, BaseAgent
 from src.analysis.hand_distribution import HandDistributionAnalyzer
@@ -107,6 +107,26 @@ _ACTION_ALIASES = {
 }
 
 
+def select_tools(names: Sequence[str]) -> List[dict]:
+    """Return the tool schemas for the requested tool names.
+
+    Args:
+        names: Function names to expose to the model.
+
+    Returns:
+        A list of tool schemas in the canonical order.
+
+    Raises:
+        ValueError: If a requested tool name is unknown.
+    """
+    wanted = set(names)
+    known = {tool["function"]["name"] for tool in TOOLS}
+    unknown = wanted.difference(known)
+    if unknown:
+        raise ValueError(f"未知工具：{', '.join(sorted(unknown))}")
+    return [tool for tool in TOOLS if tool["function"]["name"] in wanted]
+
+
 class LLMAgent(BaseAgent):
     """An agent that keeps a full conversation and decides through tools."""
 
@@ -122,6 +142,8 @@ class LLMAgent(BaseAgent):
         analyzer: HandDistributionAnalyzer,
         validate_action: Callable[[Action], Optional[str]],
         runtime: dict,
+        tools: Optional[Sequence[dict]] = None,
+        system_prompt: Optional[str] = None,
     ) -> None:
         self.seat = seat
         self.name = name
@@ -133,6 +155,12 @@ class LLMAgent(BaseAgent):
         self.max_steps = int(runtime.get("max_steps_per_turn", 12))
         self.max_failures = int(runtime.get("max_consecutive_failures", 3))
         self.require_estimate_first = bool(runtime.get("require_estimate_first", False))
+        self.require_estimate_each_turn = bool(
+            runtime.get("require_estimate_each_turn", False)
+        )
+        self.skip_estimate_on_complete_board = bool(
+            runtime.get("skip_estimate_on_complete_board", False)
+        )
         runtime_budget = int(runtime.get("max_context_tokens_estimate", 220000))
         reserved_output = int(self.params.get("max_tokens", 32768))
         context_window = int(getattr(spec, "context_window", 0) or 0)
@@ -141,13 +169,19 @@ class LLMAgent(BaseAgent):
         self.max_context_tokens = max(8000, runtime_budget)
         self.max_estimate_calls = int(runtime.get("max_estimate_calls_per_turn", 2))
         self.max_estimate_iterations = int(runtime.get("max_estimate_iterations", 50000))
-        self.messages: List[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self.tools = list(tools) if tools is not None else list(TOOLS)
+        self.tool_names = {tool["function"]["name"] for tool in self.tools}
+        if self.require_estimate_each_turn and "estimate_hand_probabilities" not in self.tool_names:
+            raise ValueError("启用每回合估算要求时必须提供 estimate_hand_probabilities 工具")
+        self.system_prompt = system_prompt or SYSTEM_PROMPT
+        self.messages: List[dict] = [{"role": "system", "content": self.system_prompt}]
         self.turn_count = 0
         self._estimated_keys: set[tuple[int, str]] = set()
         self._nudged_keys: set[tuple[int, str]] = set()
+        self._estimated_this_turn = False
         self._estimate_calls_this_turn = 0
         self._estimate_iterations_this_turn = 0
-        self._tools_tokens = estimate_tokens(json.dumps(TOOLS, ensure_ascii=False))
+        self._tools_tokens = estimate_tokens(json.dumps(self.tools, ensure_ascii=False))
         self.total_usage = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
         self.last_error = ""
         self._trimmed = False
@@ -158,13 +192,14 @@ class LLMAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     def reset(self) -> None:
-        self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self.messages = [{"role": "system", "content": self.system_prompt}]
         self.turn_count = 0
         self.total_usage = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
         self.last_error = ""
         self._trimmed = False
         self._estimated_keys.clear()
         self._nudged_keys.clear()
+        self._estimated_this_turn = False
         self._estimate_calls_this_turn = 0
         self._estimate_iterations_this_turn = 0
         self._cancel_event.clear()
@@ -204,6 +239,7 @@ class LLMAgent(BaseAgent):
         steps = 0
         failures = 0
         self.turn_count += 1
+        self._estimated_this_turn = False
         self._estimate_calls_this_turn = 0
         self._estimate_iterations_this_turn = 0
         if self._cancel_event.is_set():
@@ -263,7 +299,7 @@ class LLMAgent(BaseAgent):
                 result = self.client.stream(
                     self.spec,
                     self.messages,
-                    TOOLS,
+                    self.tools,
                     self.params,
                     on_stream,
                     cancel=self._cancel_event.is_set,
@@ -438,6 +474,28 @@ class LLMAgent(BaseAgent):
                     }
                 )
 
+                if call.name not in self.tool_names:
+                    failures += 1
+                    available = "、".join(sorted(self.tool_names))
+                    self._append_tool_error(
+                        call,
+                        f"未知工具 {call.name!r}。本回合可用的工具：{available}。",
+                        emit,
+                        turn_id,
+                        index,
+                    )
+                    if failures >= self.max_failures:
+                        return self._fallback(
+                            view,
+                            emit,
+                            turn_id,
+                            started,
+                            steps,
+                            usage_total,
+                            reason="连续三次无效动作",
+                        )
+                    continue
+
                 if call.name == "estimate_hand_probabilities":
                     if not self._handle_estimate(view, call, parsed, emit, turn_id, index, tool_started):
                         failures += 1
@@ -491,18 +549,41 @@ class LLMAgent(BaseAgent):
                         continue
 
                     street_key = (view.hand_id, view.street)
-                    if (
-                        self.require_estimate_first
-                        and street_key not in self._estimated_keys
-                        and street_key not in self._nudged_keys
-                    ):
-                        # Soft workflow requirement: one probability check per
-                        # street before the first action. Only nudged once, and
-                        # it does not count toward the three-failure fallback.
-                        self._nudged_keys.add(street_key)
+                    board_complete = len(view.community) >= 5
+                    requires_estimate = False
+                    if "estimate_hand_probabilities" in self.tool_names:
+                        if self.require_estimate_each_turn:
+                            requires_estimate = not self._estimated_this_turn and not (
+                                self.skip_estimate_on_complete_board and board_complete
+                            )
+                        elif self.require_estimate_first:
+                            requires_estimate = (
+                                street_key not in self._estimated_keys
+                                and street_key not in self._nudged_keys
+                                and not (
+                                    self.skip_estimate_on_complete_board
+                                    and board_complete
+                                )
+                            )
+                    if requires_estimate:
+                        if self.require_estimate_each_turn:
+                            message = (
+                                "本回合在调用 apply_action 之前，请先调用 "
+                                "estimate_hand_probabilities 至少一次；河牌圈五张公共牌"
+                                "全部发出后除外。"
+                            )
+                        else:
+                            # Soft workflow requirement: one probability check per
+                            # street before the first action. Only nudged once, and
+                            # it does not count toward the three-failure fallback.
+                            self._nudged_keys.add(street_key)
+                            message = (
+                                "在本街的第一次决策前，请先调用 "
+                                "estimate_hand_probabilities 一次，再提交 apply_action。"
+                            )
                         self._append_tool_error(
                             call,
-                            "在本街的第一次决策前，请先调用 estimate_hand_probabilities 一次，再提交 apply_action。",
+                            message,
                             emit,
                             turn_id,
                             index,
@@ -570,26 +651,6 @@ class LLMAgent(BaseAgent):
                     }
                     self._append_tool_result(call, payload, emit, turn_id, index, tool_started)
                     continue
-
-                failures += 1
-                self._append_tool_error(
-                    call,
-                    f"未知工具 {call.name!r}。只能使用 estimate_hand_probabilities、"
-                    f"get_random_number 和 apply_action。",
-                    emit,
-                    turn_id,
-                    index,
-                )
-                if failures >= self.max_failures:
-                    return self._fallback(
-                        view,
-                        emit,
-                        turn_id,
-                        started,
-                        steps,
-                        usage_total,
-                        reason="连续三次无效动作",
-                    )
 
             if chosen is not None:
                 emit(
@@ -694,6 +755,7 @@ class LLMAgent(BaseAgent):
             return True
 
         self._estimate_iterations_this_turn += iterations
+        self._estimated_this_turn = True
         self._estimated_keys.add((view.hand_id, view.street))
         payload = {"ok": True, **result.to_llm_dict()}
         top = sorted(
@@ -952,4 +1014,4 @@ class LLMAgent(BaseAgent):
             )
 
 
-__all__ = ["LLMAgent", "TOOLS"]
+__all__ = ["LLMAgent", "TOOLS", "select_tools"]

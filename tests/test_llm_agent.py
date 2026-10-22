@@ -8,8 +8,9 @@ from typing import List
 from src.agents.base import AgentView
 from src.analysis.hand_distribution import HandDistributionAnalyzer
 from src.engine.actions import Action, ActionType
-from src.llm.agent import LLMAgent
+from src.llm.agent import LLMAgent, select_tools
 from src.llm.client import ChatResult, ToolCall
+from src.llm.prompt import ALL_TOOL_NAMES, build_system_prompt
 from src.llm.providers import ProviderRegistry
 
 
@@ -95,6 +96,8 @@ def build_agent(
     require_estimate_first: bool = False,
     runtime: dict | None = None,
     validator=None,
+    tools: list[str] | None = None,
+    system_prompt: str | None = None,
 ):
     registry = ProviderRegistry()
     spec = registry.resolve("deepseek", "deepseek-flash")
@@ -123,6 +126,8 @@ def build_agent(
         analyzer=HandDistributionAnalyzer(),
         validate_action=validator or validate,
         runtime=settings,
+        tools=select_tools(tools) if tools is not None else None,
+        system_prompt=system_prompt,
     )
     return agent, events
 
@@ -223,6 +228,89 @@ def test_apply_before_estimate_is_nudged_once() -> None:
     assert "请先调用" in results[0]["summary"]
     assert results[1]["ok"] is True
     assert results[1]["name"] == "estimate_hand_probabilities"
+
+
+def test_apply_action_only_agent_rejects_hidden_tools() -> None:
+    agent, events = build_agent(
+        [
+            {
+                "tool_calls": [
+                    {
+                        "name": "estimate_hand_probabilities",
+                        "arguments": '{"iterations": 3000}',
+                    }
+                ]
+            },
+            {"tool_calls": [{"name": "apply_action", "arguments": '{"action": "check"}'}]},
+        ],
+        tools=["apply_action"],
+    )
+    action = agent.decide(make_view(), events.append)
+    assert action.type == ActionType.CHECK
+    assert [tool["function"]["name"] for tool in agent.tools] == ["apply_action"]
+    results = [event for event in events if event["type"] == "tool_result"]
+    assert results[0]["ok"] is False
+    assert "未知工具" in results[0]["summary"]
+    assert "apply_action" in results[0]["summary"]
+
+
+def test_require_estimate_each_turn_skips_river() -> None:
+    agent, events = build_agent(
+        [
+            {"tool_calls": [{"name": "apply_action", "arguments": '{"action": "check"}'}]},
+            {
+                "tool_calls": [
+                    {
+                        "name": "estimate_hand_probabilities",
+                        "arguments": '{"iterations": 3000}',
+                    }
+                ]
+            },
+            {"tool_calls": [{"name": "apply_action", "arguments": '{"action": "check"}'}]},
+        ],
+        runtime={
+            "require_estimate_each_turn": True,
+            "skip_estimate_on_complete_board": True,
+        },
+    )
+    action = agent.decide(make_view(), events.append)
+    assert action.type == ActionType.CHECK
+    results = [event for event in events if event["type"] == "tool_result"]
+    assert results[0]["ok"] is False
+    assert "本回合在调用 apply_action 之前" in results[0]["summary"]
+
+    river_agent, river_events = build_agent(
+        [{"tool_calls": [{"name": "apply_action", "arguments": '{"action": "check"}'}]}],
+        runtime={
+            "require_estimate_each_turn": True,
+            "skip_estimate_on_complete_board": True,
+        },
+    )
+    river_view = replace(
+        make_view(),
+        street="river",
+        community=["Qh", "Jh", "2c", "7d", "9s"],
+    )
+    river_action = river_agent.decide(river_view, river_events.append)
+    assert river_action.type == ActionType.CHECK
+    assert river_agent.client.calls == 1
+    river_results = [event for event in river_events if event["type"] == "tool_result"]
+    assert river_results[0]["ok"] is True
+
+
+def test_system_prompt_matches_available_tools() -> None:
+    control = build_system_prompt(("apply_action",))
+    assert "estimate_hand_probabilities" not in control
+    assert "get_random_number" not in control
+    assert "本回合你只需要调用 apply_action" in control
+
+    treatment = build_system_prompt(
+        ALL_TOOL_NAMES,
+        require_estimate_each_turn=True,
+    )
+    assert "只要公共牌少于五张" in treatment
+    assert "河牌圈五张公共牌全部发出后不再要求" in treatment
+    assert "get_random_number" in treatment
 
 
 def test_unknown_tool_is_reported() -> None:

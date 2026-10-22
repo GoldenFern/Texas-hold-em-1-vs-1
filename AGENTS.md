@@ -32,6 +32,7 @@ python scripts/train_project_bot.py --algorithm dqn --hands 100000 --opponent mi
 python scripts/eval_project_bots.py --hands 2000
 python scripts/eval_bots.py --hands 2000 --allow-untrained   # 离线 Bot 评测；缺模型时用未训练网络占位
 python scripts/eval_llm_vs_bot.py --hands 25 --workers 25   # LLM vs Project DQN，25 手并发
+python scripts/eval_llm_vs_llm.py --hands 100 --workers 5  # LLM vs LLM 工具使用对照，100 手 5 并发
 ```
 
 `.env` 从 `.env.example` 复制；**不要读取或打印真实 Key**，只检查环境变量是否存在。
@@ -89,6 +90,8 @@ python scripts/eval_llm_vs_bot.py --hands 25 --workers 25   # LLM vs Project DQN
 - 每回合必须调用 `apply_action` 恰好一次；非法则把错误 + 约束 + 合法动作作为 tool 消息回传，让模型重试。
 - 估算工具是可选辅助，默认不强制（`require_estimate_first: false`）。系统提示词和工具描述只说明用途与可选性，不引导也不劝阻调用，由模型自行判断。打开开关后只会在每条街第一次 `apply_action` 前软提醒一次，不计入三次失败；`get_random_number` 不能满足这个开关。
 - 估算工具单回合默认最多 2 次、总采样 50000 次（`config/game.json`），避免阻塞游戏线程。
+- `LLMAgent` 支持按座位传入 `tools` 与 `system_prompt`；`select_tools` 只暴露指定工具，未暴露的工具调用会按未知工具拒绝。`require_estimate_each_turn` 要求每次行动前估算一次，`skip_estimate_on_complete_board` 让河牌圈免于该要求。
+- `scripts/eval_llm_vs_llm.py` 做 LLM 对 LLM 的工具使用对照：对照组只有 `apply_action`，工具组有估算/随机/行动并要求河牌前逐回合估算；输出在 `tmp/llm_vs_llm/`。
 - 上下文预算会计入 `reasoning_content`、工具名、参数和 tool id；每轮模型调用前都会重新检查并裁剪。
 - `LLMAgent.cancel()` 会设置取消标记，客户端在每次流式读取前检查，旧比赛不会继续烧模型调用。
 - 厂商 4xx 文本在进入 `LLMError` 前会脱敏，`last_error`、状态快照和 `/api/llm/test` 都不能包含 Key。
