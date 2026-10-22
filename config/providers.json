@@ -324,6 +324,7 @@
         {
           "id": "gpt-6-luna",
           "name": "GPT-6 Luna",
+          "icon": "openai.svg",
           "tagline": "1M 上下文 · 推理模型 · 4Router 0.45 分组",
           "context_window": 1050000,
           "max_output": 128000,

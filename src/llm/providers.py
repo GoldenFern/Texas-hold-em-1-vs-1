@@ -17,6 +17,7 @@ class ModelSpec:
     provider_id: str
     provider_name: str
     provider_icon: str
+    model_icon: str
     provider_accent: str
     base_url: str
     api_key_env: str
@@ -94,7 +95,7 @@ class ModelSpec:
         return {
             "provider_id": self.provider_id,
             "provider_name": self.provider_name,
-            "icon": self.provider_icon,
+            "icon": self.model_icon or self.provider_icon,
             "accent": self.provider_accent,
             "base_url": self.base_url,
             "api_key_env": self.api_key_env,
@@ -141,6 +142,7 @@ class ProviderRegistry:
                     provider_id=provider["id"],
                     provider_name=provider["name"],
                     provider_icon=provider.get("icon", ""),
+                    model_icon=model.get("icon", ""),
                     provider_accent=provider.get("accent", "#888888"),
                     base_url=provider.get("base_url", ""),
                     api_key_env=provider.get("api_key_env", ""),

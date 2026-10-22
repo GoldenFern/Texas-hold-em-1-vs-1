@@ -865,7 +865,7 @@ class GameSession:
                 spec = self.registry.resolve(config.provider_id, config.model_id)
                 info["model_name"] = spec.name
                 info["provider_name"] = spec.provider_name
-                info["icon"] = spec.provider_icon
+                info["icon"] = spec.model_icon or spec.provider_icon
                 info["accent"] = spec.provider_accent
             except ValueError:
                 pass

@@ -15,6 +15,9 @@ def test_new_models_are_registered() -> None:
     assert gpt.api_key_env == "FOURROUTER_API_KEY"
     assert registry.endpoint(mimo) == "https://api.xiaomimimo.com/v1/chat/completions"
     assert registry.endpoint(gpt) == "https://4router.net/v1/chat/completions"
+    assert gpt.provider_icon == "4router.svg"
+    assert gpt.model_icon == "openai.svg"
+    assert gpt.public_dict(True)["icon"] == "openai.svg"
 
 
 def test_mimo_payload_uses_thinking_toggle() -> None:
