@@ -155,7 +155,7 @@ python scripts/eval_llm_vs_llm.py --hands 100 --workers 5  # LLM vs LLM 工具�
 - 当前行动座位用加强的金色描边、外层光环和呼吸动画（`.seat.active .pod`、`::before`、`turn-flag`）一起突出；不要退回单层细边框。
 - 动作文案统一走 `frontend/src/actionMeta.ts` 的 `describeAction`；取某个座位当前街最后动作走 `lastActionForSeat`。
 - 下注/跟注动作触发筹码飞向 POT 和 POT 脉冲；弃牌、过牌不飞筹码。首次加载和重连不补播动画。
-- 思考流按手牌插入 `HAND #N` 分隔符。新一手发牌时（即使当前是人类先行动、Agent 还没出手）就插入新分隔符并把滚动位置锚定到它顶部，历史留在上方；此时暂停自动跟随，点「回到最新」或滚到底部后恢复。不要在 Agent 首次行动时才补分隔符。
+- 思考流按手牌插入 `HAND #N` 分隔符。新一手发牌时（即使当前是人类先行动、Agent 还没出手）就插入新分隔符并把滚动位置锚定到它顶部，旧历史留在上方且移出视野。用户没有手动滚动时，等该座位在这手产生第一条输出后恢复自动跟随，长内容继续向下滚动；用户手动上滚则取消待恢复的跟随，点「回到最新」或滚到底部后恢复。不要在 Agent 首次行动时才补分隔符。
 - 思考块默认在正文开始后自动折叠；手动折叠任一块后，后续思考（含流式中）默认折叠。偏好由 `frontend/src/reasoning.ts` 存到 localStorage，控制台的「思考默认折叠」徽标可恢复自动。手动展开只影响当前块，不改变全局偏好。
 - `turn_state` 事件保存发给模型的原样牌局输入，在 `AgentTurn` 的「牌局输入」折叠块中可查。
 - `AgentTurn` 底部的阶段文案由 `turnPhase.ts` 根据最后一条 message 与 tool 状态推导；不要再用 `turn.status === "running"` 当作“等待工具调用”。

@@ -20,6 +20,7 @@ let scrollFrame = 0;
 let seenHandId: number | null = null;
 let anchorToken = 0;
 let anchorGuardUntil = 0;
+let autoFollowHandId: number | null = null;
 
 const selectedInfo = computed(() => {
   if (game.selectedSeat === null) return null;
@@ -130,6 +131,7 @@ function onScroll(): void {
   if (!el) return;
   if (performance.now() < anchorGuardUntil) return;
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  if (!atBottom) autoFollowHandId = null;
   stick.value = atBottom;
   showJump.value = !atBottom && mode.value === "stream";
   if (atBottom && anchorTail.value > 0) {
@@ -154,20 +156,30 @@ function scheduleScroll(): void {
 function clearAnchor(): void {
   anchorToken += 1;
   anchorTail.value = 0;
+  autoFollowHandId = null;
+}
+
+function resumeHandFollow(handId: number): void {
+  if (autoFollowHandId !== handId) return;
+  clearAnchor();
+  stick.value = true;
+  showJump.value = false;
+  void nextTick(scrollToBottom);
 }
 
 /**
  * Put the first divider of a fresh hand at the top of the stream.
  *
  * A temporary tail gives a short hand enough scroll range to reach the top.
- * Follow mode stays paused so the new hand can be read from its beginning;
- * the "回到最新" button removes the tail and resumes following.
+ * The old history stays above the viewport. Once the selected agent produces
+ * its first turn in this hand, resume following so long output keeps scrolling
+ * like a live log. A manual upward scroll cancels that pending resume.
  */
 async function anchorNewHand(handId: number): Promise<void> {
   const token = ++anchorToken;
   anchorGuardUntil = performance.now() + 600;
   stick.value = false;
-  showJump.value = true;
+  showJump.value = false;
   cancelAnimationFrame(scrollFrame);
   await nextTick();
   const el = scrollEl.value;
@@ -196,7 +208,10 @@ async function anchorNewHand(handId: number): Promise<void> {
   anchorGuardUntil = performance.now() + 220;
   el.scrollTop += nextTarget.top - nextContainer.top;
   stick.value = false;
-  showJump.value = true;
+  showJump.value = false;
+  if ((latestHandId.value ?? 0) >= handId) {
+    resumeHandFollow(handId);
+  }
 }
 
 function jumpLatest(): void {
@@ -257,10 +272,16 @@ watch(streamHandId, (handId) => {
   }
   if (handId > seenHandId) {
     seenHandId = handId;
+    autoFollowHandId = handId;
     void anchorNewHand(handId);
     return;
   }
   seenHandId = handId;
+});
+
+watch(latestHandId, (handId) => {
+  if (handId === null) return;
+  resumeHandFollow(handId);
 });
 
 onMounted(() => {
