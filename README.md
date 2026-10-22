@@ -165,6 +165,8 @@ python scripts/eval_project_bots.py --hands 2000
 
 模型输出到 `models/rlcard/nlh_dqn_project.pth` / `nlh_nfsp_project.pth`。UI 里选 **Project DQN** 或 **Project NFSP**。训练细节见 [`docs/training.md`](docs/training.md)。
 
+> 说明：仓库里的强化学习模型是实验训练产物，我个人觉得目前表现比较糟糕，仅供参考，不代表强 Bot 水平。
+
 ---
 
 ## LLM 接入
