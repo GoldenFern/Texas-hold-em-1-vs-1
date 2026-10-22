@@ -20,7 +20,7 @@ let scrollFrame = 0;
 let seenHandId: number | null = null;
 let anchorToken = 0;
 let anchorGuardUntil = 0;
-let autoFollowHandId: number | null = null;
+let followHandId: number | null = null;
 
 const selectedInfo = computed(() => {
   if (game.selectedSeat === null) return null;
@@ -131,10 +131,12 @@ function onScroll(): void {
   if (!el) return;
   if (performance.now() < anchorGuardUntil) return;
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-  if (!atBottom) autoFollowHandId = null;
+  if (!atBottom) {
+    followHandId = null;
+  }
   stick.value = atBottom;
   showJump.value = !atBottom && mode.value === "stream";
-  if (atBottom && anchorTail.value > 0) {
+  if (atBottom && followHandId === null && anchorTail.value > 0) {
     anchorTail.value = 0;
   }
 }
@@ -149,6 +151,7 @@ function scrollToBottom(): void {
 
 function scheduleScroll(): void {
   if (!stick.value) return;
+  syncFollowTail();
   cancelAnimationFrame(scrollFrame);
   scrollFrame = requestAnimationFrame(scrollToBottom);
 }
@@ -156,62 +159,56 @@ function scheduleScroll(): void {
 function clearAnchor(): void {
   anchorToken += 1;
   anchorTail.value = 0;
-  autoFollowHandId = null;
+  followHandId = null;
 }
 
-function resumeHandFollow(handId: number): void {
-  if (autoFollowHandId !== handId) return;
-  clearAnchor();
-  stick.value = true;
-  showJump.value = false;
-  void nextTick(scrollToBottom);
+/**
+ * Keep the new hand pinned to the top while it is shorter than the viewport.
+ *
+ * The spacer below the stream fills the remaining height, so the previous
+ * hand stays above the visible area. Once the new hand grows taller than the
+ * viewport the spacer becomes zero and normal bottom-follow takes over.
+ */
+function syncFollowTail(): void {
+  const handId = followHandId;
+  const el = scrollEl.value;
+  if (handId === null || !el) return;
+  const target = el.querySelector<HTMLElement>(`[data-hand-id="${handId}"]`);
+  if (!target) return;
+  const containerRect = el.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const targetTop = targetRect.top - containerRect.top + el.scrollTop;
+  const contentBelow = el.scrollHeight - anchorTail.value - targetTop;
+  const nextTail = Math.max(0, Math.ceil(el.clientHeight - contentBelow));
+  if (nextTail !== anchorTail.value) {
+    anchorTail.value = nextTail;
+  }
+  if (nextTail === 0) {
+    followHandId = null;
+  }
 }
 
 /**
  * Put the first divider of a fresh hand at the top of the stream.
  *
- * A temporary tail gives a short hand enough scroll range to reach the top.
- * The old history stays above the viewport. Once the selected agent produces
- * its first turn in this hand, resume following so long output keeps scrolling
- * like a live log. A manual upward scroll cancels that pending resume.
+ * The dynamic tail keeps the previous hand outside the viewport while the new
+ * hand is still short, then normal bottom-follow continues as it grows. A
+ * manual upward scroll clears followHandId and lets the user read history.
  */
 async function anchorNewHand(handId: number): Promise<void> {
   const token = ++anchorToken;
+  followHandId = handId;
   anchorGuardUntil = performance.now() + 600;
-  stick.value = false;
+  stick.value = true;
   showJump.value = false;
   cancelAnimationFrame(scrollFrame);
   await nextTick();
-  const el = scrollEl.value;
-  if (!el || token !== anchorToken) return;
-  const target = el.querySelector<HTMLElement>(`[data-hand-id="${handId}"]`);
-  if (!target) {
-    stick.value = true;
-    showJump.value = false;
-    return;
-  }
-
-  anchorTail.value = 0;
+  if (token !== anchorToken) return;
+  syncFollowTail();
   await nextTick();
   if (token !== anchorToken) return;
-
-  const containerRect = el.getBoundingClientRect();
-  const targetRect = target.getBoundingClientRect();
-  const targetTop = targetRect.top - containerRect.top + el.scrollTop;
-  const contentBelow = el.scrollHeight - targetTop;
-  anchorTail.value = Math.max(0, Math.ceil(el.clientHeight - contentBelow));
-  await nextTick();
-  if (token !== anchorToken) return;
-
-  const nextContainer = el.getBoundingClientRect();
-  const nextTarget = target.getBoundingClientRect();
   anchorGuardUntil = performance.now() + 220;
-  el.scrollTop += nextTarget.top - nextContainer.top;
-  stick.value = false;
-  showJump.value = false;
-  if ((latestHandId.value ?? 0) >= handId) {
-    resumeHandFollow(handId);
-  }
+  scrollToBottom();
 }
 
 function jumpLatest(): void {
@@ -272,16 +269,10 @@ watch(streamHandId, (handId) => {
   }
   if (handId > seenHandId) {
     seenHandId = handId;
-    autoFollowHandId = handId;
     void anchorNewHand(handId);
     return;
   }
   seenHandId = handId;
-});
-
-watch(latestHandId, (handId) => {
-  if (handId === null) return;
-  resumeHandFollow(handId);
 });
 
 onMounted(() => {
