@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { reasoningDefaultCollapsed, setReasoningDefaultCollapsed } from "../reasoning";
 import AppIcon from "./AppIcon.vue";
 
 const props = withDefaults(
@@ -11,29 +12,27 @@ const props = withDefaults(
   { streaming: false, collapse: false },
 );
 
-const open = ref(!props.collapse);
+const open = ref(true);
 const userToggled = ref(false);
 const charCount = computed(() => props.text.length);
 
-watch(
-  () => props.collapse,
-  (collapse) => {
-    if (userToggled.value) return;
-    open.value = !collapse;
-  },
-  { immediate: true },
-);
+function applyDefault(): void {
+  open.value = !reasoningDefaultCollapsed.value && (props.streaming || !props.collapse);
+}
 
 watch(
-  () => props.streaming,
-  (streaming) => {
-    if (streaming && !userToggled.value) open.value = true;
+  () => [props.collapse, props.streaming, reasoningDefaultCollapsed.value] as const,
+  () => {
+    if (userToggled.value) return;
+    applyDefault();
   },
+  { immediate: true },
 );
 
 function toggle(): void {
   open.value = !open.value;
   userToggled.value = true;
+  if (!open.value) setReasoningDefaultCollapsed(true);
 }
 </script>
 

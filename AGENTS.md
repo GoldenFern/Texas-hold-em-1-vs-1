@@ -147,7 +147,7 @@ python scripts/eval_llm_vs_llm.py --hands 100 --workers 5  # LLM vs LLM 工具�
   - `AnalysisPanel`（唯一可视化：最终牌型分布）
   - `SetupModal`（Provider/模型/参数/规则）
   - `ResultOverlay`、`ToastHost`
-- 思考块在正文开始后自动折叠；用户手动展开后不再自动折叠。
+- 思考块默认在正文开始后自动折叠；手动折叠任一块后，后续思考（含流式中）默认折叠。偏好由 `frontend/src/reasoning.ts` 存到 localStorage，控制台的「思考默认折叠」徽标可恢复自动。手动展开只影响当前块，不改变全局偏好。
 - `turn_state` 事件保存发给模型的原样牌局输入，在 `AgentTurn` 的「牌局输入」折叠块中可查。
 - `AgentTurn` 底部的阶段文案由 `turnPhase.ts` 根据最后一条 message 与 tool 状态推导；不要再用 `turn.status === "running"` 当作“等待工具调用”。
 - 工具卡片默认展开；估算工具显示迷你分布条，随机数工具显示数值和 0 到 1 刻度，动作工具显示动作徽章/错误约束。

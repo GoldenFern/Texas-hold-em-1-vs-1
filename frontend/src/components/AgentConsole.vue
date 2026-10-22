@@ -5,6 +5,7 @@ import AgentTurn from "./AgentTurn.vue";
 import PlayingCard from "./PlayingCard.vue";
 import { iconUrl } from "../api";
 import { actionLabel, chips, shortName, streetShort } from "../format";
+import { reasoningDefaultCollapsed, setReasoningDefaultCollapsed } from "../reasoning";
 import { agentSeats, followLive, game, humanSeat, openSetup, selectSeat } from "../store";
 import type { ActionEntry, BotDecisionView, TurnView } from "../types";
 
@@ -219,6 +220,16 @@ onUnmounted(() => {
         <span v-if="selectedInfo.agent?.agent_type" class="chip mono">{{ selectedInfo.agent.agent_type }}</span>
         <span v-if="selectedLive" class="chip emerald"><span class="dot live"></span>生成中</span>
         <span class="chip faint">{{ turns.length }} turns</span>
+        <button
+          v-if="reasoningDefaultCollapsed"
+          class="chip action"
+          type="button"
+          title="新思考默认折叠，点击恢复自动折叠"
+          @click="setReasoningDefaultCollapsed(false)"
+        >
+          <AppIcon name="eyeOff" :size="11" />
+          思考默认折叠
+        </button>
       </div>
       <div v-else-if="mode === 'log'" class="console-meta">
         <span class="chip">全部玩家</span>
@@ -523,6 +534,17 @@ onUnmounted(() => {
 }
 
 .console-meta .chip { font-size: calc(8.5px * var(--type-scale)); padding: 2px 6px; }
+
+.console-meta .chip.action {
+  cursor: pointer;
+  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+
+.console-meta .chip.action:hover {
+  color: var(--gold);
+  border-color: rgba(232, 195, 122, 0.35);
+  background: var(--gold-dim);
+}
 
 .console-scroll {
   flex: 1;
