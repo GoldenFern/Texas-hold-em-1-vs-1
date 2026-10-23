@@ -586,15 +586,20 @@ onUnmounted(() => {
 }
 
 .head-top {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "title actions"
+    "tabs tabs";
   align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
   gap: 8px 10px;
   padding: 12px 14px 9px;
 }
 
-.head-title { min-width: 0; flex: none; }
+.head-title {
+  grid-area: title;
+  min-width: 0;
+}
 
 .head-title h2 {
   margin: 0;
@@ -604,9 +609,14 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .head-actions {
+  grid-area: actions;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -627,11 +637,11 @@ onUnmounted(() => {
 }
 
 .seat-tabs {
+  grid-area: tabs;
   display: flex;
+  flex-wrap: wrap;
   gap: 5px;
-  flex: 1;
   min-width: 0;
-  overflow-x: auto;
 }
 
 .seat-tab {
