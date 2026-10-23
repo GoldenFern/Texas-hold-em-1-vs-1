@@ -11,7 +11,7 @@
 - 上帝视角：双方底牌、烧牌、完整牌堆
 - LLM：DeepSeek / 火山引擎 / MiniMax / Qwen / 智谱 GLM / Kimi / LongCat / MiMo / 4Router
 - Bot：RLCard（RandomAgent 开箱可用，支持加载 DQN/NFSP/DMC checkpoint）
-- 语言：界面首次打开默认英文，可在顶栏或对局配置里切换中文 / EN，选择会记住；`?lang=zh-CN` 或 `?lang=en` 可以临时覆盖。牌局和 API 校验错误会跟随界面语言。Agent 语言在开局时单独记录，后续会用于提示词和桌边喊话。
+- 语言：界面首次打开默认英文，可在顶栏或对局配置里切换中文 / EN，选择会记住；`?lang=zh-CN` 或 `?lang=en` 可以临时覆盖。牌局和 API 校验错误会跟随界面语言。Agent 语言在开局时单独记录，控制该局的系统提示词、工具说明、工具返回和桌边喊话。
 
 ---
 
@@ -256,6 +256,8 @@ scripts/eval_llm_vs_bot.py    # LLM vs Project Bot 离线评测
 scripts/eval_llm_vs_llm.py    # LLM vs LLM 工具使用对照
 models/rlcard/                # checkpoint 目录（文件 gitignore）
 ```
+
+离线 LLM 评测默认使用中文 Agent 提示词。给 `eval_llm_vs_bot.py`、`eval_llm_vs_llm.py` 或 `eval_llm_tool_matrix.py` 加 `--agent-locale en-US`，即可使用英文提示词和英文工具层。
 
 ---
 

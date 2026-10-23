@@ -13,6 +13,8 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import requests
 
+from src.i18n import normalize_locale, tr
+
 from .providers import ModelSpec, ProviderRegistry
 
 logger = logging.getLogger("hu.llm")
@@ -194,10 +196,12 @@ class LLMClient:
         registry: ProviderRegistry,
         connect_timeout: float = 20.0,
         read_timeout: float = 300.0,
+        locale: str = "zh-CN",
     ) -> None:
         self.registry = registry
         self.connect_timeout = connect_timeout
         self.read_timeout = read_timeout
+        self.locale = normalize_locale(locale, "zh-CN") or "zh-CN"
         self._local = threading.local()
         self._sessions: List[requests.Session] = []
         self._session_lock = threading.Lock()
@@ -239,7 +243,7 @@ class LLMClient:
         on_event: Callable[[dict], None],
         cancel: Optional[Callable[[], bool]] = None,
     ) -> ChatResult:
-        api_key = ProviderRegistry.get_api_key(spec)
+        api_key = ProviderRegistry.get_api_key(spec, locale=self.locale)
         payload = self.registry.build_payload(spec, messages, tools, params, stream=True)
         dropped = self._degraded_fields(spec)
         if dropped:
@@ -250,7 +254,7 @@ class LLMClient:
         last_error: Optional[LLMError] = None
         while attempts < 3:
             if cancel and cancel():
-                raise LLMError("cancelled", "请求已取消")
+                raise LLMError("cancelled", tr(self.locale, "client.cancelled"))
             attempts += 1
             try:
                 result = self._stream_once(spec, api_key, payload, on_event, cancel)
@@ -272,20 +276,32 @@ class LLMClient:
                             {
                                 "type": "note",
                                 "level": "warn",
-                                "text": "厂商拒绝了部分可选参数，已自动降级重试。",
+                                "text": tr(self.locale, "client.param_degraded"),
                             }
                         )
                         continue
                 raise
             except requests.Timeout as exc:
-                raise LLMError("timeout", f"请求超时: {exc}", api_key=api_key) from exc
+                raise LLMError(
+                    "timeout",
+                    tr(self.locale, "client.timeout", error=exc),
+                    api_key=api_key,
+                ) from exc
             except requests.ConnectionError as exc:
-                raise LLMError("network", f"网络连接失败: {exc}", api_key=api_key) from exc
+                raise LLMError(
+                    "network",
+                    tr(self.locale, "client.network", error=exc),
+                    api_key=api_key,
+                ) from exc
             except Exception as exc:  # noqa: BLE001
-                raise LLMError("unknown", f"{type(exc).__name__}: {exc}", api_key=api_key) from exc
+                raise LLMError(
+                    "unknown",
+                    tr(self.locale, "client.unknown_detail", error=f"{type(exc).__name__}: {exc}"),
+                    api_key=api_key,
+                ) from exc
         if last_error:
             raise last_error
-        raise LLMError("unknown", "未知错误")
+        raise LLMError("unknown", tr(self.locale, "client.unknown"))
 
     # ------------------------------------------------------------------
     # Streaming
@@ -329,7 +345,11 @@ class LLMClient:
             try:
                 data = response.json()
             except ValueError as exc:
-                raise LLMError("server", f"返回的 JSON 无效: {exc}", api_key=api_key) from exc
+                raise LLMError(
+                    "server",
+                    tr(self.locale, "client.invalid_json", error=exc),
+                    api_key=api_key,
+                ) from exc
             finally:
                 response.close()
             return self._parse_completion(api_key, payload, data, start, on_event)
@@ -348,7 +368,7 @@ class LLMClient:
         try:
             for raw_line in response.iter_lines(decode_unicode=False):
                 if cancel and cancel():
-                    raise LLMError("cancelled", "请求已取消")
+                    raise LLMError("cancelled", tr(self.locale, "client.cancelled"))
                 if raw_line is None:
                     continue
                 line = raw_line.decode("utf-8", errors="replace").strip() if isinstance(raw_line, bytes) else str(raw_line).strip()
@@ -426,7 +446,7 @@ class LLMClient:
             response.close()
 
         if cancel and cancel():
-            raise LLMError("cancelled", "请求已取消")
+            raise LLMError("cancelled", tr(self.locale, "client.cancelled"))
         latency_ms = (time.perf_counter() - start) * 1000.0
 
         if not saw_event:
@@ -435,7 +455,7 @@ class LLMClient:
                     {
                         "type": "note",
                         "level": "warn",
-                        "text": "流式响应格式异常，已尝试非流式重试。",
+                        "text": tr(self.locale, "client.stream_format"),
                     }
                 )
             # Some gateways silently return an empty SSE stream or pretty JSON.
@@ -445,14 +465,14 @@ class LLMClient:
             if not tool_calls and not content_parts and not reasoning_parts:
                 raise LLMError(
                     "network",
-                    f"流式连接中断: {stream_error}",
+                    tr(self.locale, "client.stream_interrupted", error=stream_error),
                     api_key=api_key,
                 )
             on_event(
                 {
                     "type": "note",
                     "level": "warn",
-                    "text": "流式连接中断，已保留本次已收到的内容。",
+                    "text": tr(self.locale, "client.stream_interrupted_keep"),
                 }
             )
 
@@ -494,7 +514,7 @@ class LLMClient:
         cancel: Optional[Callable[[], bool]] = None,
     ) -> ChatResult:
         if cancel and cancel():
-            raise LLMError("cancelled", "请求已取消")
+            raise LLMError("cancelled", tr(self.locale, "client.cancelled"))
         fallback = dict(payload)
         fallback["stream"] = False
         fallback.pop("stream_options", None)
@@ -521,11 +541,19 @@ class LLMClient:
         try:
             data = response.json()
         except ValueError as exc:
-            raise LLMError("server", f"返回的 JSON 无效: {exc}", api_key=api_key) from exc
+            raise LLMError(
+                "server",
+                tr(self.locale, "client.invalid_json", error=exc),
+                api_key=api_key,
+            ) from exc
         finally:
             response.close()
         if not isinstance(data, dict):
-            raise LLMError("server", "厂商返回了非对象 JSON", api_key=api_key)
+            raise LLMError(
+                "server",
+                tr(self.locale, "client.non_object_json"),
+                api_key=api_key,
+            )
         return self._parse_completion(api_key, payload, data, start, on_event)
 
     def _parse_completion(
@@ -537,7 +565,11 @@ class LLMClient:
         on_event: Callable[[dict], None],
     ) -> ChatResult:
         if not isinstance(data, dict):
-            raise LLMError("server", "厂商返回了非对象 JSON", api_key=api_key)
+            raise LLMError(
+                "server",
+                tr(self.locale, "client.non_object_json"),
+                api_key=api_key,
+            )
         if isinstance(data.get("error"), dict):
             error = data["error"]
             detail = error.get("message") or json.dumps(error, ensure_ascii=False)

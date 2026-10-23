@@ -19,12 +19,13 @@ from src.analysis.equity import (
 )
 from src.analysis.hand_distribution import HandDistributionAnalyzer
 from src.analysis.pot_odds import analyze_call
-from src.engine.actions import Action, ActionType
+from src.engine.actions import Action, ActionType, action_label
 from src.engine.cards import Card
+from src.engine.evaluator import hand_category_name
+from src.i18n import normalize_locale, tr
 
 from .client import LLMClient, LLMError, ToolCall, estimate_tokens
 from .prompt import (
-    SYSTEM_PROMPT,
     TABLE_TALK_TOOL_NAME,
     build_final_table_talk_message,
     build_hand_result_message,
@@ -32,150 +33,17 @@ from .prompt import (
     build_system_prompt,
     build_turn_message,
 )
+from .prompt_texts import prompt_text
 from .providers import ModelSpec
 from .table_talk import TableTalkLimits
-
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "estimate_hand_probabilities",
-            "description": (
-                "根据你的两张底牌和当前公共牌，估算你最终最佳五张牌分别成为"
-                "皇家同花顺/同花顺/四条/葫芦/同花/顺子/三条/两对/一对/高牌的概率。"
-                "这是牌型分布，不是胜率。是否调用由你自行判断。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "iterations": {
-                        "type": "integer",
-                        "minimum": 2000,
-                        "maximum": 50000,
-                        "description": "蒙特卡洛采样次数；翻牌前建议 20000-50000，翻牌后引擎会自动精确枚举。单回合总采样有上限。",
-                    }
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "estimate_equity",
-            "description": (
-                "估算当前牌局的摊牌 equity。对手按剩余牌均匀随机；"
-                "河牌和转牌精确枚举，翻牌和翻前蒙特卡洛。"
-                "返回赢/平/输概率，equity = 胜率 + 平局率/2。不需要参数。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_random_number",
-            "description": (
-                "返回一个 [0, 1) 区间的均匀随机数。"
-                "只有在你完成理性分析后，几种选择的期望仍然非常接近、确实拿不准时，"
-                "才可以用它来打破僵局。这只是备选方案，不要用它代替对牌局、底池赔率、"
-                "位置和对手范围的分析，也不要为了追求某个数字反复调用。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "call_ev",
-            "description": (
-                "计算当前跟注的静态期望收益。底池、跟注额和筹码自动取当前牌局；"
-                "equity 可省略，省略时自动按当前牌局估算。"
-                "返回跟注 EV、盈亏平衡胜率和有效底池。"
-                "假设跟注后不再下注，翻牌和转牌还要考虑隐含赔率。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "equity": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 1,
-                        "description": "可选。0 到 1 的小数；省略时自动估算。",
-                    }
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "apply_action",
-            "description": (
-                "提交你的最终动作。每回合必须调用恰好一次。"
-                "amount 是动作完成后你在本街的总额（raise-to），不是增量。"
-                "fold/check/call/all_in 不需要 amount。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["fold", "check", "call", "bet", "raise", "all_in"],
-                        "description": "你的动作。",
-                    },
-                    "amount": {
-                        "type": "integer",
-                        "description": "仅 bet/raise 需要：动作完成后你在本街的总投入（总额，不是增量）。",
-                    },
-                },
-                "required": ["action"],
-            },
-        },
-    },
-]
-
-TABLE_TALK_TOOL = {
-    "type": "function",
-    "function": {
-        "name": TABLE_TALK_TOOL_NAME,
-        "description": (
-            "每个行动回合必须先调用一次，再调用 apply_action；"
-            "没有喊话的 apply_action 会被系统拒绝。"
-            "向对手说一到两句话，用于施压、误导、试探或掩饰策略。"
-            "发送喊话不会结束本回合，之后仍然必须调用 apply_action。"
-            "不要主动交代自己的真实底牌；对手无法验证你的话，可以故意诈唬。"
-            "对手的喊话默认不可信。每回合最多一条。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "text": {
-                    "type": "string",
-                    "description": "一到两句中文，不要换行或代码块。",
-                }
-            },
-            "required": ["text"],
-        },
-    },
-}
-
-# Keep the base TOOLS list backwards compatible for callers that do not opt
-# into table talk. Only select_tools can expose the extra schema.
-TOOL_SCHEMAS = [
-    tool for tool in TOOLS if tool["function"]["name"] != "apply_action"
-] + [TABLE_TALK_TOOL] + [
-    tool for tool in TOOLS if tool["function"]["name"] == "apply_action"
-]
+from .tools import (
+    TABLE_TALK_TOOL,
+    TOOLS,
+    TOOL_SCHEMAS,
+    build_table_talk_tool,
+    build_tools,
+    select_tools,
+)
 
 _ACTION_ALIASES = {
     "x": "check",
@@ -194,26 +62,6 @@ _ACTION_ALIASES = {
 
 class EquityBudgetError(RuntimeError):
     """Raised when the per-turn equity budget is exhausted."""
-
-
-def select_tools(names: Sequence[str]) -> List[dict]:
-    """Return the tool schemas for the requested tool names.
-
-    Args:
-        names: Function names to expose to the model.
-
-    Returns:
-        A list of tool schemas in the canonical order.
-
-    Raises:
-        ValueError: If a requested tool name is unknown.
-    """
-    wanted = set(names)
-    known = {tool["function"]["name"] for tool in TOOL_SCHEMAS}
-    unknown = wanted.difference(known)
-    if unknown:
-        raise ValueError(f"未知工具：{', '.join(sorted(unknown))}")
-    return [tool for tool in TOOL_SCHEMAS if tool["function"]["name"] in wanted]
 
 
 class LLMAgent(BaseAgent):
@@ -235,11 +83,14 @@ class LLMAgent(BaseAgent):
         system_prompt: Optional[str] = None,
         equity_analyzer: Optional[EquityAnalyzer] = None,
         submit_table_talk: Optional[Callable[[str, str], dict]] = None,
+        locale: str = "zh-CN",
     ) -> None:
         self.seat = seat
         self.name = name
         self.spec = spec
         self.params = spec.normalize_params(params)
+        self.locale = normalize_locale(locale, "zh-CN") or "zh-CN"
+        self._turn_marker = prompt_text(self.locale)["turn_marker"]
         self.client = client
         self.analyzer = analyzer
         self.equity_analyzer = equity_analyzer or EquityAnalyzer()
@@ -264,25 +115,24 @@ class LLMAgent(BaseAgent):
         self.max_equity_calls = int(runtime.get("max_equity_calls_per_turn", 2))
         self.max_equity_iterations = int(runtime.get("max_equity_iterations", 50000))
         self.table_talk_limits = TableTalkLimits.from_runtime(runtime)
-        self.tools = list(tools) if tools is not None else list(TOOLS)
+        self.tools = list(tools) if tools is not None else build_tools(self.locale)
         self.tool_names = {tool["function"]["name"] for tool in self.tools}
         self.table_talk_required = TABLE_TALK_TOOL_NAME in self.tool_names
         if self.require_estimate_each_turn and "estimate_hand_probabilities" not in self.tool_names:
-            raise ValueError("启用每回合估算要求时必须提供 estimate_hand_probabilities 工具")
+            raise ValueError(self._t("agent.constructor.estimate_required"))
         self.submit_table_talk = submit_table_talk
         if TABLE_TALK_TOOL_NAME in self.tool_names and submit_table_talk is None:
-            raise ValueError("启用桌边喊话工具时必须提供 submit_table_talk 回调")
+            raise ValueError(self._t("agent.constructor.table_talk_callback"))
         if system_prompt:
             self.system_prompt = system_prompt
-        elif TABLE_TALK_TOOL_NAME in self.tool_names:
+        else:
             self.system_prompt = build_system_prompt(
                 tuple(self.tool_names),
                 require_estimate_each_turn=self.require_estimate_each_turn,
                 table_talk_max_chars=self.table_talk_limits.max_chars,
                 table_talk_max_per_turn=self.table_talk_limits.max_per_turn,
+                locale=self.locale,
             )
-        else:
-            self.system_prompt = SYSTEM_PROMPT
         self.messages: List[dict] = [{"role": "system", "content": self.system_prompt}]
         self.turn_count = 0
         self._estimated_keys: set[tuple[int, str]] = set()
@@ -298,6 +148,14 @@ class LLMAgent(BaseAgent):
         self.last_error = ""
         self._trimmed = False
         self._cancel_event = threading.Event()
+
+    def _t(self, message_key: str, **params: object) -> str:
+        return tr(self.locale, message_key, **params)
+
+    def _sync_client_locale(self) -> None:
+        """Keep provider-facing client errors in the agent's language."""
+        if hasattr(self.client, "locale"):
+            self.client.locale = self.locale
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -326,7 +184,7 @@ class LLMAgent(BaseAgent):
     def on_hand_finished(self, result: Optional[dict]) -> None:
         if not result:
             return
-        text = build_hand_result_message(result, self.seat, self.name)
+        text = build_hand_result_message(result, self.seat, self.name, locale=self.locale)
         self.messages.append({"role": "user", "content": text})
 
     def final_table_talk(
@@ -338,10 +196,13 @@ class LLMAgent(BaseAgent):
         """Ask the model for one optional post-match table-talk message."""
         if not self.table_talk_required or self._cancel_event.is_set():
             return
-        prompt = build_final_table_talk_message(result, self.seat, self.name)
+        self._sync_client_locale()
+        prompt = build_final_table_talk_message(
+            result, self.seat, self.name, locale=self.locale
+        )
         self.messages.append({"role": "user", "content": prompt})
         self._trim_context(emit)
-        tools = [TABLE_TALK_TOOL]
+        tools = [build_table_talk_tool(self.locale)]
         for attempt in range(2):
             if self._cancel_event.is_set():
                 return
@@ -359,7 +220,7 @@ class LLMAgent(BaseAgent):
                     {
                         "type": "note",
                         "level": "warn",
-                        "text": f"赛后喊话没有生成：{exc.kind}",
+                        "text": self._t("agent.final.not_generated", kind=exc.kind),
                     }
                 )
                 return
@@ -368,7 +229,10 @@ class LLMAgent(BaseAgent):
                     {
                         "type": "note",
                         "level": "warn",
-                        "text": f"赛后喊话失败：{type(exc).__name__}: {exc}",
+                        "text": self._t(
+                            "agent.final.failed",
+                            error=f"{type(exc).__name__}: {exc}",
+                        ),
                     }
                 )
                 return
@@ -393,8 +257,7 @@ class LLMAgent(BaseAgent):
                         "content": json.dumps(
                             {
                                 "ok": False,
-                                "error": "赛后只接受一次 send_table_message，"
-                                "不要调用其他工具。",
+                                "error": self._t("agent.final.only_message"),
                             },
                             ensure_ascii=False,
                         ),
@@ -428,9 +291,9 @@ class LLMAgent(BaseAgent):
                     self.messages.append(
                         {
                             "role": "user",
-                            "content": (
-                                f"赛后喊话被拒绝：{submitted.get('error', '未知原因')}。"
-                                "请修正后只调用 send_table_message 一次。"
+                            "content": self._t(
+                                "agent.final.rejected",
+                                error=submitted.get("error", self._t("common.unknown")),
                             ),
                         }
                     )
@@ -441,7 +304,7 @@ class LLMAgent(BaseAgent):
                         "tool_call_id": talk_call.id,
                         "name": talk_call.name,
                         "content": json.dumps(
-                            {"ok": False, "error": "text 必须是字符串"},
+                            {"ok": False, "error": self._t("agent.final.text_string")},
                             ensure_ascii=False,
                         ),
                     }
@@ -450,17 +313,14 @@ class LLMAgent(BaseAgent):
                 self.messages.append(
                     {
                         "role": "user",
-                        "content": (
-                            "请只调用 send_table_message 一次，说一句赛后的话；"
-                            "这是赛后发言，不需要调用 apply_action。"
-                        ),
+                        "content": self._t("agent.final.instruction"),
                     }
                 )
         emit(
             {
                 "type": "note",
                 "level": "warn",
-                "text": "赛后喊话没有生成成功。",
+                "text": self._t("agent.final.no_result"),
             }
         )
 
@@ -484,6 +344,7 @@ class LLMAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     def decide(self, view: AgentView, emit) -> Action:
+        self._sync_client_locale()
         turn_id = uuid.uuid4().hex[:12]
         started = time.perf_counter()
         usage_total = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
@@ -518,6 +379,7 @@ class LLMAgent(BaseAgent):
         turn_message = build_turn_message(
             view,
             require_table_talk=self.table_talk_required,
+            locale=self.locale,
         )
         self.messages.append({"role": "user", "content": turn_message})
         emit({"type": "turn_state", "turn_id": turn_id, "text": turn_message})
@@ -612,7 +474,7 @@ class LLMAgent(BaseAgent):
                     started,
                     steps,
                     usage_total,
-                    reason=f"LLM 调用失败（{exc.kind}）",
+                    reason=self._t("agent.llm.failed", kind=exc.kind),
                     allow_check=True,
                 )
             except Exception as exc:  # noqa: BLE001
@@ -644,7 +506,7 @@ class LLMAgent(BaseAgent):
                     started,
                     steps,
                     usage_total,
-                    reason="LLM 调用异常",
+                    reason=self._t("agent.llm.exception"),
                     allow_check=True,
                 )
 
@@ -688,7 +550,11 @@ class LLMAgent(BaseAgent):
                         "type": "note",
                         "level": "warn",
                         "turn_id": turn_id,
-                        "text": f"模型没有调用工具（{failures}/{self.max_failures}），已提醒它提交 apply_action。",
+                        "text": self._t(
+                            "agent.no_tool",
+                            failures=failures,
+                            max=self.max_failures,
+                        ),
                     }
                 )
                 if failures >= self.max_failures:
@@ -699,12 +565,14 @@ class LLMAgent(BaseAgent):
                         started,
                         steps,
                         usage_total,
-                        reason="连续多次没有提交动作",
+                        reason=self._t("agent.reason.no_action"),
                     )
                 self.messages.append(
                     {
                         "role": "user",
-                        "content": build_nudge_message(self.table_talk_required),
+                        "content": build_nudge_message(
+                            self.table_talk_required, locale=self.locale
+                        ),
                     }
                 )
                 continue
@@ -714,7 +582,7 @@ class LLMAgent(BaseAgent):
                 if chosen is not None:
                     self._append_tool_error(
                         call,
-                        "本回合已经提交了动作，后续工具调用被忽略。",
+                        self._t("agent.note.action_submitted"),
                         emit,
                         turn_id,
                         index,
@@ -739,10 +607,15 @@ class LLMAgent(BaseAgent):
 
                 if call.name not in self.tool_names:
                     failures += 1
-                    available = "、".join(sorted(self.tool_names))
+                    separator = "、" if self.locale == "zh-CN" else ", "
+                    available = separator.join(sorted(self.tool_names))
                     self._append_tool_error(
                         call,
-                        f"未知工具 {call.name!r}。本回合可用的工具：{available}。",
+                        self._t(
+                            "agent.error.unknown_tool",
+                            name=repr(call.name),
+                            tools=available,
+                        ),
                         emit,
                         turn_id,
                         index,
@@ -755,7 +628,7 @@ class LLMAgent(BaseAgent):
                             started,
                             steps,
                             usage_total,
-                            reason="连续三次无效动作",
+                            reason=self._t("agent.reason.invalid_action"),
                         )
                     continue
 
@@ -770,7 +643,7 @@ class LLMAgent(BaseAgent):
                                 started,
                                 steps,
                                 usage_total,
-                                reason="连续三次无效动作",
+                                reason=self._t("agent.reason.invalid_action"),
                             )
                     continue
 
@@ -785,7 +658,7 @@ class LLMAgent(BaseAgent):
                                 started,
                                 steps,
                                 usage_total,
-                                reason="连续三次无效动作",
+                                reason=self._t("agent.reason.invalid_action"),
                             )
                     continue
 
@@ -800,7 +673,7 @@ class LLMAgent(BaseAgent):
                                 started,
                                 steps,
                                 usage_total,
-                                reason="连续三次无效动作",
+                                reason=self._t("agent.reason.invalid_action"),
                             )
                     continue
 
@@ -815,7 +688,7 @@ class LLMAgent(BaseAgent):
                                 started,
                                 steps,
                                 usage_total,
-                                reason="连续三次无效动作",
+                                reason=self._t("agent.reason.invalid_action"),
                             )
                     continue
 
@@ -835,7 +708,10 @@ class LLMAgent(BaseAgent):
                         failures += 1
                         self._append_tool_error(
                             call,
-                            f"工具参数不是合法 JSON：{call.arguments[:300]}",
+                            self._t(
+                                "agent.error.invalid_json",
+                                args=call.arguments[:300],
+                            ),
                             emit,
                             turn_id,
                             index,
@@ -848,15 +724,14 @@ class LLMAgent(BaseAgent):
                                 started,
                                 steps,
                                 usage_total,
-                                reason="连续三次无效动作",
+                                reason=self._t("agent.reason.invalid_action"),
                             )
                         continue
 
                     if self.table_talk_required and self._talk_count_this_turn == 0:
                         self._append_tool_error(
                             call,
-                            "本回合必须先调用 send_table_message 至少一次，"
-                            "再调用 apply_action。没有喊话的动作会被拒绝。",
+                            self._t("agent.error.talk_first"),
                             emit,
                             turn_id,
                             index,
@@ -883,20 +758,13 @@ class LLMAgent(BaseAgent):
                             )
                     if requires_estimate:
                         if self.require_estimate_each_turn:
-                            message = (
-                                "本回合在调用 apply_action 之前，请先调用 "
-                                "estimate_hand_probabilities 至少一次；河牌圈五张公共牌"
-                                "全部发出后除外。"
-                            )
+                            message = self._t("agent.error.estimate_required")
                         else:
                             # Soft workflow requirement: one probability check per
                             # street before the first action. Only nudged once, and
                             # it does not count toward the three-failure fallback.
                             self._nudged_keys.add(street_key)
-                            message = (
-                                "在本街的第一次决策前，请先调用 "
-                                "estimate_hand_probabilities 一次，再提交 apply_action。"
-                            )
+                            message = self._t("agent.error.estimate_first_street")
                         self._append_tool_error(
                             call,
                             message,
@@ -926,14 +794,17 @@ class LLMAgent(BaseAgent):
                                 started,
                                 steps,
                                 usage_total,
-                                reason="连续三次无效动作",
+                                reason=self._t("agent.reason.invalid_action"),
                             )
                         continue
 
                     try:
                         validation_error = self.validate_action(action)
                     except Exception as exc:  # noqa: BLE001
-                        validation_error = f"动作校验失败：{type(exc).__name__}: {exc}"
+                        validation_error = self._t(
+                            "agent.error.validation",
+                            error=f"{type(exc).__name__}: {exc}",
+                        )
                     if validation_error:
                         failures += 1
                         self._append_tool_error(
@@ -952,7 +823,7 @@ class LLMAgent(BaseAgent):
                                 started,
                                 steps,
                                 usage_total,
-                                reason="连续三次无效动作",
+                                reason=self._t("agent.reason.invalid_action"),
                             )
                         continue
 
@@ -961,9 +832,9 @@ class LLMAgent(BaseAgent):
                         "ok": True,
                         "accepted": True,
                         "action": action.type.value,
-                        "label": action.type.label,
+                        "label": action_label(action.type.value, self.locale),
                         "amount": action.amount,
-                        "message": "动作已接受，牌局将继续。",
+                        "message": self._t("agent.message.accepted"),
                     }
                     self._append_tool_result(call, payload, emit, turn_id, index, tool_started)
                     continue
@@ -989,7 +860,7 @@ class LLMAgent(BaseAgent):
             started,
             steps,
             usage_total,
-            reason=f"单回合超过 {self.max_steps} 次模型调用",
+            reason=self._t("agent.reason.max_steps", max=self.max_steps),
         )
 
     # ------------------------------------------------------------------
@@ -1009,7 +880,7 @@ class LLMAgent(BaseAgent):
         if parsed is None or not isinstance(parsed, dict):
             self._append_tool_error(
                 call,
-                f"工具参数不是合法 JSON：{call.arguments[:300]}",
+                self._t("agent.error.invalid_json", args=call.arguments[:300]),
                 emit,
                 turn_id,
                 index,
@@ -1018,8 +889,7 @@ class LLMAgent(BaseAgent):
         if self._estimate_calls_this_turn >= self.max_estimate_calls:
             self._append_tool_error(
                 call,
-                f"本回合调用 estimate_hand_probabilities 的次数已达上限 "
-                f"（{self.max_estimate_calls} 次），请直接提交 apply_action。",
+                self._t("agent.error.estimate_limit", max=self.max_estimate_calls),
                 emit,
                 turn_id,
                 index,
@@ -1029,7 +899,7 @@ class LLMAgent(BaseAgent):
         if remaining <= 0:
             self._append_tool_error(
                 call,
-                "本回合的估算采样预算已用完，请直接提交 apply_action。",
+                self._t("agent.error.estimate_budget"),
                 emit,
                 turn_id,
                 index,
@@ -1038,7 +908,7 @@ class LLMAgent(BaseAgent):
         if remaining < 2000:
             self._append_tool_error(
                 call,
-                "本回合剩余估算采样次数不足，请直接提交 apply_action。",
+                self._t("agent.error.estimate_remaining"),
                 emit,
                 turn_id,
                 index,
@@ -1059,11 +929,12 @@ class LLMAgent(BaseAgent):
                 community,
                 hero_seat=view.seat,
                 iterations=iterations,
+                locale=self.locale,
             )
         except Exception as exc:  # noqa: BLE001
             self._append_tool_error(
                 call,
-                f"牌型概率计算失败：{exc}",
+                self._t("agent.error.estimate_failed", error=exc),
                 emit,
                 turn_id,
                 index,
@@ -1073,13 +944,16 @@ class LLMAgent(BaseAgent):
         self._estimate_iterations_this_turn += iterations
         self._estimated_this_turn = True
         self._estimated_keys.add((view.hand_id, view.street))
-        payload = {"ok": True, **result.to_llm_dict()}
+        payload = {"ok": True, **result.to_llm_dict(self.locale)}
         top = sorted(
             (item for item in result.distribution if item["probability"] > 0),
             key=lambda item: item["probability"],
             reverse=True,
         )[:4]
-        summary = " · ".join(f"{item['name']} {item['probability'] * 100:.1f}%" for item in top)
+        summary = " · ".join(
+            f"{hand_category_name(item['key'], self.locale, item.get('name', ''))} {item['probability'] * 100:.1f}%"
+            for item in top
+        )
         self._append_tool_result(
             call,
             payload,
@@ -1105,7 +979,7 @@ class LLMAgent(BaseAgent):
         if parsed is None or not isinstance(parsed, dict):
             self._append_tool_error(
                 call,
-                f"工具参数不是合法 JSON：{call.arguments[:300]}",
+                self._t("agent.error.invalid_json", args=call.arguments[:300]),
                 emit,
                 turn_id,
                 index,
@@ -1119,17 +993,23 @@ class LLMAgent(BaseAgent):
         except Exception as exc:  # noqa: BLE001
             self._append_tool_error(
                 call,
-                f"胜率计算失败：{exc}",
+                self._t("agent.error.equity_failed", error=exc),
                 emit,
                 turn_id,
                 index,
             )
             return True
 
-        payload = {"ok": True, "street": view.street, **result.to_llm_dict()}
-        summary = (
-            f"equity {result.equity * 100:.1f}% · "
-            f"胜 {result.win_rate * 100:.1f}% / 平 {result.tie_rate * 100:.1f}%"
+        payload = {
+            "ok": True,
+            "street": view.street,
+            **result.to_llm_dict(self.locale),
+        }
+        summary = self._t(
+            "agent.summary.equity",
+            equity=f"{result.equity * 100:.1f}",
+            win=f"{result.win_rate * 100:.1f}",
+            tie=f"{result.tie_rate * 100:.1f}",
         )
         self._append_tool_result(
             call,
@@ -1156,7 +1036,7 @@ class LLMAgent(BaseAgent):
         if parsed is None or not isinstance(parsed, dict):
             self._append_tool_error(
                 call,
-                f"工具参数不是合法 JSON：{call.arguments[:300]}",
+                self._t("agent.error.invalid_json", args=call.arguments[:300]),
                 emit,
                 turn_id,
                 index,
@@ -1165,11 +1045,11 @@ class LLMAgent(BaseAgent):
 
         if view.to_call <= 0 or view.call_amount <= 0 or "call" not in view.legal_actions:
             if view.to_call <= 0:
-                reason = "当前 to_call=0，跟注不合法；请使用 check 或 bet。"
+                reason = self._t("agent.error.call_ev_no_call")
             elif view.call_amount <= 0:
-                reason = "你没有可跟注的筹码；请选择 fold 或 all_in。"
+                reason = self._t("agent.error.call_ev_no_chips")
             else:
-                reason = "当前行动不包含 call；请查看合法动作。"
+                reason = self._t("agent.error.call_ev_not_legal")
             payload = {
                 "ok": True,
                 "applicable": False,
@@ -1203,7 +1083,7 @@ class LLMAgent(BaseAgent):
             except Exception as exc:  # noqa: BLE001
                 self._append_tool_error(
                     call,
-                    f"胜率估算失败：{exc}",
+                    self._t("agent.error.equity_failed", error=exc),
                     emit,
                     turn_id,
                     index,
@@ -1217,7 +1097,7 @@ class LLMAgent(BaseAgent):
             except (TypeError, ValueError):
                 self._append_tool_error(
                     call,
-                    "equity 必须是 0 到 1 之间的小数；例如 63.2% 请写 0.632。",
+                    self._t("agent.error.equity_range"),
                     emit,
                     turn_id,
                     index,
@@ -1226,7 +1106,7 @@ class LLMAgent(BaseAgent):
             if not math.isfinite(equity) or not 0.0 <= equity <= 1.0:
                 self._append_tool_error(
                     call,
-                    "equity 必须是 0 到 1 之间的小数；例如 63.2% 请写 0.632。",
+                    self._t("agent.error.equity_range"),
                     emit,
                     turn_id,
                     index,
@@ -1234,11 +1114,17 @@ class LLMAgent(BaseAgent):
                 return False
 
         try:
-            calc = analyze_call(view.pot, view.to_call, view.my_chips, equity)
+            calc = analyze_call(
+                view.pot,
+                view.to_call,
+                view.my_chips,
+                equity,
+                locale=self.locale,
+            )
         except Exception as exc:  # noqa: BLE001
             self._append_tool_error(
                 call,
-                f"跟注 EV 计算失败：{exc}",
+                self._t("agent.error.call_ev_failed", error=exc),
                 emit,
                 turn_id,
                 index,
@@ -1249,7 +1135,7 @@ class LLMAgent(BaseAgent):
             "ok": True,
             "equity_source": equity_source,
             "street": view.street,
-            **calc.to_llm_dict(),
+            **calc.to_llm_dict(self.locale),
         }
         ui_result = {
             "ok": True,
@@ -1277,9 +1163,11 @@ class LLMAgent(BaseAgent):
             payload["equity_method"] = "model"
             ui_result["equity_method"] = "model"
 
-        summary = (
-            f"EV {calc.ev_call:+.1f} · 临界 {calc.breakeven_equity * 100:.1f}% · "
-            f"你的 {equity * 100:.1f}%"
+        summary = self._t(
+            "agent.summary.call_ev",
+            ev=f"{calc.ev_call:+.1f}",
+            breakeven=f"{calc.breakeven_equity * 100:.1f}",
+            equity=f"{equity * 100:.1f}",
         )
         self._append_tool_result(
             call,
@@ -1296,14 +1184,11 @@ class LLMAgent(BaseAgent):
     def _compute_equity(self, view: AgentView) -> EquityResult:
         if self._equity_calls_this_turn >= self.max_equity_calls:
             raise EquityBudgetError(
-                f"本回合调用 equity 的次数已达上限（{self.max_equity_calls} 次），"
-                "请直接提交 apply_action。"
+                self._t("agent.error.equity_limit", max=self.max_equity_calls)
             )
         remaining = self.max_equity_iterations - self._equity_iterations_this_turn
         if remaining < MIN_EQUITY_ITERATIONS:
-            raise EquityBudgetError(
-                "本回合的 equity 采样预算已用完，请直接提交 apply_action。"
-            )
+            raise EquityBudgetError(self._t("agent.error.equity_budget"))
         iterations = min(DEFAULT_EQUITY_ITERATIONS, remaining)
         hole = [Card.from_str(code) for code in view.hole_cards]
         community = [Card.from_str(code) for code in view.community]
@@ -1312,6 +1197,7 @@ class LLMAgent(BaseAgent):
             community,
             hero_seat=view.seat,
             iterations=iterations,
+            locale=self.locale,
         )
         self._equity_calls_this_turn += 1
         if not result.cached and result.method == "monte_carlo":
@@ -1330,7 +1216,7 @@ class LLMAgent(BaseAgent):
         if parsed is None or not isinstance(parsed, dict):
             self._append_tool_error(
                 call,
-                f"工具参数不是合法 JSON：{call.arguments[:300]}",
+                self._t("agent.error.invalid_json", args=call.arguments[:300]),
                 emit,
                 turn_id,
                 index,
@@ -1362,7 +1248,7 @@ class LLMAgent(BaseAgent):
         if self.submit_table_talk is None:
             self._append_tool_error(
                 call,
-                "本局没有启用桌边喊话。",
+                self._t("agent.error.talk_disabled"),
                 emit,
                 turn_id,
                 index,
@@ -1371,8 +1257,10 @@ class LLMAgent(BaseAgent):
         if self._talk_count_this_turn >= self.table_talk_limits.max_per_turn:
             self._append_tool_error(
                 call,
-                f"本回合喊话次数已达上限（{self.table_talk_limits.max_per_turn} 条），"
-                "请直接调用 apply_action。",
+                self._t(
+                    "agent.error.talk_limit",
+                    max=self.table_talk_limits.max_per_turn,
+                ),
                 emit,
                 turn_id,
                 index,
@@ -1381,7 +1269,7 @@ class LLMAgent(BaseAgent):
         if parsed is None or not isinstance(parsed, dict):
             self._append_tool_error(
                 call,
-                f"工具参数不是合法 JSON：{call.arguments[:300]}",
+                self._t("agent.error.invalid_json", args=call.arguments[:300]),
                 emit,
                 turn_id,
                 index,
@@ -1391,7 +1279,7 @@ class LLMAgent(BaseAgent):
         if not isinstance(raw_text, str):
             self._append_tool_error(
                 call,
-                "text 必须是字符串，例如 {\"text\": \"这手我可不会轻易让你看牌。\"}",
+                self._t("agent.error.talk_text_type"),
                 emit,
                 turn_id,
                 index,
@@ -1403,18 +1291,21 @@ class LLMAgent(BaseAgent):
         except Exception as exc:  # noqa: BLE001
             self._append_tool_error(
                 call,
-                f"喊话发送失败：{type(exc).__name__}: {exc}",
+                self._t(
+                    "agent.error.talk_send_failed",
+                    error=f"{type(exc).__name__}: {exc}",
+                ),
                 emit,
                 turn_id,
                 index,
             )
             return True
         if not isinstance(result, dict):
-            result = {"ok": False, "error": "喊话发送失败：服务端返回无效结果"}
+            result = {"ok": False, "error": self._t("agent.error.talk_invalid_result")}
         if not result.get("ok"):
             self._append_tool_error(
                 call,
-                str(result.get("error") or "喊话被拒绝"),
+                str(result.get("error") or self._t("agent.error.talk_rejected")),
                 emit,
                 turn_id,
                 index,
@@ -1435,7 +1326,7 @@ class LLMAgent(BaseAgent):
             index,
             started,
             ui_result=payload,
-            summary="已喊话 · 本回合硬性要求已完成",
+            summary=self._t("agent.summary.talk"),
         )
         return True
 
@@ -1443,7 +1334,11 @@ class LLMAgent(BaseAgent):
         raw = str(parsed.get("action", "")).strip().lower()
         action_type = _ACTION_ALIASES.get(raw, raw)
         if action_type not in {item.value for item in ActionType}:
-            return None, f"未知动作 {raw!r}。允许的动作：{', '.join(view.legal_actions)}"
+            return None, self._t(
+                "agent.error.unknown_action",
+                action=repr(raw),
+                actions=", ".join(view.legal_actions),
+            )
         # The engine distinguishes an opening bet (BB option included) from a
         # raise. Accept either spelling from the model and normalize it.
         if action_type == "raise" and "raise" not in view.legal_actions and "bet" in view.legal_actions:
@@ -1453,8 +1348,14 @@ class LLMAgent(BaseAgent):
         if action_type not in view.legal_actions:
             return (
                 None,
-                f"动作 {action_type!r} 当前不合法。合法动作：{', '.join(view.legal_actions)}。"
-                f"当前需要跟注 {view.to_call}，最小加注到 {view.min_raise_to}，最大到 {view.max_raise_to}。",
+                self._t(
+                    "agent.error.action_invalid",
+                    action=repr(action_type),
+                    actions=", ".join(view.legal_actions),
+                    to_call=view.to_call,
+                    min_raise_to=view.min_raise_to,
+                    max_raise_to=view.max_raise_to,
+                ),
             )
         amount = parsed.get("amount", parsed.get("raise_to", parsed.get("to", 0)))
         try:
@@ -1463,6 +1364,7 @@ class LLMAgent(BaseAgent):
                     view.seat,
                     {"type": action_type, "amount": amount},
                     source="llm",
+                    locale=self.locale,
                 ),
                 "",
             )
@@ -1570,19 +1472,21 @@ class LLMAgent(BaseAgent):
         legal = set(view.legal_actions)
         if "call" in legal:
             action = Action(view.seat, ActionType.CALL, source="llm", auto=True)
-            note = "自动跟注"
+            note = self._t("agent.note.auto_call")
         elif allow_check and "check" in legal:
             action = Action(view.seat, ActionType.CHECK, source="llm", auto=True)
-            note = "自动过牌"
+            note = self._t("agent.note.auto_check")
         else:
             action = Action(view.seat, ActionType.FOLD, source="llm", auto=True)
-            note = "自动弃牌"
+            note = self._t("agent.note.auto_fold")
+        separator = "，" if self.locale == "zh-CN" else ", "
+        suffix = "。" if self.locale == "zh-CN" else "."
         emit(
             {
                 "type": "note",
                 "level": "error",
                 "turn_id": turn_id,
-                "text": f"{reason}，{note}。",
+                "text": f"{reason}{separator}{note}{suffix}",
             }
         )
         emit(
@@ -1626,7 +1530,7 @@ class LLMAgent(BaseAgent):
                 index
                 for index, message in enumerate(self.messages)
                 if message.get("role") == "user"
-                and str(message.get("content", "")).startswith("【牌局更新")
+                and str(message.get("content", "")).startswith(self._turn_marker)
             ]
             if len(turn_starts) <= 1:
                 break
@@ -1641,7 +1545,7 @@ class LLMAgent(BaseAgent):
                 {
                     "type": "note",
                     "level": "warn",
-                    "text": f"上下文接近预算上限，已压缩最早的 {removed} 条消息（保留系统提示与最近回合）。",
+                    "text": self._t("agent.note.context_trimmed", removed=removed),
                 }
             )
 

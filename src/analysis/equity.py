@@ -24,6 +24,7 @@ from typing import List, Optional, Sequence
 
 from src.engine.cards import FULL_DECK, Card
 from src.engine.evaluator import evaluate_score, treys_int
+from src.i18n import tr
 
 DEFAULT_ITERATIONS = 20000
 MIN_ITERATIONS = 2000
@@ -78,7 +79,7 @@ class EquityResult:
             "cached": self.cached,
         }
 
-    def to_llm_dict(self) -> dict:
+    def to_llm_dict(self, locale: str = "zh-CN") -> dict:
         """Compact result for a model tool message."""
         return {
             "equity": round(self.equity, 4),
@@ -89,12 +90,7 @@ class EquityResult:
             "samples": self.samples,
             "std_error": round(self.std_error, 4),
             "opponent": "random",
-            "note": (
-                "equity/win/tie/lose 都是 0 到 1 的小数，不是百分数；"
-                "equity = 胜率 + 平局率/2；对手底牌和未翻开公共牌按剩余牌"
-                "均匀随机；这是摊牌期望份额，不是当前牌型强度。"
-                "method=exact 时 samples 是等概率组合数，不是蒙特卡洛采样次数。"
-            ),
+            "note": tr(locale, "analysis.equity.note"),
         }
 
 
@@ -112,6 +108,7 @@ class EquityAnalyzer:
         hero_seat: int = 0,
         iterations: int = DEFAULT_ITERATIONS,
         seed: Optional[int] = None,
+        locale: str = "zh-CN",
     ) -> EquityResult:
         """Calculate equity for the current spot.
 
@@ -129,22 +126,22 @@ class EquityAnalyzer:
             ValueError: If the cards are invalid or the spot is impossible.
         """
         if len(hero_hole) != 2:
-            raise ValueError("需要恰好两张底牌")
+            raise ValueError(tr(locale, "analysis.equity.two_hole"))
         if len(community) > 5:
-            raise ValueError("公共牌不能超过五张")
+            raise ValueError(tr(locale, "analysis.equity.community_max"))
         iterations = max(MIN_ITERATIONS, min(int(iterations), MAX_ITERATIONS))
 
         known = list(hero_hole) + list(community)
         codes = [card.code for card in known]
         if len(set(codes)) != len(codes):
-            raise ValueError("已知牌中存在重复牌")
+            raise ValueError(tr(locale, "analysis.equity.duplicate"))
 
         known_set = set(codes)
         unknown = [card for card in FULL_DECK if card.code not in known_set]
         needed = 5 - len(community)
         total_deals = _deal_count(len(unknown), needed)
         if total_deals <= 0:
-            raise ValueError("剩余牌不足以完成公共牌和对手底牌")
+            raise ValueError(tr(locale, "analysis.equity.insufficient"))
 
         method = "exact" if total_deals <= EXACT_DEAL_LIMIT else "monte_carlo"
         key = (

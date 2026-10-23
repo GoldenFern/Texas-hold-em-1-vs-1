@@ -63,16 +63,13 @@ CONTROL_TOOL_NAMES = ("apply_action",)
 TREATMENT_TOOL_NAMES = ALL_TOOL_NAMES
 CONTROL_NAME = "LongCat 2.5 Preview"
 TREATMENT_NAME = "LongCat 2.5 Preview"
-CONTROL_SYSTEM_PROMPT = build_system_prompt(CONTROL_TOOL_NAMES)
-TREATMENT_SYSTEM_PROMPT = build_system_prompt(
-    TREATMENT_TOOL_NAMES,
-    require_estimate_each_turn=True,
-)
-
 INVALID_ACTION_REASONS = (
     "连续三次无效动作",
     "连续多次没有提交动作",
     "单回合超过",
+    "three consecutive invalid actions",
+    "multiple turns without submitting an action",
+    "more than",
 )
 
 CSV_FIELDS = [
@@ -148,6 +145,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--sb", type=int, default=5)
     parser.add_argument("--bb", type=int, default=10)
     parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument(
+        "--agent-locale",
+        default="zh-CN",
+        choices=("zh-CN", "en-US"),
+        help="Language for LLM prompts, tool schemas and tool results.",
+    )
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--temperature", type=float, default=None)
     parser.add_argument("--top-p", type=float, default=None)
@@ -357,6 +360,7 @@ def make_agent(
     game: HeadsUpGame,
     tool_names: Sequence[str],
     system_prompt: str,
+    locale: str = "zh-CN",
 ) -> LLMAgent:
     return LLMAgent(
         seat=seat,
@@ -365,10 +369,11 @@ def make_agent(
         params=params,
         client=client,
         analyzer=analyzer,
-        validate_action=lambda action: game.preview(action),
+        validate_action=lambda action: game.preview(action, locale=locale),
         runtime=runtime,
-        tools=select_tools(tool_names),
+        tools=select_tools(tool_names, locale=locale),
         system_prompt=system_prompt,
+        locale=locale,
     )
 
 
@@ -483,6 +488,7 @@ def play_hand(
             small_blind=args.sb,
             big_blind=args.bb,
             seed=task.seed,
+            locale=args.agent_locale,
         )
         game.button_index = -1
         game.configure_players(
@@ -497,6 +503,15 @@ def play_hand(
             registry,
             connect_timeout=float(args.connect_timeout),
             read_timeout=float(args.timeout),
+            locale=args.agent_locale,
+        )
+        control_prompt = build_system_prompt(
+            CONTROL_TOOL_NAMES, locale=args.agent_locale
+        )
+        treatment_prompt = build_system_prompt(
+            TREATMENT_TOOL_NAMES,
+            require_estimate_each_turn=True,
+            locale=args.agent_locale,
         )
 
         control_runtime = dict(runtime)
@@ -519,7 +534,8 @@ def play_hand(
             analyzer=analyzer,
             game=game,
             tool_names=CONTROL_TOOL_NAMES,
-            system_prompt=CONTROL_SYSTEM_PROMPT,
+            system_prompt=control_prompt,
+            locale=args.agent_locale,
         )
         treatment = make_agent(
             seat=treatment_seat,
@@ -531,7 +547,8 @@ def play_hand(
             analyzer=analyzer,
             game=game,
             tool_names=TREATMENT_TOOL_NAMES,
-            system_prompt=TREATMENT_SYSTEM_PROMPT,
+            system_prompt=treatment_prompt,
+            locale=args.agent_locale,
         )
         agents = {control_seat: control, treatment_seat: treatment}
         emits = {control_seat: make_emit(control_seat), treatment_seat: make_emit(treatment_seat)}
@@ -732,6 +749,7 @@ def summarize(rows: Sequence[dict], args: argparse.Namespace) -> dict:
         return {
             "hands": 0,
             "fatal_hands": len(failed),
+            "agent_locale": args.agent_locale,
             "treatment_total_net": 0,
             "treatment_mean_net": 0.0,
             "treatment_mean_bb100": 0.0,
@@ -820,6 +838,7 @@ def summarize(rows: Sequence[dict], args: argparse.Namespace) -> dict:
         "deals": len(by_deal),
         "paired_deals": len(paired_means),
         "fatal_hands": len(failed),
+        "agent_locale": args.agent_locale,
         "treatment_total_net": sum(nets),
         "treatment_mean_net": round(mean_net, 3),
         "treatment_mean_bb100": round(mean_net / args.bb * 100.0, 3),
@@ -987,6 +1006,7 @@ def write_report(path: Path, summary: dict, args: argparse.Namespace) -> None:
         "",
         f"- 生成时间: {datetime.now(timezone.utc).isoformat()}",
         f"- 模型: `{args.provider}/{args.model}`",
+        f"- Agent 语言: `{args.agent_locale}`",
         f"- 手数: {summary.get('hands', 0)}，同牌换座组: {summary.get('paired_deals', 0)}",
         f"- 规则: {args.chips} 筹码，盲注 {args.sb}/{args.bb}，每手重置筹码",
         "- 对照组: 只提供 `apply_action`",
@@ -1085,7 +1105,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     print(
         f"experiment: treatment=estimate+random (required pre-river), "
-        f"control=apply_action only, hands={args.hands}, workers={args.workers}"
+        f"control=apply_action only, agent_locale={args.agent_locale}, "
+        f"hands={args.hands}, workers={args.workers}"
     )
     print(
         f"table: {args.chips} chips, blinds {args.sb}/{args.bb}, "

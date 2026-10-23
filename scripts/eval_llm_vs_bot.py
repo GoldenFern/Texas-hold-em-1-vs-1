@@ -68,6 +68,32 @@ INVALID_ACTION_REASONS = (
     "单回合超过",
 )
 
+TOOL_RECOMMENDATIONS_EN = {
+    "estimate_hand_probabilities": (
+        "Before each action, call estimate_hand_probabilities to see the probability "
+        "distribution of your current best five-card hand's final category, then combine "
+        "it with pot odds, position, and the opponent's actions. It describes your own "
+        "hand-category distribution, not equity."
+    ),
+    "estimate_equity": (
+        "Before each action, call estimate_equity to see your current showdown equity, then "
+        "combine it with pot odds, position, and the opponent's actions. It assumes a "
+        "random opponent hand by default and equals win rate plus half the tie rate."
+    ),
+    "get_random_number": (
+        "Before each action, call get_random_number for a uniform [0, 1) value and use it "
+        "as the randomization source for your mixed strategy this turn. Even if your "
+        "analysis already favors one action, draw once and use the value to decide whether "
+        "to take an alternative line or adjust the bet size. Do not draw repeatedly chasing "
+        "a number, and do not use it as a complete substitute for analysis."
+    ),
+    "call_ev": (
+        "Before each action, call call_ev to see the static expected value of calling, then "
+        "combine it with position, stack depth, and implied odds. It assumes no further "
+        "betting after the call."
+    ),
+}
+
 TOOL_RECOMMENDATIONS = {
     "estimate_hand_probabilities": (
         "每次行动前，先调用 estimate_hand_probabilities 查看你当前最佳五张牌"
@@ -120,13 +146,26 @@ def resolve_tool_names(raw: str) -> tuple[str, ...]:
     return tuple(name for name in ALL_TOOL_NAMES if name in wanted)
 
 
-def build_tool_recommendation(tool_names: Sequence[str]) -> str:
+def build_tool_recommendation(tool_names: Sequence[str], locale: str = "zh-CN") -> str:
     """Build a strong, non-binding recommendation for the available tools."""
     auxiliaries = [
         name for name in ALL_TOOL_NAMES if name != "apply_action" and name in set(tool_names)
     ]
     if not auxiliaries:
         return ""
+    if locale == "en-US":
+        lines = [
+            "[Tool-use recommendation (strongly recommended, not mandatory)]",
+            "For a better win rate, you are strongly encouraged to use the auxiliary tools available this match:",
+        ]
+        for name in auxiliaries:
+            lines.append(f"- {TOOL_RECOMMENDATIONS_EN[name]}")
+        lines.append("The system does not force tool calls; decide based on the table.")
+        lines.append(
+            "If you use an auxiliary tool, call it first and read the result before calling "
+            "apply_action; do not put apply_action before it in the same batch."
+        )
+        return "\n".join(lines)
     lines = [
         "【工具使用建议（强烈推荐，非强制）】",
         "为了获得更好的胜率，强烈建议你使用本局提供的辅助工具：",
@@ -141,10 +180,14 @@ def build_tool_recommendation(tool_names: Sequence[str]) -> str:
     return "\n".join(lines)
 
 
-def build_eval_prompt(tool_names: Sequence[str], recommend_tools: bool) -> str:
+def build_eval_prompt(
+    tool_names: Sequence[str],
+    recommend_tools: bool,
+    locale: str = "zh-CN",
+) -> str:
     """Build the system prompt for one experiment group."""
-    extra = build_tool_recommendation(tool_names) if recommend_tools else ""
-    return build_system_prompt(tool_names, extra_instructions=extra)
+    extra = build_tool_recommendation(tool_names, locale) if recommend_tools else ""
+    return build_system_prompt(tool_names, extra_instructions=extra, locale=locale)
 
 
 CSV_FIELDS = [
@@ -247,6 +290,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--sb", type=int, default=5)
     parser.add_argument("--bb", type=int, default=10)
     parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument(
+        "--agent-locale",
+        default="zh-CN",
+        choices=("zh-CN", "en-US"),
+        help="Language for LLM prompts, tool schemas and tool results.",
+    )
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--temperature", type=float, default=None)
     parser.add_argument("--top-p", type=float, default=None)
@@ -507,6 +556,7 @@ def make_llm_agent(
     llm_name: str,
     tool_names: Sequence[str],
     system_prompt: str,
+    locale: str = "zh-CN",
 ) -> LLMAgent:
     return LLMAgent(
         seat=task.llm_seat,
@@ -515,10 +565,11 @@ def make_llm_agent(
         params=params,
         client=client,
         analyzer=analyzer,
-        validate_action=lambda action: game.preview(action),
+        validate_action=lambda action: game.preview(action, locale=locale),
         runtime=runtime,
-        tools=select_tools(tool_names),
+        tools=select_tools(tool_names, locale=locale),
         system_prompt=system_prompt,
+        locale=locale,
     )
 
 
@@ -548,6 +599,7 @@ def play_hand(
             small_blind=args.sb,
             big_blind=args.bb,
             seed=task.seed,
+            locale=args.agent_locale,
         )
         game.button_index = -1
         llm_name = getattr(args, "llm_name", None) or spec.name
@@ -557,6 +609,7 @@ def play_hand(
         system_prompt = getattr(args, "system_prompt", None) or build_eval_prompt(
             tool_names,
             bool(getattr(args, "recommend_tools", False)),
+            args.agent_locale,
         )
         names = {
             llm_seat: (llm_name, "llm"),
@@ -575,6 +628,7 @@ def play_hand(
             registry,
             connect_timeout=float(args.connect_timeout),
             read_timeout=float(args.timeout),
+            locale=args.agent_locale,
         )
         llm = make_llm_agent(
             task,
@@ -587,6 +641,7 @@ def play_hand(
             llm_name,
             tool_names,
             system_prompt,
+            args.agent_locale,
         )
         bot = ProjectBot(
             name="Project DQN",
@@ -754,6 +809,7 @@ def summarize(rows: Sequence[dict], args: argparse.Namespace) -> dict:
         return {
             "hands": 0,
             "fatal_hands": len(failed),
+            "agent_locale": args.agent_locale,
             "total_net": 0,
             "mean_net": 0.0,
             "mean_bb100": 0.0,
@@ -843,6 +899,7 @@ def summarize(rows: Sequence[dict], args: argparse.Namespace) -> dict:
         "deals": len(by_deal),
         "paired_deals": len(paired_means),
         "fatal_hands": len(failed),
+        "agent_locale": args.agent_locale,
         "total_net": total_net,
         "mean_net": round(mean_net, 3),
         "mean_bb100": round(mean_net / args.bb * 100.0, 3),
@@ -975,6 +1032,7 @@ def write_report(path: Path, summary: dict, args: argparse.Namespace) -> None:
         f"- 生成时间: {datetime.now(timezone.utc).isoformat()}",
         f"- 组别: `{group}`",
         f"- 模型: `{args.provider}/{args.model}`",
+        f"- Agent 语言: `{args.agent_locale}`",
         f"- Bot: `{args.bot_algorithm}` / `{args.bot_model}`",
         f"- 工具: {tool_text}",
         f"- 提示词工具推荐: {recommend_text}",
@@ -1062,7 +1120,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     registry = ProviderRegistry()
     spec = registry.resolve(args.provider, args.model)
     args.llm_name = args.llm_name or spec.name
-    args.system_prompt = build_eval_prompt(args.tool_names, args.recommend_tools)
+    args.system_prompt = build_eval_prompt(
+        args.tool_names, args.recommend_tools, args.agent_locale
+    )
     bot_model = Path(args.bot_model)
     if not bot_model.is_absolute():
         bot_model = (PROJECT_ROOT / bot_model).resolve()
@@ -1089,7 +1149,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"output: {output}")
     print(
         f"group: {args.group}, tools: {','.join(args.tool_names)}, "
-        f"recommend_tools={args.recommend_tools}, "
+        f"recommend_tools={args.recommend_tools}, agent_locale={args.agent_locale}, "
         f"prompt_chars={len(args.system_prompt)}"
     )
     print(

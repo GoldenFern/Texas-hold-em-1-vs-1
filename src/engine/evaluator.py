@@ -44,6 +44,30 @@ HAND_CATEGORIES: List[Dict[str, str]] = [
 CATEGORY_BY_KEY: Dict[str, Dict[str, str]] = {item["key"]: item for item in HAND_CATEGORIES}
 STRENGTH_ORDER: List[str] = [item["key"] for item in HAND_CATEGORIES]
 
+_HAND_CATEGORY_NAMES_EN: Dict[str, str] = {
+    "royal_flush": "Royal flush",
+    "straight_flush": "Straight flush",
+    "four_of_a_kind": "Four of a kind",
+    "full_house": "Full house",
+    "flush": "Flush",
+    "straight": "Straight",
+    "three_of_a_kind": "Three of a kind",
+    "two_pair": "Two pair",
+    "one_pair": "One pair",
+    "high_card": "High card",
+    "incomplete": "No made hand",
+}
+
+
+def hand_category_name(key: str, locale: str = "zh-CN", fallback: str = "") -> str:
+    """Return a hand-category name in the requested language."""
+    category = CATEGORY_BY_KEY.get(key)
+    if category is None:
+        return fallback or key
+    if str(locale).lower().startswith("en"):
+        return _HAND_CATEGORY_NAMES_EN.get(key, fallback or category["name"])
+    return category["name"]
+
 
 def treys_int(card: Card) -> int:
     """Convert a card to its Treys integer."""
@@ -137,6 +161,7 @@ __all__ = [
     "category_from_score",
     "evaluate_score",
     "evaluate_score_cards",
+    "hand_category_name",
     "hand_strength",
     "treys_int",
 ]

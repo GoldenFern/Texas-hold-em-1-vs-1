@@ -6,6 +6,8 @@ import math
 from dataclasses import dataclass
 from typing import Optional
 
+from src.i18n import tr
+
 
 @dataclass(frozen=True)
 class CallEvResult:
@@ -42,7 +44,7 @@ class CallEvResult:
             "static_positive": self.static_positive,
         }
 
-    def to_llm_dict(self) -> dict:
+    def to_llm_dict(self, locale: str = "zh-CN") -> dict:
         """Compact result for a model tool message."""
         return {
             "equity": round(self.equity, 4),
@@ -61,16 +63,17 @@ class CallEvResult:
                 else None
             ),
             "static_positive": self.static_positive,
-            "note": (
-                "静态跟注 EV，假设跟注后不再下注；翻牌和转牌还要考虑"
-                "隐含赔率、反向隐含赔率和权益实现率。"
-                "pot_to_call_ratio 是底池/跟注的倍数（3.0 表示 3:1），"
-                "不是百分比；临界胜率看 breakeven_equity。"
-            ),
+            "note": tr(locale, "analysis.call_ev.note"),
         }
 
 
-def analyze_call(pot: int, to_call: int, chips: int, equity: float) -> CallEvResult:
+def analyze_call(
+    pot: int,
+    to_call: int,
+    chips: int,
+    equity: float,
+    locale: str = "zh-CN",
+) -> CallEvResult:
     """Calculate the static EV of calling.
 
     Args:
@@ -86,21 +89,21 @@ def analyze_call(pot: int, to_call: int, chips: int, equity: float) -> CallEvRes
         ValueError: If the inputs are not a legal calling spot.
     """
     if pot < 0:
-        raise ValueError("底池不能为负")
+        raise ValueError(tr(locale, "analysis.call_ev.pot_negative"))
     if to_call <= 0:
-        raise ValueError("to_call 必须大于 0")
+        raise ValueError(tr(locale, "analysis.call_ev.to_call_positive"))
     if chips < 0:
-        raise ValueError("筹码不能为负")
+        raise ValueError(tr(locale, "analysis.call_ev.chips_negative"))
     if not math.isfinite(equity) or not 0.0 <= equity <= 1.0:
-        raise ValueError("equity 必须是 0 到 1 之间的小数")
+        raise ValueError(tr(locale, "analysis.call_ev.equity_range"))
 
     call_amount = min(int(to_call), int(chips))
     if call_amount <= 0:
-        raise ValueError("没有可跟注的筹码")
+        raise ValueError(tr(locale, "analysis.call_ev.no_call_chips"))
     refund = int(to_call) - call_amount
     effective_pot = int(pot) + 2 * call_amount - int(to_call)
     if effective_pot <= 0:
-        raise ValueError("有效底池必须大于 0")
+        raise ValueError(tr(locale, "analysis.call_ev.effective_pot_positive"))
 
     ev_call = equity * effective_pot - call_amount
     breakeven = call_amount / effective_pot

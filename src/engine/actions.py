@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from src.i18n import tr
 
@@ -37,6 +37,14 @@ ACTION_ORDER = [
     ActionType.RAISE,
     ActionType.ALL_IN,
 ]
+
+
+def action_label(action_type: str, locale: str = "zh-CN") -> str:
+    """Return an action name in the requested language."""
+    normalized = str(action_type or "").strip().lower()
+    if normalized not in {item.value for item in ActionType}:
+        return normalized
+    return tr(locale, f"action.{normalized}")
 
 
 @dataclass
@@ -99,11 +107,11 @@ class Action:
             raise ValueError(tr(locale, "engine.payload.amount_integer"))
         return cls(seat=seat, type=ActionType(normalized), amount=amount, source=source)
 
-    def to_dict(self) -> dict:
+    def to_dict(self, locale: Optional[str] = None) -> dict:
         return {
             "seat": self.seat,
             "type": self.type.value,
-            "label": self.type.label,
+            "label": action_label(self.type.value, locale) if locale else self.type.label,
             "amount": self.amount,
             "source": self.source,
             "auto": self.auto,

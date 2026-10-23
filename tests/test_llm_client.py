@@ -74,12 +74,20 @@ def sse(*events: dict) -> List[bytes]:
     return lines
 
 
-def make_client(responses: List[FakeResponse]) -> tuple[LLMClient, FakeSession]:
+def make_client(
+    responses: List[FakeResponse],
+    locale: str = "zh-CN",
+) -> tuple[LLMClient, FakeSession]:
     registry = ProviderRegistry()
-    client = LLMClient(registry, connect_timeout=1, read_timeout=1)
+    client = LLMClient(registry, connect_timeout=1, read_timeout=1, locale=locale)
     session = FakeSession(responses)
     client._get_session = lambda: session  # type: ignore[method-assign]
     return client, session
+
+
+class TimeoutSession(FakeSession):
+    def post(self, url, headers=None, json=None, stream=False, timeout=None):
+        raise requests.Timeout("simulated timeout")
 
 
 def spec():
@@ -111,6 +119,21 @@ def test_redact_secrets_removes_key_and_bearer_token() -> None:
     assert "sk-testSECRET1234" not in cleaned
     assert "abc.def.123" not in cleaned
     assert "[REDACTED]" in cleaned
+
+
+def test_client_errors_follow_locale() -> None:
+    registry = ProviderRegistry()
+    client = LLMClient(registry, connect_timeout=1, read_timeout=1, locale="en-US")
+    client._get_session = lambda: TimeoutSession([])  # type: ignore[method-assign]
+    with pytest.raises(LLMError) as excinfo:
+        client.stream(
+            spec(),
+            [{"role": "user", "content": "hello"}],
+            None,
+            {},
+            lambda _event: None,
+        )
+    assert "timed out" in excinfo.value.detail
 
 
 def test_stream_assembles_text_and_tool_call() -> None:

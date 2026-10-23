@@ -76,6 +76,25 @@ def test_failed_bot_build_keeps_running_match(tmp_path) -> None:
         session.shutdown()
 
 
+def test_match_note_uses_agent_locale() -> None:
+    session = make_session()
+    try:
+        session.agent_locale = "en-US"
+        session.game = HeadsUpGame(
+            starting_chips=1000,
+            small_blind=5,
+            big_blind=10,
+            seed=1,
+            locale="en-US",
+        )
+        session.game.hand_id = 1
+        note = session._match_note(0)
+        assert "This is hand 1" in note
+        assert "Blinds 5/10" in note
+    finally:
+        session.shutdown()
+
+
 def test_agent_locale_is_fixed_at_match_start() -> None:
     session = make_session()
     try:

@@ -96,7 +96,7 @@ python scripts/eval_llm_tool_matrix.py --hands 300 --workers 10  # 五组工具�
 - 每回合必须调用 `apply_action` 恰好一次；非法则把错误 + 约束 + 合法动作作为 tool 消息回传，让模型重试。
 - 估算工具是可选辅助，默认不强制（`require_estimate_first: false`）。系统提示词和工具描述只说明用途与可选性，不引导也不劝阻调用，由模型自行判断。打开开关后只会在每条街第一次 `apply_action` 前软提醒一次，不计入三次失败；`get_random_number` 不能满足这个开关。
 - 估算工具单回合默认最多 2 次、总采样 50000 次；equity 工具同样默认 2 次、50000 次（`config/game.json`），避免阻塞游戏线程。`call_ev` 内部估算也计入 equity 预算。
-- `LLMAgent` 支持按座位传入 `tools` 与 `system_prompt`；`select_tools` 只暴露指定工具，未暴露的工具调用会按未知工具拒绝。`require_estimate_each_turn` 要求每次行动前估算一次，`skip_estimate_on_complete_board` 让河牌圈免于该要求。
+- `LLMAgent` 支持按座位传入 `tools`、`system_prompt` 与 `locale`；`select_tools(names, locale)` 只暴露指定工具，未暴露的工具调用会按未知工具拒绝。`require_estimate_each_turn` 要求每次行动前估算一次，`skip_estimate_on_complete_board` 让河牌圈免于该要求。
 - `scripts/eval_llm_vs_llm.py` 做 LLM 对 LLM 的工具使用对照：对照组只有 `apply_action`，工具组按 `ALL_TOOL_NAMES` 提供牌型分布/胜率/随机/跟注 EV/行动，并要求河牌前逐回合估算；输出在 `tmp/llm_vs_llm/`。
 - `scripts/eval_llm_tool_matrix.py` 做 LLM 对 Project DQN 的五组工具消融：无工具、随机数、牌型分布、胜率、跟注 EV；每组 300 手（150 deal × 2 座位），10 并发，输出在 `tmp/llm_tool_matrix/`。
 - `build_system_prompt(..., extra_instructions=...)` 只给实验附加“强烈推荐但非强制”的工具建议；默认不传，UI 提示词仍由模型自行判断是否调用工具。
@@ -144,8 +144,10 @@ python scripts/eval_llm_tool_matrix.py --hands 300 --workers 10  # 五组工具�
 - Flask 从 `X-HU-Locale`、`?locale` 或 `Accept-Language` 解析界面语言，默认英文；`/api/preferences` 用于语言切换后更新服务端会话语言。
 - `GameSession.ui_locale` 随请求更新，控制人类可见错误和事件；`GameSession.agent_locale` 在开局时固定，写入 `match.agent_locale`，供 Agent 提示词和工具消息使用。
 - `HeadsUpGame`、`Action.from_payload`、`RLCardBot` 和 `ProjectBot` 都有 `locale` 参数，默认中文以保持离线脚本和旧测试兼容；Web 会话显式传界面语言。
-- 第三阶段接入 Agent 语言时，LLM 提示词、工具说明、工具返回和桌边喊话要使用 `agent_locale`，不要复用 `ui_locale`。
-- 运行时双语测试在 `tests/test_i18n.py`；前端语言测试在 `frontend/src/i18n/` 和 `LanguageSwitch.test.ts`。
+- LLM 提示词、工具说明、工具返回和桌边喊话使用 `agent_locale`，不要复用 `ui_locale`。`src/llm/prompt_texts.py` 保存中英提示词，`src/llm/tools.py` 生成中英工具 schema，`LLMAgent(locale=...)` 负责运行时消息。
+- `LLMClient.locale` 由 `GameSession.start_match` 设置为该局的 `agent_locale`；`test_llm` 使用界面语言。`analyze`、`hand_distribution`、`equity` 和 `pot_odds` 的 `to_llm_dict(locale)` 与 `analyze(..., locale=...)` 负责分析文案。
+- 离线评测脚本支持 `--agent-locale zh-CN|en-US`，默认中文以保持历史基线；Web 对局由 `SetupModal` 的 Agent 语言控件决定。
+- 运行时双语测试在 `tests/test_i18n.py` 和 `tests/test_llm_i18n.py`；前端语言测试在 `frontend/src/i18n/` 和 `LanguageSwitch.test.ts`。
 
 ## 状态同步（容易踩坑）
 

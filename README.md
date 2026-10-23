@@ -11,7 +11,7 @@ A lab built specifically for **heads-up no-limit Texas Hold'em**: pick any two o
 - God view: both hole cards, burn cards, and the full deck
 - LLM: DeepSeek / Volcengine / MiniMax / Qwen / Zhipu GLM / Kimi / LongCat / MiMo / 4Router
 - Bots: RLCard (RandomAgent works out of the box; can load DQN/NFSP/DMC checkpoints)
-- Language: the interface defaults to English. Switch between 中文 and EN in the top bar or match setup; the choice is saved. `?lang=zh-CN` or `?lang=en` overrides it for one link. Game and API validation errors follow the interface language. Agent locale is recorded separately at match start and will drive prompts and table talk when the agent-language layer is enabled.
+- Language: the interface defaults to English. Switch between 中文 and EN in the top bar or match setup; the choice is saved. `?lang=zh-CN` or `?lang=en` overrides it for one link. Game and API validation errors follow the interface language. Agent locale is recorded separately at match start and controls the system prompt, tool descriptions, tool results, and table talk for that match.
 
 ---
 
@@ -256,6 +256,8 @@ scripts/eval_llm_vs_bot.py    # offline LLM vs Project Bot evaluation
 scripts/eval_llm_vs_llm.py    # LLM vs LLM tool-use comparison
 models/rlcard/                # checkpoint directory (files are gitignored)
 ```
+
+Offline LLM evaluations default to Chinese agent prompts. Pass `--agent-locale en-US` to `eval_llm_vs_bot.py`, `eval_llm_vs_llm.py`, or `eval_llm_tool_matrix.py` to run the English prompt and tool layer.
 
 ---
 

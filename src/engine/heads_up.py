@@ -438,12 +438,14 @@ class HeadsUpGame:
     # Acting
     # ------------------------------------------------------------------
 
-    def preview(self, action: Action) -> Optional[str]:
+    def preview(self, action: Action, locale: Optional[str] = None) -> Optional[str]:
         """Validate an action on a copy without mutating the live game.
 
         Returns an error string, or ``None`` when the action is legal.
         """
         clone = copy.deepcopy(self)
+        if locale:
+            clone.locale = normalize_locale(locale, clone.locale) or clone.locale
         result = clone.apply(action)
         return None if result.ok else result.error
 

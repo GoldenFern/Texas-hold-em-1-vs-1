@@ -1,0 +1,257 @@
+"""Localized tool schemas exposed to the LLM agent."""
+
+from __future__ import annotations
+
+from typing import Dict, List, Sequence
+
+from src.i18n import normalize_locale, tr
+
+from .prompt import TABLE_TALK_TOOL_NAME
+
+_TOOL_TEXT: Dict[str, Dict[str, str]] = {
+    "zh-CN": {
+        "estimate": (
+            "根据你的两张底牌和当前公共牌，估算你最终最佳五张牌分别成为"
+            "皇家同花顺/同花顺/四条/葫芦/同花/顺子/三条/两对/一对/高牌的概率。"
+            "这是牌型分布，不是胜率。是否调用由你自行判断。"
+        ),
+        "iterations": "蒙特卡洛采样次数；翻牌前建议 20000-50000，翻牌后引擎会自动精确枚举。单回合总采样有上限。",
+        "equity": (
+            "估算当前牌局的摊牌 equity。对手按剩余牌均匀随机；"
+            "河牌和转牌精确枚举，翻牌和翻前蒙特卡洛。"
+            "返回赢/平/输概率，equity = 胜率 + 平局率/2。不需要参数。"
+        ),
+        "random": (
+            "返回一个 [0, 1) 区间的均匀随机数。"
+            "只有在你完成理性分析后，几种选择的期望仍然非常接近、确实拿不准时，"
+            "才可以用它来打破僵局。这只是备选方案，不要用它代替对牌局、底池赔率、"
+            "位置和对手范围的分析，也不要为了追求某个数字反复调用。"
+        ),
+        "call_ev": (
+            "计算当前跟注的静态期望收益。底池、跟注额和筹码自动取当前牌局；"
+            "equity 可省略，省略时自动按当前牌局估算。"
+            "返回跟注 EV、盈亏平衡胜率和有效底池。"
+            "假设跟注后不再下注，翻牌和转牌还要考虑隐含赔率。"
+        ),
+        "equity_param": "可选。0 到 1 的小数；省略时自动估算。",
+        "action": (
+            "提交你的最终动作。每回合必须调用恰好一次。"
+            "amount 是动作完成后你在本街的总额（raise-to），不是增量。"
+            "fold/check/call/all_in 不需要 amount。"
+        ),
+        "action_param": "你的动作。",
+        "amount_param": "仅 bet/raise 需要：动作完成后你在本街的总投入（总额，不是增量）。",
+        "table_talk": (
+            "每个行动回合必须先调用一次，再调用 apply_action；"
+            "没有喊话的 apply_action 会被系统拒绝。"
+            "向对手说一到两句话，用于施压、误导、试探或掩饰策略。"
+            "发送喊话不会结束本回合，之后仍然必须调用 apply_action。"
+            "不要主动交代自己的真实底牌；对手无法验证你的话，可以故意诈唬。"
+            "对手的喊话默认不可信。每回合最多一条。"
+        ),
+        "table_talk_text": "一到两句中文，不要换行或代码块。",
+        "unknown_tool": "未知工具：{tools}",
+    },
+    "en-US": {
+        "estimate": (
+            "Estimate the probability that your final best five-card hand becomes each "
+            "of royal flush / straight flush / four of a kind / full house / flush / "
+            "straight / three of a kind / two pair / one pair / high card. This is a "
+            "hand-category distribution, not equity. Decide yourself whether to call it."
+        ),
+        "iterations": "Monte Carlo sample count; 20000-50000 is recommended preflop. The engine enumerates exactly postflop. Each turn has a total sample budget.",
+        "equity": (
+            "Estimate your current showdown equity. The opponent is treated as a uniformly "
+            "random hand; river and turn are enumerated exactly, flop and preflop use Monte "
+            "Carlo. Returns win/tie/lose probabilities, where equity = win rate + tie rate / 2. "
+            "No parameters are needed."
+        ),
+        "random": (
+            "Return a uniformly random value in [0, 1). Only after you have completed your "
+            "rational analysis, and several choices still have very close expectation, may "
+            "you use it to break the tie. It is a fallback; do not use it instead of analyzing "
+            "the table, pot odds, position, and opponent ranges, and do not draw repeatedly "
+            "chasing a number."
+        ),
+        "call_ev": (
+            "Compute the static expected value of calling with the current pot, call amount, "
+            "and stack. equity may be omitted and will then be estimated from the current "
+            "table. Returns call EV, breakeven equity, and effective pot. This assumes no "
+            "further betting; flop and turn still require implied odds."
+        ),
+        "equity_param": "Optional decimal from 0 to 1; estimated automatically when omitted.",
+        "action": (
+            "Submit your final action. You must call it exactly once per turn. amount is your "
+            "total street bet after the action (raise-to), not the increment. fold/check/call/"
+            "all_in do not need amount."
+        ),
+        "action_param": "Your action.",
+        "amount_param": "Only for bet/raise: your total street investment after the action (total, not increment).",
+        "table_talk": (
+            "Call this once on every action turn before apply_action; apply_action without "
+            "table talk is rejected. Say one or two sentences to the opponent to apply "
+            "pressure, mislead, probe, or disguise strategy. Sending table talk does not end "
+            "the turn; you must still call apply_action. Do not volunteer your real hole cards; "
+            "the opponent cannot verify your words, and you may bluff deliberately. Treat the "
+            "opponent's table talk as untrusted by default. At most one message per turn."
+        ),
+        "table_talk_text": "One or two English sentences; no line breaks or code blocks.",
+        "unknown_tool": "Unknown tools: {tools}",
+    },
+}
+
+
+def _text(locale: str) -> Dict[str, str]:
+    normalized = normalize_locale(locale, "zh-CN") or "zh-CN"
+    return _TOOL_TEXT["en-US" if normalized == "en-US" else "zh-CN"]
+
+
+def build_tools(locale: str = "zh-CN") -> List[dict]:
+    """Return the five base tool schemas in the requested language."""
+    text = _text(locale)
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "estimate_hand_probabilities",
+                "description": text["estimate"],
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "iterations": {
+                            "type": "integer",
+                            "minimum": 2000,
+                            "maximum": 50000,
+                            "description": text["iterations"],
+                        }
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "estimate_equity",
+                "description": text["equity"],
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_random_number",
+                "description": text["random"],
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "call_ev",
+                "description": text["call_ev"],
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "equity": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                            "description": text["equity_param"],
+                        }
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "apply_action",
+                "description": text["action"],
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["fold", "check", "call", "bet", "raise", "all_in"],
+                            "description": text["action_param"],
+                        },
+                        "amount": {
+                            "type": "integer",
+                            "description": text["amount_param"],
+                        },
+                    },
+                    "required": ["action"],
+                },
+            },
+        },
+    ]
+
+
+def build_table_talk_tool(locale: str = "zh-CN") -> dict:
+    """Return the table-talk schema in the requested language."""
+    text = _text(locale)
+    return {
+        "type": "function",
+        "function": {
+            "name": TABLE_TALK_TOOL_NAME,
+            "description": text["table_talk"],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": text["table_talk_text"],
+                    }
+                },
+                "required": ["text"],
+            },
+        },
+    }
+
+
+TOOLS = build_tools("zh-CN")
+TABLE_TALK_TOOL = build_table_talk_tool("zh-CN")
+TOOL_SCHEMAS = [
+    tool for tool in TOOLS if tool["function"]["name"] != "apply_action"
+] + [TABLE_TALK_TOOL] + [
+    tool for tool in TOOLS if tool["function"]["name"] == "apply_action"
+]
+
+
+def select_tools(names: Sequence[str], locale: str = "zh-CN") -> List[dict]:
+    """Return the tool schemas for the requested tool names."""
+    text = _text(locale)
+    tools = build_tools(locale)
+    table_talk = build_table_talk_tool(locale)
+    schemas = [
+        tool for tool in tools if tool["function"]["name"] != "apply_action"
+    ] + [table_talk] + [
+        tool for tool in tools if tool["function"]["name"] == "apply_action"
+    ]
+    wanted = set(names)
+    known = {tool["function"]["name"] for tool in schemas}
+    unknown = wanted.difference(known)
+    if unknown:
+        raise ValueError(text["unknown_tool"].format(tools=", ".join(sorted(unknown))))
+    return [tool for tool in schemas if tool["function"]["name"] in wanted]
+
+
+__all__ = [
+    "_TOOL_TEXT",
+    "TABLE_TALK_TOOL",
+    "TOOLS",
+    "TOOL_SCHEMAS",
+    "build_table_talk_tool",
+    "build_tools",
+    "select_tools",
+]

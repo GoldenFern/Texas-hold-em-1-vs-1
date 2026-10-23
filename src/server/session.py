@@ -363,7 +363,7 @@ class GameSession:
             new_agents: Dict[int, object] = {}
             llm_runtime = self._game_config.get("llm_runtime", {})
             llm_tool_names = AGENT_TOOL_NAMES if table_talk_enabled else ALL_TOOL_NAMES
-            llm_tools = select_tools(llm_tool_names)
+            llm_tools = select_tools(llm_tool_names, locale=agent_locale)
             llm_system_prompt = build_system_prompt(
                 llm_tool_names,
                 require_estimate_each_turn=bool(
@@ -371,6 +371,7 @@ class GameSession:
                 ),
                 table_talk_max_chars=self._table_talk_limits.max_chars,
                 table_talk_max_per_turn=self._table_talk_limits.max_per_turn,
+                locale=agent_locale,
             )
             for seat_index, seat in enumerate(seats):
                 if seat.kind == "llm":
@@ -385,15 +386,20 @@ class GameSession:
                         client=self.client,
                         analyzer=self.analyzer,
                         equity_analyzer=self.equity_analyzer,
-                        validate_action=self._validator_for(generation_holder),
+                        validate_action=self._validator_for(
+                            generation_holder, agent_locale
+                        ),
                         runtime=llm_runtime,
                         tools=llm_tools,
                         system_prompt=llm_system_prompt,
                         submit_table_talk=(
-                            self._table_talk_submitter(generation_holder, seat_index)
+                            self._table_talk_submitter(
+                                generation_holder, seat_index, agent_locale
+                            )
                             if table_talk_enabled
                             else None
                         ),
+                        locale=agent_locale,
                     )
                 elif seat.kind == "bot":
                     if str(seat.bot_agent_type).startswith("project_"):
@@ -441,6 +447,8 @@ class GameSession:
                 self.god_view = rules["god_view"]
                 self.max_hands = rules["max_hands"]
                 self.agent_locale = agent_locale
+                if hasattr(self.client, "locale"):
+                    self.client.locale = agent_locale
                 self.hand_history = []
                 self.transcripts = {0: [], 1: []}
                 self.table_talk_enabled = table_talk_enabled
@@ -473,19 +481,29 @@ class GameSession:
             time.sleep(0.025)
         return self.get_state()
 
-    def _validator_for(self, generation_holder: dict):
+    def _validator_for(self, generation_holder: dict, locale: str = "zh-CN"):
         def validate(action: Action) -> Optional[str]:
-            return self._validate_for_generation(action, int(generation_holder["value"]))
+            return self._validate_for_generation(
+                action,
+                int(generation_holder["value"]),
+                locale,
+            )
 
         return validate
 
-    def _table_talk_submitter(self, generation_holder: dict, seat: int):
+    def _table_talk_submitter(
+        self,
+        generation_holder: dict,
+        seat: int,
+        locale: str = "zh-CN",
+    ):
         def submit(text: str, turn_id: str) -> dict:
             return self._record_table_talk(
                 int(generation_holder["value"]),
                 seat,
                 text,
                 turn_id,
+                locale,
             )
 
         return submit
@@ -496,17 +514,19 @@ class GameSession:
         seat: int,
         text: str,
         turn_id: str = "",
+        locale: Optional[str] = None,
     ) -> dict:
         """Validate and store one table-talk message for the acting seat."""
+        talk_locale = normalize_locale(locale, self.agent_locale) or self.agent_locale
         with self.lock:
             if not self._alive(generation) or not self.game:
-                return {"ok": False, "error": self._t("session.table_talk.reset")}
+                return {"ok": False, "error": tr(talk_locale, "session.table_talk.reset")}
             if not self.table_talk_enabled:
-                return {"ok": False, "error": self._t("session.table_talk.disabled")}
+                return {"ok": False, "error": tr(talk_locale, "session.table_talk.disabled")}
             if self.game.street == Street.FINISHED:
-                return {"ok": False, "error": self._t("session.table_talk.hand_finished")}
+                return {"ok": False, "error": tr(talk_locale, "session.table_talk.hand_finished")}
             if self.game.actor != seat:
-                return {"ok": False, "error": self._t("session.table_talk.not_your_turn")}
+                return {"ok": False, "error": tr(talk_locale, "session.table_talk.not_your_turn")}
 
             turn_key = (seat, str(turn_id or ""))
             used_turn = self._table_talk_turn_counts.get(turn_key, 0)
@@ -517,7 +537,8 @@ class GameSession:
             if remaining_turn <= 0:
                 return {
                     "ok": False,
-                    "error": self._t(
+                    "error": tr(
+                        talk_locale,
                         "session.table_talk.limit",
                         max=self._table_talk_limits.max_per_turn,
                     ),
@@ -528,7 +549,7 @@ class GameSession:
                 normalized = normalize_table_talk(
                     text,
                     self._table_talk_limits.max_chars,
-                    locale=self.ui_locale,
+                    locale=talk_locale,
                 )
             except ValueError as exc:
                 return {
@@ -567,22 +588,36 @@ class GameSession:
         generation: int,
         seat: int,
         text: str,
+        locale: Optional[str] = None,
     ) -> dict:
         """Store one optional post-match message from a seat."""
+        talk_locale = normalize_locale(locale, self.agent_locale) or self.agent_locale
         with self.lock:
             if not self._alive(generation) or not self.game:
-                return {"ok": False, "error": self._t("session.table_talk.match_reset")}
+                return {
+                    "ok": False,
+                    "error": tr(talk_locale, "session.table_talk.match_reset"),
+                }
             if not self.table_talk_enabled:
-                return {"ok": False, "error": self._t("session.table_talk.disabled")}
+                return {
+                    "ok": False,
+                    "error": tr(talk_locale, "session.table_talk.disabled"),
+                }
             if not self.game.match_over:
-                return {"ok": False, "error": self._t("session.table_talk.match_not_finished")}
+                return {
+                    "ok": False,
+                    "error": tr(talk_locale, "session.table_talk.match_not_finished"),
+                }
             if self._final_talk_sent.get(seat):
-                return {"ok": False, "error": self._t("session.table_talk.final_sent")}
+                return {
+                    "ok": False,
+                    "error": tr(talk_locale, "session.table_talk.final_sent"),
+                }
             try:
                 normalized = normalize_table_talk(
                     text,
                     self._table_talk_limits.max_chars,
-                    locale=self.ui_locale,
+                    locale=talk_locale,
                 )
             except ValueError as exc:
                 return {"ok": False, "error": str(exc)}
@@ -791,7 +826,9 @@ class GameSession:
             emit = self._make_emit(generation, seat)
 
             def submit(text: str, seat: int = seat) -> dict:
-                return self._record_final_table_talk(generation, seat, text)
+                return self._record_final_table_talk(
+                    generation, seat, text, locale=self.agent_locale
+                )
 
             try:
                 agent.final_table_talk(result, submit, emit)
@@ -998,10 +1035,16 @@ class GameSession:
     def _match_note(self, seat: int) -> str:
         assert self.game is not None
         total = len(self.hand_history)
-        return (
-            f"这是本次比赛的第 {self.game.hand_id} 手，已完成 {total} 手。"
-            f"盲注 {self.game.small_blind}/{self.game.big_blind}，起始筹码 {self.game.starting_chips}。"
-            f"你当前 {self.game.players[seat].chips}，对手 {self.game.players[1 - seat].chips}。"
+        return tr(
+            self.agent_locale,
+            "agent.match_note",
+            hand=self.game.hand_id,
+            total=total,
+            small=self.game.small_blind,
+            big=self.game.big_blind,
+            chips=self.game.starting_chips,
+            mine=self.game.players[seat].chips,
+            opponent=self.game.players[1 - seat].chips,
         )
 
     def _history_item(self, item: dict) -> dict:
@@ -1036,11 +1079,19 @@ class GameSession:
             return Action(seat, ActionType.CHECK, source=source, auto=True)
         return Action(seat, ActionType.FOLD, source=source, auto=True)
 
-    def _validate_for_generation(self, action: Action, generation: int) -> Optional[str]:
+    def _validate_for_generation(
+        self,
+        action: Action,
+        generation: int,
+        locale: Optional[str] = None,
+    ) -> Optional[str]:
         with self.lock:
             if not self._alive(generation) or not self.game:
-                return "牌局已结束或被重置"
-            return self.game.preview(action)
+                return tr(
+                    locale or self.agent_locale,
+                    "session.table_talk.reset",
+                )
+            return self.game.preview(action, locale=locale or self.agent_locale)
 
     # ------------------------------------------------------------------
     # Events / transcripts
@@ -1171,7 +1222,13 @@ class GameSession:
             community = list(self.game.community)
             hand_id = self.game.hand_id
             street = self.game.street.value
-        result = self.analyzer.analyze(hole, community, hero_seat=seat, iterations=iterations)
+        result = self.analyzer.analyze(
+            hole,
+            community,
+            hero_seat=seat,
+            iterations=iterations,
+            locale=self.ui_locale,
+        )
         payload = result.to_dict()
         payload["hand_id"] = hand_id
         payload["street"] = street
@@ -1196,6 +1253,7 @@ class GameSession:
             self.registry,
             connect_timeout=min(10.0, float(runtime.get("connect_timeout_seconds", 20))),
             read_timeout=min(60.0, float(runtime.get("request_timeout_seconds", 300))),
+            locale=self.ui_locale,
         )
         try:
             result = test_client.stream(spec, messages, None, test_params, lambda event: None)

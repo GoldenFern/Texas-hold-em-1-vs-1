@@ -140,6 +140,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--sb", type=int, default=5)
     parser.add_argument("--bb", type=int, default=10)
     parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument(
+        "--agent-locale",
+        default="zh-CN",
+        choices=("zh-CN", "en-US"),
+        help="Language for LLM prompts, tool schemas and tool results.",
+    )
     parser.add_argument("--groups", default="all", help="'all' or comma-separated group keys.")
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--resume", action="store_true")
@@ -278,6 +284,8 @@ def build_eval_command(
         str(args.bb),
         "--seed",
         str(args.seed),
+        "--agent-locale",
+        args.agent_locale,
         "--output",
         str(output_dir),
         "--retries",
@@ -322,6 +330,7 @@ def summary_complete(summary_path: Path, args: argparse.Namespace, group: GroupS
         and int(summary.get("api_error_auto", 0)) == 0
         and int(summary.get("seed", 0)) == int(args.seed)
         and int(summary.get("big_blind", 0)) == int(args.bb)
+        and str(summary.get("agent_locale") or "zh-CN") == str(args.agent_locale)
         and list(summary.get("tools") or []) == list(group.tools)
         and bool(summary.get("recommend_tools"))
     )
@@ -461,6 +470,7 @@ def build_combined(
         "hands_per_group": args.hands,
         "workers": args.workers,
         "seed": args.seed,
+        "agent_locale": args.agent_locale,
         "chips": args.chips,
         "small_blind": args.sb,
         "big_blind": args.bb,
@@ -502,6 +512,7 @@ def write_combined_report(
         "",
         f"- 生成时间: {combined['generated_at']}",
         f"- 模型: `{args.provider}/{args.model}`",
+        f"- Agent 语言: `{args.agent_locale}`",
         f"- Bot: `{args.bot_algorithm}` / `{args.bot_model}`",
         f"- 每组手数: {args.hands}（{args.hands // 2} 副牌 × 2 个座位）",
         f"- 并发: {args.workers}；{len(args.group_specs)} 组顺序执行",
@@ -687,7 +698,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         reporter.line(
             f"table: {args.hands} hands/group, {args.workers} workers, "
-            f"{args.chips} chips, blinds {args.sb}/{args.bb}, seed {args.seed}"
+            f"{args.chips} chips, blinds {args.sb}/{args.bb}, seed {args.seed}, "
+            f"agent_locale={args.agent_locale}"
         )
 
         if not args.report_only:

@@ -57,7 +57,7 @@ class AgentView:
             "name": self.name,
             "hand_id": self.hand_id,
             "street": self.street,
-            "position": "按钮/小盲" if self.is_button else "大盲",
+            "position": "button" if self.is_button else "big_blind",
             "hole_cards": self.hole_cards,
             "community_cards": self.community,
             "pot": self.pot,

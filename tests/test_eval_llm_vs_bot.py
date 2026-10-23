@@ -40,6 +40,14 @@ def test_tool_recommendation_only_mentions_available_tools() -> None:
     assert build_tool_recommendation(("apply_action",)) == ""
 
 
+def test_tool_recommendation_english() -> None:
+    text = build_tool_recommendation(("estimate_equity", "apply_action"), "en-US")
+    assert "Tool-use recommendation" in text
+    assert "estimate_equity" in text
+    assert "The system does not force tool calls" in text
+    assert "系统不会强制调用" not in text
+
+
 def test_hand_tool_stats_counts_successful_auxiliary_calls() -> None:
     events = [
         {

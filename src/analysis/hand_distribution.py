@@ -23,8 +23,10 @@ from src.engine.evaluator import (
     HAND_CATEGORIES,
     assess_hand,
     category_from_score,
+    hand_category_name,
     treys_int,
 )
+from src.i18n import tr
 from treys import Evaluator
 
 _EVALUATOR = Evaluator()
@@ -60,19 +62,29 @@ class DistributionResult:
             "needed_board_cards": self.needed_board_cards,
         }
 
-    def to_llm_dict(self) -> dict:
+    def to_llm_dict(self, locale: str = "zh-CN") -> dict:
         """Compact tool result for an LLM."""
+        current_best = None
+        if self.current_best:
+            current_best = dict(self.current_best)
+            current_best["category_name"] = hand_category_name(
+                str(current_best.get("category") or ""),
+                locale,
+                str(current_best.get("category_name") or ""),
+            )
         return {
             "method": self.method,
             "samples": self.total,
             "needed_board_cards": self.needed_board_cards,
-            "current_best": self.current_best,
+            "current_best": current_best,
             "probabilities": {
-                item["name"]: round(item["probability"] * 100, 3)
+                hand_category_name(item["key"], locale, item["name"]): round(
+                    item["probability"] * 100, 3
+                )
                 for item in self.distribution
                 if item["probability"] > 0
             },
-            "note": "概率单位是百分比；这是最终最佳五张牌的牌型分布。",
+            "note": tr(locale, "analysis.hand.note"),
         }
 
 
@@ -89,17 +101,18 @@ class HandDistributionAnalyzer:
         community: Sequence[Card],
         hero_seat: int = 0,
         iterations: int = DEFAULT_ITERATIONS,
+        locale: str = "zh-CN",
     ) -> DistributionResult:
         if len(hero_hole) != 2:
-            raise ValueError("需要恰好两张底牌")
+            raise ValueError(tr(locale, "analysis.hand.two_hole"))
         if len(community) > 5:
-            raise ValueError("公共牌不能超过五张")
+            raise ValueError(tr(locale, "analysis.hand.community_max"))
         iterations = max(MIN_ITERATIONS, min(int(iterations), MAX_ITERATIONS))
 
         known = list(hero_hole) + list(community)
         codes = [card.code for card in known]
         if len(set(codes)) != len(codes):
-            raise ValueError("已知牌中存在重复牌")
+            raise ValueError(tr(locale, "analysis.hand.duplicate"))
         key = (
             int(hero_seat),
             tuple(sorted(card.code for card in hero_hole)),
