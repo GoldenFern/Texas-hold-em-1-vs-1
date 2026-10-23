@@ -337,11 +337,13 @@ function toggleExpanded(): void {
 .chart-row.zero { opacity: 0.38; }
 
 .chart-name {
-  width: 68px;
-  flex: none;
+  flex: 0 0 8.8em;
+  min-width: 0;
+  overflow: hidden;
   font-size: calc(10.5px * var(--type-scale));
   color: var(--muted);
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .chart-row.best .chart-name {
@@ -439,7 +441,7 @@ function toggleExpanded(): void {
   .analysis-panel { padding: 12px 12px 11px; }
   .analysis-panel.collapsed { padding: 9px 12px; }
   .summary-name { display: none; }
-  .chart-name { width: 54px; font-size: calc(10px * var(--type-scale)); }
+  .chart-name { flex-basis: 8.8em; font-size: calc(10px * var(--type-scale)); }
   .chart-pct { width: 46px; }
 }
 </style>
