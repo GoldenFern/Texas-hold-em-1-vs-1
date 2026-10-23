@@ -29,14 +29,52 @@
             "reasoning_effort": "high"
           },
           "controls": {
-            "temperature": {"show": true, "min": 0, "max": 2, "step": 0.1, "hint": "思考模式建议 1.0"},
-            "top_p": {"show": true, "min": 0, "max": 1, "step": 0.05, "hint": "官方建议 1.0"},
-            "max_tokens": {"show": true, "min": 1024, "max": 131072, "step": 1024, "hint": "输出上限 131072，别把思考预算卡太死"},
-            "thinking": {"mode": "toggle", "label": "深度思考", "hint": "开启后返回 reasoning_content，并在工具调用回合回传"},
-            "reasoning_effort": {"show": true, "options": ["low", "high", "max"], "hint": "越高越愿意长考"}
-          }
+            "temperature": {
+              "show": true,
+              "min": 0,
+              "max": 2,
+              "step": 0.1,
+              "hint": "思考模式建议 1.0",
+              "hint_en": "Recommended 1.0 in thinking mode"
+            },
+            "top_p": {
+              "show": true,
+              "min": 0,
+              "max": 1,
+              "step": 0.05,
+              "hint": "官方建议 1.0",
+              "hint_en": "Official recommendation: 1.0"
+            },
+            "max_tokens": {
+              "show": true,
+              "min": 1024,
+              "max": 131072,
+              "step": 1024,
+              "hint": "输出上限 131072，别把思考预算卡太死",
+              "hint_en": "Output cap 131072; don't squeeze the thinking budget"
+            },
+            "thinking": {
+              "mode": "toggle",
+              "label": "深度思考",
+              "hint": "开启后返回 reasoning_content，并在工具调用回合回传",
+              "hint_en": "Returns reasoning_content and echoes it back on tool turns",
+              "label_en": "Deep thinking"
+            },
+            "reasoning_effort": {
+              "show": true,
+              "options": [
+                "low",
+                "high",
+                "max"
+              ],
+              "hint": "越高越愿意长考",
+              "hint_en": "Higher values encourage longer deliberation"
+            }
+          },
+          "tagline_en": "1M context · native tool calls"
         }
-      ]
+      ],
+      "name_en": "DeepSeek"
     },
     {
       "id": "doubao",
@@ -67,14 +105,46 @@
             "reasoning_effort": ""
           },
           "controls": {
-            "temperature": {"show": true, "min": 0, "max": 2, "step": 0.1, "hint": "Agent 任务建议 0.6–1.0"},
-            "top_p": {"show": true, "min": 0, "max": 1, "step": 0.05, "hint": "默认 0.95"},
-            "max_tokens": {"show": true, "min": 1024, "max": 131072, "step": 1024, "hint": "Seed 2.1 支持长输出"},
-            "thinking": {"mode": "toggle", "label": "深度思考", "hint": "通过 thinking.type 开关"},
-            "reasoning_effort": {"show": false, "options": []}
-          }
+            "temperature": {
+              "show": true,
+              "min": 0,
+              "max": 2,
+              "step": 0.1,
+              "hint": "Agent 任务建议 0.6–1.0",
+              "hint_en": "Recommended 0.6–1.0 for agent tasks"
+            },
+            "top_p": {
+              "show": true,
+              "min": 0,
+              "max": 1,
+              "step": 0.05,
+              "hint": "默认 0.95",
+              "hint_en": "Default 0.95"
+            },
+            "max_tokens": {
+              "show": true,
+              "min": 1024,
+              "max": 131072,
+              "step": 1024,
+              "hint": "Seed 2.1 支持长输出",
+              "hint_en": "Seed 2.1 supports long outputs"
+            },
+            "thinking": {
+              "mode": "toggle",
+              "label": "深度思考",
+              "hint": "通过 thinking.type 开关",
+              "hint_en": "Toggle via thinking.type",
+              "label_en": "Deep thinking"
+            },
+            "reasoning_effort": {
+              "show": false,
+              "options": []
+            }
+          },
+          "tagline_en": "General-purpose agent model · 256K context"
         }
-      ]
+      ],
+      "name_en": "Volcengine"
     },
     {
       "id": "minimax",
@@ -105,14 +175,54 @@
             "reasoning_effort": "high"
           },
           "controls": {
-            "temperature": {"show": false, "min": 0, "max": 2, "step": 0.1, "hint": "M3.1 Flash 会忽略该参数"},
-            "top_p": {"show": false, "min": 0, "max": 1, "step": 0.05, "hint": "M3.1 Flash 会忽略该参数"},
-            "max_tokens": {"show": true, "min": 1024, "max": 131072, "step": 1024, "hint": "输出上限 131072"},
-            "thinking": {"mode": "always", "label": "自适应思考", "hint": "M3.1 Flash 始终思考，不可关闭"},
-            "reasoning_effort": {"show": true, "options": ["low", "medium", "high", "xhigh", "max"], "hint": "推理深度，默认 max"}
-          }
+            "temperature": {
+              "show": false,
+              "min": 0,
+              "max": 2,
+              "step": 0.1,
+              "hint": "M3.1 Flash 会忽略该参数",
+              "hint_en": "M3.1 Flash ignores this parameter"
+            },
+            "top_p": {
+              "show": false,
+              "min": 0,
+              "max": 1,
+              "step": 0.05,
+              "hint": "M3.1 Flash 会忽略该参数",
+              "hint_en": "M3.1 Flash ignores this parameter"
+            },
+            "max_tokens": {
+              "show": true,
+              "min": 1024,
+              "max": 131072,
+              "step": 1024,
+              "hint": "输出上限 131072",
+              "hint_en": "Output cap 131072"
+            },
+            "thinking": {
+              "mode": "always",
+              "label": "自适应思考",
+              "hint": "M3.1 Flash 始终思考，不可关闭",
+              "hint_en": "M3.1 Flash always thinks; cannot be disabled",
+              "label_en": "Adaptive thinking"
+            },
+            "reasoning_effort": {
+              "show": true,
+              "options": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "hint": "推理深度，默认 max",
+              "hint_en": "Reasoning depth; default max"
+            }
+          },
+          "tagline_en": "1M context · interleaved thinking · native tools"
         }
-      ]
+      ],
+      "name_en": "MiniMax"
     },
     {
       "id": "qwen",
@@ -127,7 +237,9 @@
         "reasoning_effort_style": "none",
         "reasoning_echo": true,
         "stream_usage": true,
-        "extra_body": {"preserve_thinking": true}
+        "extra_body": {
+          "preserve_thinking": true
+        }
       },
       "models": [
         {
@@ -144,14 +256,46 @@
             "reasoning_effort": ""
           },
           "controls": {
-            "temperature": {"show": true, "min": 0.6, "max": 1.5, "step": 0.05, "hint": "思考模式下低于 0.6 会被自动抬高"},
-            "top_p": {"show": true, "min": 0, "max": 1, "step": 0.05, "hint": "默认 0.95"},
-            "max_tokens": {"show": true, "min": 1024, "max": 131072, "step": 1024, "hint": "输出上限 131072"},
-            "thinking": {"mode": "toggle", "label": "深度思考", "hint": "enable_thinking；历史 reasoning_content 会原样回传"},
-            "reasoning_effort": {"show": false, "options": []}
-          }
+            "temperature": {
+              "show": true,
+              "min": 0.6,
+              "max": 1.5,
+              "step": 0.05,
+              "hint": "思考模式下低于 0.6 会被自动抬高",
+              "hint_en": "Values below 0.6 are raised automatically in thinking mode"
+            },
+            "top_p": {
+              "show": true,
+              "min": 0,
+              "max": 1,
+              "step": 0.05,
+              "hint": "默认 0.95",
+              "hint_en": "Default 0.95"
+            },
+            "max_tokens": {
+              "show": true,
+              "min": 1024,
+              "max": 131072,
+              "step": 1024,
+              "hint": "输出上限 131072",
+              "hint_en": "Output cap 131072"
+            },
+            "thinking": {
+              "mode": "toggle",
+              "label": "深度思考",
+              "hint": "enable_thinking；历史 reasoning_content 会原样回传",
+              "hint_en": "enable_thinking; historical reasoning_content is echoed back",
+              "label_en": "Deep thinking"
+            },
+            "reasoning_effort": {
+              "show": false,
+              "options": []
+            }
+          },
+          "tagline_en": "1M context · hybrid thinking · multimodal"
         }
-      ]
+      ],
+      "name_en": "Qwen"
     },
     {
       "id": "zhipu",
@@ -183,14 +327,52 @@
             "reasoning_effort": "high"
           },
           "controls": {
-            "temperature": {"show": true, "min": 0, "max": 2, "step": 0.1, "hint": "官方建议 1.0"},
-            "top_p": {"show": true, "min": 0, "max": 1, "step": 0.05, "hint": "官方建议 0.95"},
-            "max_tokens": {"show": true, "min": 1024, "max": 131072, "step": 1024, "hint": "输出上限 131072"},
-            "thinking": {"mode": "always", "label": "深度思考", "hint": "GLM-5.3 Flash 思考常开，不可关闭"},
-            "reasoning_effort": {"show": true, "options": ["low", "high", "max"], "hint": "默认 max；low 更省 token"}
-          }
+            "temperature": {
+              "show": true,
+              "min": 0,
+              "max": 2,
+              "step": 0.1,
+              "hint": "官方建议 1.0",
+              "hint_en": "Official recommendation: 1.0"
+            },
+            "top_p": {
+              "show": true,
+              "min": 0,
+              "max": 1,
+              "step": 0.05,
+              "hint": "官方建议 0.95",
+              "hint_en": "Official recommendation: 0.95"
+            },
+            "max_tokens": {
+              "show": true,
+              "min": 1024,
+              "max": 131072,
+              "step": 1024,
+              "hint": "输出上限 131072",
+              "hint_en": "Output cap 131072"
+            },
+            "thinking": {
+              "mode": "always",
+              "label": "深度思考",
+              "hint": "GLM-5.3 Flash 思考常开，不可关闭",
+              "hint_en": "GLM-5.3 Flash always thinks; cannot be disabled",
+              "label_en": "Deep thinking"
+            },
+            "reasoning_effort": {
+              "show": true,
+              "options": [
+                "low",
+                "high",
+                "max"
+              ],
+              "hint": "默认 max；low 更省 token",
+              "hint_en": "Default max; low saves tokens"
+            }
+          },
+          "tagline_en": "1M context · native multimodal · long-horizon agent"
         }
-      ]
+      ],
+      "name_en": "Zhipu GLM"
     },
     {
       "id": "kimi",
@@ -221,14 +403,46 @@
             "reasoning_effort": ""
           },
           "controls": {
-            "temperature": {"show": true, "min": 0, "max": 2, "step": 0.1, "hint": "K2.7 Code 推荐 1.0"},
-            "top_p": {"show": true, "min": 0.01, "max": 1, "step": 0.05, "hint": "推荐 0.95"},
-            "max_tokens": {"show": true, "min": 1024, "max": 131072, "step": 1024, "hint": "模型最大输出约 235K，这里保守用 131072 上限"},
-            "thinking": {"mode": "always", "label": "强制思考", "hint": "K2.7 Code 只支持思考模式"},
-            "reasoning_effort": {"show": false, "options": []}
-          }
+            "temperature": {
+              "show": true,
+              "min": 0,
+              "max": 2,
+              "step": 0.1,
+              "hint": "K2.7 Code 推荐 1.0",
+              "hint_en": "K2.7 Code recommends 1.0"
+            },
+            "top_p": {
+              "show": true,
+              "min": 0.01,
+              "max": 1,
+              "step": 0.05,
+              "hint": "推荐 0.95",
+              "hint_en": "Recommended 0.95"
+            },
+            "max_tokens": {
+              "show": true,
+              "min": 1024,
+              "max": 131072,
+              "step": 1024,
+              "hint": "模型最大输出约 235K，这里保守用 131072 上限",
+              "hint_en": "Model max output is about 235K; capped here at 131072"
+            },
+            "thinking": {
+              "mode": "always",
+              "label": "强制思考",
+              "hint": "K2.7 Code 只支持思考模式",
+              "hint_en": "K2.7 Code only supports thinking mode",
+              "label_en": "Forced thinking"
+            },
+            "reasoning_effort": {
+              "show": false,
+              "options": []
+            }
+          },
+          "tagline_en": "262K context · forced thinking · interleaved tool calls"
         }
-      ]
+      ],
+      "name_en": "Kimi"
     },
     {
       "id": "longcat",
@@ -259,14 +473,46 @@
             "reasoning_effort": ""
           },
           "controls": {
-            "temperature": {"show": true, "min": 0, "max": 1, "step": 0.05, "hint": "思考开启时固定为 1.0"},
-            "top_p": {"show": true, "min": 0, "max": 1, "step": 0.05, "hint": "默认 0.95"},
-            "max_tokens": {"show": true, "min": 1024, "max": 131072, "step": 1024, "hint": "输出上限 131072"},
-            "thinking": {"mode": "toggle", "label": "深度思考", "hint": "thinking.type 开关"},
-            "reasoning_effort": {"show": false, "options": []}
-          }
+            "temperature": {
+              "show": true,
+              "min": 0,
+              "max": 1,
+              "step": 0.05,
+              "hint": "思考开启时固定为 1.0",
+              "hint_en": "Fixed at 1.0 when thinking is enabled"
+            },
+            "top_p": {
+              "show": true,
+              "min": 0,
+              "max": 1,
+              "step": 0.05,
+              "hint": "默认 0.95",
+              "hint_en": "Default 0.95"
+            },
+            "max_tokens": {
+              "show": true,
+              "min": 1024,
+              "max": 131072,
+              "step": 1024,
+              "hint": "输出上限 131072",
+              "hint_en": "Output cap 131072"
+            },
+            "thinking": {
+              "mode": "toggle",
+              "label": "深度思考",
+              "hint": "thinking.type 开关",
+              "hint_en": "thinking.type toggle",
+              "label_en": "Deep thinking"
+            },
+            "reasoning_effort": {
+              "show": false,
+              "options": []
+            }
+          },
+          "tagline_en": "1M context · native tools · multimodal"
         }
-      ]
+      ],
+      "name_en": "LongCat"
     },
     {
       "id": "mimo",
@@ -297,14 +543,46 @@
             "reasoning_effort": ""
           },
           "controls": {
-            "temperature": {"show": true, "min": 0, "max": 1.5, "step": 0.1, "hint": "思考模式下固定 1.0，设置会被忽略"},
-            "top_p": {"show": true, "min": 0, "max": 1, "step": 0.05, "hint": "思考模式下固定 0.95，设置会被忽略"},
-            "max_tokens": {"show": true, "min": 1024, "max": 131072, "step": 1024, "hint": "输出上限 128K"},
-            "thinking": {"mode": "toggle", "label": "深度思考", "hint": "thinking.type 开关；关闭可降低延迟"},
-            "reasoning_effort": {"show": false, "options": []}
-          }
+            "temperature": {
+              "show": true,
+              "min": 0,
+              "max": 1.5,
+              "step": 0.1,
+              "hint": "思考模式下固定 1.0，设置会被忽略",
+              "hint_en": "Fixed at 1.0 in thinking mode; settings are ignored"
+            },
+            "top_p": {
+              "show": true,
+              "min": 0,
+              "max": 1,
+              "step": 0.05,
+              "hint": "思考模式下固定 0.95，设置会被忽略",
+              "hint_en": "Fixed at 0.95 in thinking mode; settings are ignored"
+            },
+            "max_tokens": {
+              "show": true,
+              "min": 1024,
+              "max": 131072,
+              "step": 1024,
+              "hint": "输出上限 128K",
+              "hint_en": "Output cap 128K"
+            },
+            "thinking": {
+              "mode": "toggle",
+              "label": "深度思考",
+              "hint": "thinking.type 开关；关闭可降低延迟",
+              "hint_en": "thinking.type toggle; disable to reduce latency",
+              "label_en": "Deep thinking"
+            },
+            "reasoning_effort": {
+              "show": false,
+              "options": []
+            }
+          },
+          "tagline_en": "1M context · omni-modal · deep thinking"
         }
-      ]
+      ],
+      "name_en": "MiMo"
     },
     {
       "id": "4router",
@@ -336,14 +614,55 @@
             "reasoning_effort": "high"
           },
           "controls": {
-            "temperature": {"show": true, "min": 0, "max": 2, "step": 0.1, "hint": "推理模型通常忽略采样参数，建议保持 1.0"},
-            "top_p": {"show": true, "min": 0, "max": 1, "step": 0.05, "hint": "建议保持 1.0"},
-            "max_tokens": {"show": true, "min": 1024, "max": 128000, "step": 1024, "hint": "输出上限 128K"},
-            "thinking": {"mode": "always", "label": "推理模式", "hint": "GPT-6 Luna 始终推理；4Router 暂不回传思考正文"},
-            "reasoning_effort": {"show": true, "options": ["none", "low", "medium", "high", "xhigh", "max"], "hint": "推理深度，默认 high"}
-          }
+            "temperature": {
+              "show": true,
+              "min": 0,
+              "max": 2,
+              "step": 0.1,
+              "hint": "推理模型通常忽略采样参数，建议保持 1.0",
+              "hint_en": "Reasoning models usually ignore sampling parameters; keep 1.0"
+            },
+            "top_p": {
+              "show": true,
+              "min": 0,
+              "max": 1,
+              "step": 0.05,
+              "hint": "建议保持 1.0",
+              "hint_en": "Recommended 1.0"
+            },
+            "max_tokens": {
+              "show": true,
+              "min": 1024,
+              "max": 128000,
+              "step": 1024,
+              "hint": "输出上限 128K",
+              "hint_en": "Output cap 128K"
+            },
+            "thinking": {
+              "mode": "always",
+              "label": "推理模式",
+              "hint": "GPT-6 Luna 始终推理；4Router 暂不回传思考正文",
+              "hint_en": "GPT-6 Luna always reasons; 4Router does not return reasoning text yet",
+              "label_en": "Reasoning mode"
+            },
+            "reasoning_effort": {
+              "show": true,
+              "options": [
+                "none",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "hint": "推理深度，默认 high",
+              "hint_en": "Reasoning depth; default high"
+            }
+          },
+          "tagline_en": "1M context · reasoning model · 4Router 0.45 tier"
         }
-      ]
+      ],
+      "name_en": "4Router"
     }
   ]
 }

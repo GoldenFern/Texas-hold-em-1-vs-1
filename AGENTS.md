@@ -194,6 +194,12 @@ python scripts/eval_llm_tool_matrix.py --hands 300 --workers 10  # 五组工具�
 - `frontend/src/store.ts` 是唯一 socket 入口；组件不要直接 `io()` 或 `fetch` 游戏接口（`api.ts` 除外）。
 - 字号统一由 `:root` 的 `--type-scale` 缩放（当前 1.2）；新增 `font-size` 必须写成 `calc(Npx * var(--type-scale))`，不要写死 px，否则会绕过整体缩放。
 - 类型检查必须通过 `npm run typecheck`；构建必须通过 `npm run build`。
+- 界面文案只能放在 `frontend/src/i18n/locales/zh-CN.ts` 与 `en-US.ts`，组件里用 `t("key")`；不要在组件中写死中文或英文。默认英文，URL 参数 `?lang=zh-CN` 可临时覆盖，选择结果存 `heads-up-lab.locale.v1`。
+- `ActionLog.label`、`Assessment.category_name`、`distribution[].name` 来自后端，可能是中文；显示时必须按 `type` / `category` / `key` 查本地标签，不能直接展示这些字段。`describeAction` 已经做了这层转换。
+- 人类座位统一显示 `common.you`，不要依赖服务端保存的“你”或“You”；用 `seatDisplayName` 处理座位名。
+- `agent_locale` 在开局时固定，界面语言切换不会改变当前对局 Agent 的语言；Agent 语言控件在 `SetupModal`，默认 `auto`。
+- Provider/Bot 元数据由后端同时返回中英字段：`name_en`、`provider_name_en`、`tagline_en`、`hint_en`、`label_en`、`description_en`；前端用 `localizedText` 选择，不要在前端重复维护厂商说明。
+- 前端测试默认在 `frontend/src/test/setup.ts` 中切到中文；测英文时显式 `setLocale("en-US", false)`。
 
 ## 测试 / 质量
 

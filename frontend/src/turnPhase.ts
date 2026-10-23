@@ -1,15 +1,6 @@
+import { t } from "./i18n";
+import { toolLabel } from "./i18n/labels";
 import type { TurnView } from "./types";
-
-const TOOL_LABELS: Record<string, string> = {
-  estimate_hand_probabilities: "牌型概率",
-  estimate_equity: "胜率估算",
-  call_ev: "跟注 EV",
-  get_random_number: "随机数",
-};
-
-export function toolLabel(name: string): string {
-  return TOOL_LABELS[name] || name || "工具";
-}
 
 /**
  * Human-readable activity label for a running turn.
@@ -26,11 +17,11 @@ export function turnPendingLabel(turn: TurnView): string {
   const runningTool = last?.tools.find((tool) => tool.status === "running");
 
   if (runningTool) {
-    if (last?.status === "streaming") return "正在准备工具调用…";
-    if (runningTool.name === "apply_action") return "正在提交动作…";
-    return `正在执行 ${toolLabel(runningTool.name)}…`;
+    if (last?.status === "streaming") return t("turnPhase.preparingTool");
+    if (runningTool.name === "apply_action") return t("turnPhase.submitting");
+    return t("turnPhase.runningTool", { tool: toolLabel(runningTool.name) });
   }
 
-  if (!last || last.status === "streaming") return "模型思考中…";
-  return "等待模型继续…";
+  if (!last || last.status === "streaming") return t("turnPhase.thinking");
+  return t("turnPhase.continuing");
 }

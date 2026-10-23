@@ -8,7 +8,8 @@ import PlayingCard from "./PlayingCard.vue";
 import SeatPod from "./SeatPod.vue";
 import AppIcon from "./AppIcon.vue";
 import { lastActionForSeat } from "../actionMeta";
-import { chips, streetLabel } from "../format";
+import { streetLabel } from "../format";
+import { t } from "../i18n";
 import { board, prefersReducedMotion, streetForCommunity } from "../boardReveal";
 import { game, openSetup, openTableTalk } from "../store";
 import type { ActionLog, CardInfo, PlayerState, TableTalkEntry } from "../types";
@@ -87,12 +88,12 @@ const deckRemaining = computed(() => snapshot.value?.deck_remaining || []);
 const burned = computed(() => snapshot.value?.burned || []);
 const deckCount = computed(() => snapshot.value?.deck_remaining_count || 0);
 
-const phases = [
-  { key: "preflop", label: "翻牌前", short: "PRE" },
-  { key: "flop", label: "翻牌", short: "FLOP" },
-  { key: "turn", label: "转牌", short: "TURN" },
-  { key: "river", label: "河牌", short: "RIVER" },
-];
+const phases = computed(() => [
+  { key: "preflop", label: streetLabel("preflop"), short: "PRE" },
+  { key: "flop", label: streetLabel("flop"), short: "FLOP" },
+  { key: "turn", label: streetLabel("turn"), short: "TURN" },
+  { key: "river", label: streetLabel("river"), short: "RIVER" },
+]);
 
 const streetIndex = computed(() => {
   const order = ["preflop", "flop", "turn", "river", "showdown", "finished"];
@@ -107,16 +108,18 @@ function phaseState(index: number): "done" | "active" | "todo" {
 }
 
 const boardCaption = computed(() => {
-  if ((board.holeHold || board.busy) && community.value.length === 0) return "发牌中";
+  if ((board.holeHold || board.busy) && community.value.length === 0) return t("table.dealing");
   return "";
 });
 
 const streetText = computed(() => {
-  if (board.holeHold) return "发牌中";
+  if (board.holeHold) return t("table.dealing");
   if (board.busy) {
-    return community.value.length ? `翻牌中 · ${streetLabel(street.value)}` : "发牌中";
+    return community.value.length
+      ? t("table.revealing", { street: streetLabel(street.value) })
+      : t("table.dealing");
   }
-  if (match.value?.match_over) return "比赛结束";
+  if (match.value?.match_over) return t("table.matchOver");
   return streetLabel(street.value);
 });
 
@@ -354,7 +357,7 @@ onUnmounted(() => {
         v-if="talkTicker && !board.busy && !board.holeHold"
         class="talk-ticker"
         type="button"
-        :title="`${talkTicker.name}：${talkTicker.text}`"
+        :title="`${talkTicker.name}: ${talkTicker.text}`"
         @click="openTalkFromTable"
       >
         <AppIcon name="message" :size="12" />
@@ -430,7 +433,7 @@ onUnmounted(() => {
                   />
                 </div>
                 <div ref="potEl" class="pot-display" :class="{ empty: pot <= 0 }">
-                  <div class="pot-label"><span>POT</span></div>
+                  <div class="pot-label"><span>{{ t("table.pot") }}</span></div>
                   <div class="pot-value">
                     <AnimatedNumber :key="`pot-${snapshot?.hand_id || 0}-${board.dealNonce}`" :value="pot" />
                   </div>
@@ -446,11 +449,11 @@ onUnmounted(() => {
 
           <div v-if="!match" class="empty-overlay">
             <div class="empty-mark">♠</div>
-            <p>一张桌子，两位玩家。</p>
-            <span>人类 · LLM · RLCard / Project RL，任选其二。</span>
+            <p>{{ t("table.emptyTitle") }}</p>
+            <span>{{ t("table.emptyBody") }}</span>
             <button class="btn btn-primary empty-cta" @click="openSetup">
               <AppIcon name="settings" :size="14" />
-              配置对局
+              {{ t("table.configure") }}
             </button>
           </div>
         </div>

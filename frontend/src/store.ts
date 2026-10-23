@@ -7,7 +7,8 @@ import {
   ingestSnapshot,
   resetBoardReveal,
 } from "./boardReveal";
-import { agentNameFor } from "./format";
+import { agentNameFor, providerDisplayName } from "./format";
+import { locale, t } from "./i18n";
 import type {
   ActionEntry,
   AgentEvent,
@@ -175,7 +176,7 @@ function pickDefaultModel(): ProviderModel | null {
 
 export function defaultSeat(kind: SeatSetup["kind"], model?: ProviderModel | null): SeatSetup {
   if (kind === "human") {
-    return { kind: "human", name: "你" };
+    return { kind: "human", name: t("common.you") };
   }
   if (kind === "bot") {
     return { kind: "bot", name: "RLCard", bot: { agent_type: "random", model_path: null, delay_seconds: 3 } };
@@ -183,7 +184,9 @@ export function defaultSeat(kind: SeatSetup["kind"], model?: ProviderModel | nul
   const picked = model || pickDefaultModel();
   return {
     kind: "llm",
-    name: picked ? agentNameFor(picked.provider_name, picked.name) : "LLM Agent",
+    name: picked
+      ? agentNameFor(providerDisplayName(picked.provider_name, picked.provider_name_en), picked.name)
+      : t("table.roleLlm"),
     provider_id: picked?.provider_id || "deepseek",
     model_id: picked?.id || "deepseek-flash",
     params: picked ? { ...picked.defaults } : {},
@@ -218,6 +221,7 @@ export function buildDefaultSetup(): MatchSetupPayload {
       god_view: defaults.god_view,
     },
     table_talk: defaults.table_talk ?? true,
+    agent_locale: "auto",
   };
 }
 
@@ -236,6 +240,9 @@ function loadSavedSetup(): MatchSetupPayload | null {
       }
     }
     if (typeof parsed.table_talk !== "boolean") parsed.table_talk = true;
+    if (!["auto", "zh-CN", "en-US"].includes(String(parsed.agent_locale || ""))) {
+      parsed.agent_locale = "auto";
+    }
     return parsed;
   } catch {
     return null;
@@ -287,7 +294,11 @@ function connectSocket(): void {
   // Polling first gives engine.io an sid before the websocket upgrade. A
   // direct websocket connection ends with an empty WSGI response and makes
   // Werkzeug log a spurious "write() before start_response" on disconnect.
-  socket = io({ path: "/socket.io", transports: ["polling", "websocket"] });
+  socket = io({
+    path: "/socket.io",
+    transports: ["polling", "websocket"],
+    query: { locale: locale.value },
+  });
   socket.on("connect", () => {
     state.connected = true;
     if (state.snapshot?.has_match) void refreshTranscripts();
@@ -600,7 +611,7 @@ function handleAgentEvent(event: AgentEvent, replay = false): void {
       onHandResultEvent(event);
       break;
     case "match_over":
-      toast("info", "比赛结束", String(event.text || ""));
+      toast("info", t("errors.matchOver"), String(event.text || ""));
       break;
     default:
       break;
@@ -803,7 +814,7 @@ function onMessageEnd(seat: number, event: AgentEvent): void {
   message.usage = (event.usage as MessageView["usage"]) || message.usage;
   message.latencyMs = Number(event.latency_ms ?? 0);
   message.finishReason = String(event.finish_reason || "");
-  if (event.error) message.error = "LLM 调用失败";
+  if (event.error) message.error = t("errors.llmFailed");
 }
 
 function onTurnEnd(seat: number, event: AgentEvent): void {
@@ -834,7 +845,7 @@ function addNote(seat: number, level: string, text: string, turnId?: string): vo
 }
 
 function onError(seat: number, event: AgentEvent): void {
-  const text = String(event.text || "未知错误");
+  const text = String(event.text || t("errors.unknown"));
   addNote(seat, "error", text, event.turn_id as string | undefined);
   const messageId = String(event.message_id || "");
   if (messageId) {
@@ -848,7 +859,7 @@ function onError(seat: number, event: AgentEvent): void {
   const now = Date.now();
   if (now - lastErrorToastAt > 2500) {
     lastErrorToastAt = now;
-    toast("error", "Agent 调用出错", text);
+    toast("error", t("errors.agentCall"), text);
   }
 }
 
@@ -887,7 +898,22 @@ export async function startMatch(payload: MatchSetupPayload): Promise<boolean> {
   state.busy = true;
   beginEventBuffer();
   try {
-    const response = await api.newGame(payload);
+    const agentLocale = !payload.agent_locale || payload.agent_locale === "auto"
+      ? locale.value
+      : payload.agent_locale;
+    const apiPayload: MatchSetupPayload = {
+      ...payload,
+      agent_locale: agentLocale,
+      seats: [
+        payload.seats[0].kind === "human"
+          ? { ...payload.seats[0], name: t("common.you") }
+          : payload.seats[0],
+        payload.seats[1].kind === "human"
+          ? { ...payload.seats[1], name: t("common.you") }
+          : payload.seats[1],
+      ] as [SeatSetup, SeatSetup],
+    };
+    const response = await api.newGame(apiPayload);
     saveSetup(payload);
     // Close the setup sheet before applying the first snapshot. Some fast
     // bot-vs-bot hands finish before the response returns.
@@ -896,18 +922,22 @@ export async function startMatch(payload: MatchSetupPayload): Promise<boolean> {
     await refreshTranscripts();
     for (const seat of response.state.match?.seats || []) {
       if (seat.agent?.warning) {
-        toast("warn", `${seat.name} 使用降级策略`, seat.agent.warning);
+        toast("warn", t("errors.degradedTitle", { name: seat.name }), seat.agent.warning);
       }
     }
     const actual = response.state.match?.rules || payload.rules;
     toast(
       "success",
-      "对局已开始",
-      `盲注 ${actual.small_blind}/${actual.big_blind} · 起始筹码 ${actual.starting_chips}`,
+      t("errors.startSuccess"),
+      t("errors.startDetail", {
+        small: actual.small_blind,
+        big: actual.big_blind,
+        chips: Number(actual.starting_chips).toLocaleString("en-US"),
+      }),
     );
     return true;
   } catch (error) {
-    toast("error", "无法开始对局", errorText(error));
+    toast("error", t("errors.startFailed"), errorText(error));
     return false;
   } finally {
     endEventBuffer();
@@ -922,7 +952,7 @@ export async function humanAction(action: string, amount = 0): Promise<void> {
     const response = await api.action({ action, amount });
     if (response.state) applySnapshot(response.state);
   } catch (error) {
-    toast("error", "动作未执行", errorText(error));
+    toast("error", t("errors.actionFailed"), errorText(error));
   } finally {
     state.busy = false;
   }
@@ -935,7 +965,7 @@ export async function nextHand(): Promise<void> {
     const response = await api.nextHand();
     applySnapshot(response.state);
   } catch (error) {
-    toast("error", "无法开始下一手", errorText(error));
+    toast("error", t("errors.nextHandFailed"), errorText(error));
   } finally {
     state.busy = false;
   }
@@ -955,7 +985,7 @@ export async function toggleGodView(): Promise<void> {
       }
     }
   } catch (error) {
-    toast("error", "切换上帝视角失败", errorText(error));
+    toast("error", t("errors.godViewFailed"), errorText(error));
   } finally {
     state.godViewBusy = false;
   }
@@ -1007,7 +1037,7 @@ export async function refreshAnalysis(force = false): Promise<void> {
   if (player && player.kind !== "human" && !snap.match?.god_view) {
     analysisSeq += 1;
     state.analysis[seat] = null;
-    state.analysisError = "开启上帝视角后，才能分析该玩家的牌型分布。";
+    state.analysisError = t("errors.godViewRequired");
     state.analysisKey = "";
     state.analysisLoading = false;
     return;
@@ -1045,7 +1075,7 @@ export async function testProvider(
   params: Record<string, unknown>,
   key = `${model.provider_id}:${model.id}`,
 ): Promise<void> {
-  state.testResults[key] = { status: "testing", text: "正在测试连接…" };
+  state.testResults[key] = { status: "testing", text: t("errors.testing") };
   try {
     const response = await api.testLLM({
       provider_id: model.provider_id,
@@ -1054,7 +1084,7 @@ export async function testProvider(
     });
     state.testResults[key] = {
       status: "ok",
-      text: response.text || "连接成功",
+      text: response.text || t("errors.connected"),
       latency: response.latency_ms,
     };
   } catch (error) {

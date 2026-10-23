@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import AppIcon from "./AppIcon.vue";
+import { t } from "../i18n";
 import { dismissToast, game } from "../store";
 </script>
 
@@ -12,7 +13,7 @@ import { dismissToast, game } from "../store";
           <div class="toast-title">{{ item.title }}</div>
           <div v-if="item.detail" class="toast-detail">{{ item.detail }}</div>
         </div>
-        <button class="toast-close" aria-label="关闭" @click.stop="dismissToast(item.id)">
+        <button class="toast-close" :aria-label="t('common.close')" @click.stop="dismissToast(item.id)">
           <AppIcon name="x" :size="12" />
         </button>
       </div>

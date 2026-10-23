@@ -1,3 +1,4 @@
+import { locale, t } from "./i18n";
 import type {
   AnalysisResult,
   Bootstrap,
@@ -18,8 +19,12 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options,
+    headers: {
+      "Content-Type": "application/json",
+      "X-HU-Locale": locale.value,
+      ...(options.headers || {}),
+    },
   });
   let payload: any = null;
   const text = await response.text();
@@ -31,7 +36,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     }
   }
   if (!response.ok) {
-    const message = payload?.error || `请求失败（HTTP ${response.status}）`;
+    const message = payload?.error || t("errors.http", { status: response.status });
     throw new ApiError(message, response.status, payload?.kind);
   }
   return payload as T;

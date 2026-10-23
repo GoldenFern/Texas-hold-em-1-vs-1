@@ -1,16 +1,23 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import AppIcon from "./AppIcon.vue";
+import LanguageSwitch from "./LanguageSwitch.vue";
 import { iconUrl } from "../api";
 import { board } from "../boardReveal";
+import { seatDisplayName } from "../format";
+import { t } from "../i18n";
 import { game, openSetup, toggleGodView } from "../store";
+import type { SeatInfo } from "../types";
 
 const snapshot = computed(() => (
   (board.busy || board.holeHold) && board.baseSnapshot ? board.baseSnapshot : game.snapshot
 ));
 const match = computed(() => snapshot.value?.match || null);
 const seats = computed(() => match.value?.seats || []);
-const matchupTitle = computed(() => seats.value.map((seat) => seat.name).join("  vs  "));
+const seatLabel = (seat: SeatInfo) => (
+  seatDisplayName(seat.name, seat.kind, seat.model_name) || seat.name
+);
+const matchupTitle = computed(() => seats.value.map(seatLabel).join("  vs  "));
 const handId = computed(() => snapshot.value?.hand_id || 0);
 </script>
 
@@ -33,7 +40,7 @@ const handId = computed(() => snapshot.value?.hand_id || 0);
                 :size="12"
               />
             </span>
-            <span v-if="seat.kind === 'human'" class="matchup-label">你</span>
+            <span v-if="seat.kind === 'human'" class="matchup-label">{{ t("common.you") }}</span>
           </span>
           <span v-if="index === 0" class="vs">vs</span>
         </template>
@@ -41,27 +48,28 @@ const handId = computed(() => snapshot.value?.hand_id || 0);
       <span class="hand mono">#{{ handId }}</span>
     </div>
     <div class="top-info" v-else>
-      <span class="hand faint">尚未开局</span>
+      <span class="hand faint">{{ t("topbar.noMatch") }}</span>
     </div>
 
     <div class="top-actions">
-      <span v-if="!game.connected" class="conn offline" title="实时连接已断开">
+      <span v-if="!game.connected" class="conn offline" :title="t('topbar.offlineTitle')">
         <span class="dot"></span>
-        离线
+        {{ t("topbar.offline") }}
       </span>
+      <LanguageSwitch />
       <button
         class="btn btn-ghost btn-sm god-btn"
         :class="{ active: game.godView }"
         :disabled="game.godViewBusy || !match"
         @click="toggleGodView"
-        title="显示双方手牌与牌堆剩余牌"
+        :title="t('topbar.godViewTitle')"
       >
         <AppIcon :name="game.godView ? 'eye' : 'eyeOff'" :size="15" />
-        <span class="god-label">上帝视角</span>
+        <span class="god-label">{{ t("topbar.godView") }}</span>
       </button>
       <button class="btn btn-sm new-btn" @click="openSetup">
         <AppIcon name="plus" :size="15" />
-        <span>新比赛</span>
+        <span>{{ t("topbar.newMatch") }}</span>
       </button>
     </div>
   </header>

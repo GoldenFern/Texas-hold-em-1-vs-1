@@ -2,7 +2,8 @@
 import { computed } from "vue";
 import AppIcon from "./AppIcon.vue";
 import { iconUrl } from "../api";
-import { compactSeatName, streetLabel } from "../format";
+import { seatDisplayName, streetLabel } from "../format";
+import { t } from "../i18n";
 import type { SeatInfo, TableTalkEntry } from "../types";
 
 const props = defineProps<{
@@ -31,8 +32,8 @@ function seatInfo(seat: number): SeatInfo | null {
 
 function seatName(entry: TableTalkEntry): string {
   const info = seatInfo(entry.seat);
-  const raw = info?.name || entry.name || `Seat ${entry.seat}`;
-  return info?.kind === "llm" ? compactSeatName(raw, info.model_name) : raw;
+  const raw = info?.name || entry.name || t("common.seat", { seat: entry.seat });
+  return seatDisplayName(raw, info?.kind, info?.model_name) || raw;
 }
 
 function seatIcon(entry: TableTalkEntry): string {
@@ -44,13 +45,13 @@ function seatIcon(entry: TableTalkEntry): string {
   <div class="talk-panel">
     <div class="talk-note">
       <AppIcon name="shield" :size="12" />
-      <span>双方可见。内容可能是谎言或诱导，系统按原话展示，不做真伪核查。</span>
+      <span>{{ t("talk.note") }}</span>
     </div>
 
     <div v-if="!entries.length" class="talk-empty">
       <div class="talk-empty-orb"><AppIcon name="message" :size="22" /></div>
-      <strong>还没有人喊话</strong>
-      <p>双方 LLM 每个行动回合都会先喊话一次，比赛结束后还会再说一句。</p>
+      <strong>{{ t("talk.emptyTitle") }}</strong>
+      <p>{{ t("talk.emptyBody") }}</p>
     </div>
 
     <section v-for="group in groups" :key="group.handId" class="talk-group">
@@ -70,7 +71,7 @@ function seatIcon(entry: TableTalkEntry): string {
         <div class="talk-content">
           <div class="talk-meta">
             <strong>{{ seatName(entry) }}</strong>
-            <span v-if="entry.kind === 'final'" class="talk-final">赛后</span>
+            <span v-if="entry.kind === 'final'" class="talk-final">{{ t("talk.final") }}</span>
             <span v-else class="mono">{{ streetLabel(entry.street) }}</span>
           </div>
           <div class="talk-bubble">{{ entry.text }}</div>

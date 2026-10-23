@@ -16,6 +16,7 @@ CONFIG_PATH = PROJECT_ROOT / "config" / "providers.json"
 class ModelSpec:
     provider_id: str
     provider_name: str
+    provider_name_en: str
     provider_icon: str
     model_icon: str
     provider_accent: str
@@ -26,6 +27,7 @@ class ModelSpec:
     id: str
     name: str
     tagline: str
+    tagline_en: str
     context_window: int
     max_output: int
     defaults: Dict[str, Any]
@@ -95,6 +97,7 @@ class ModelSpec:
         return {
             "provider_id": self.provider_id,
             "provider_name": self.provider_name,
+            "provider_name_en": self.provider_name_en,
             "icon": self.model_icon or self.provider_icon,
             "accent": self.provider_accent,
             "base_url": self.base_url,
@@ -104,6 +107,7 @@ class ModelSpec:
             "id": self.id,
             "name": self.name,
             "tagline": self.tagline,
+            "tagline_en": self.tagline_en,
             "context_window": self.context_window,
             "max_output": self.max_output,
             "defaults": self.default_params(),
@@ -129,6 +133,7 @@ class ProviderRegistry:
             public_provider = {
                 "id": provider["id"],
                 "name": provider["name"],
+                "name_en": provider.get("name_en", provider["name"]),
                 "icon": provider.get("icon", ""),
                 "accent": provider.get("accent", "#888888"),
                 "base_url": provider.get("base_url", ""),
@@ -141,6 +146,7 @@ class ProviderRegistry:
                 spec = ModelSpec(
                     provider_id=provider["id"],
                     provider_name=provider["name"],
+                    provider_name_en=provider.get("name_en", provider["name"]),
                     provider_icon=provider.get("icon", ""),
                     model_icon=model.get("icon", ""),
                     provider_accent=provider.get("accent", "#888888"),
@@ -151,6 +157,7 @@ class ProviderRegistry:
                     id=model["id"],
                     name=model.get("name", model["id"]),
                     tagline=model.get("tagline", ""),
+                    tagline_en=model.get("tagline_en", model.get("tagline", "")),
                     context_window=int(model.get("context_window", 128000)),
                     max_output=int(model.get("max_output", 8192)),
                     defaults=dict(model.get("defaults", {})),

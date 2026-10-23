@@ -6,7 +6,8 @@ import PlayingCard from "./PlayingCard.vue";
 import TableTalkPanel from "./TableTalkPanel.vue";
 import { iconUrl } from "../api";
 import { describeAction } from "../actionMeta";
-import { actionLabel, chips, compactSeatName, shortName, streetShort } from "../format";
+import { actionLabel, chips, seatDisplayName, shortName, streetShort } from "../format";
+import { t } from "../i18n";
 import { reasoningDefaultCollapsed, setReasoningDefaultCollapsed } from "../reasoning";
 import {
   agentSeats,
@@ -39,8 +40,8 @@ const selectedInfo = computed(() => {
 
 const selectedLabel = computed(() => {
   const info = selectedInfo.value;
-  if (!info) return "Agent";
-  return info.kind === "llm" ? compactSeatName(info.name, info.model_name) : info.name;
+  if (!info) return t("common.agent");
+  return seatDisplayName(info.name, info.kind, info.model_name) || info.name;
 });
 
 const turns = computed<Array<TurnView | BotDecisionView>>(() => {
@@ -75,7 +76,7 @@ const streamHandId = computed<number | null>(() => {
 });
 
 function handDividerLabel(handId: number): string {
-  return handId > 0 ? `HAND #${handId}` : "HAND";
+  return handId > 0 ? t("console.hand", { handId }) : "HAND";
 }
 
 const anyLive = computed(() => {
@@ -123,15 +124,19 @@ function tabIcon(seat: (typeof agentSeats.value)[number]) {
 }
 
 function seatName(seat: number): string {
-  return game.snapshot?.players?.find((player) => player.seat === seat)?.name
-    || game.snapshot?.match?.seats.find((item) => item.seat === seat)?.name
-    || `Seat ${seat}`;
+  const player = game.snapshot?.players?.find((item) => item.seat === seat);
+  const info = game.snapshot?.match?.seats.find((item) => item.seat === seat);
+  const raw = player?.name || info?.name || t("common.seat", { seat });
+  return seatDisplayName(raw, player?.kind || info?.kind, info?.model_name) || raw;
 }
 
 function resultLine(group: (typeof groups.value)[number]): string {
-  if (!group.result) return "进行中";
+  if (!group.result) return t("console.resultInProgress");
   const winners = (group.result.winner_seats || []).map((seat) => seatName(seat)).join(" / ");
-  return `${winners || "—"} 赢得 ${chips(group.result.pot || 0)}`;
+  return t("console.resultWon", {
+    names: winners || t("common.none"),
+    amount: chips(group.result.pot || 0),
+  });
 }
 
 function clickSeat(seat: number): void {
@@ -334,7 +339,7 @@ onUnmounted(() => {
     <header class="console-head">
       <div class="head-top">
         <div class="head-title">
-          <h2>Agent 观测台</h2>
+          <h2>{{ t("console.title") }}</h2>
         </div>
         <div v-if="agentSeats.length" class="seat-tabs">
           <button
@@ -358,23 +363,23 @@ onUnmounted(() => {
           <button
             class="btn btn-ghost btn-sm follow-btn"
             :class="{ active: !game.pinned }"
-            title="自动跟随当前行动的 Agent"
+            :title="t('console.followTitle')"
             @click="followLive"
           >
             <AppIcon name="zap" :size="13" />
-            跟随
+            {{ t("console.follow") }}
           </button>
           <div class="segmented mode-switch">
-            <button :class="{ active: mode === 'stream' }" @click="setMode('stream')">思考流</button>
-            <button :class="{ active: mode === 'log' }" @click="setMode('log')">日志</button>
+            <button :class="{ active: mode === 'stream' }" @click="setMode('stream')">{{ t("console.stream") }}</button>
+            <button :class="{ active: mode === 'log' }" @click="setMode('log')">{{ t("console.log") }}</button>
             <button
               v-if="talkEnabled"
               class="talk-tab"
               :class="{ active: mode === 'talk' }"
               @click="setMode('talk')"
             >
-              对话
-              <span v-if="talkUnread" class="talk-unread" aria-label="有新喊话"></span>
+              {{ t("console.talk") }}
+              <span v-if="talkUnread" class="talk-unread" :aria-label="t('console.unreadTalk')"></span>
             </button>
           </div>
         </div>
@@ -385,31 +390,31 @@ onUnmounted(() => {
       <div v-if="mode === 'stream'" class="stream-body">
         <div v-if="!game.snapshot?.has_match" class="empty-state">
           <div class="empty-orb"><AppIcon name="sparkles" :size="28" /></div>
-          <h3>还没有开始对局</h3>
-          <p>配置两位玩家，LLM 的推理、工具参数和返回结果会逐字出现在这里。</p>
+          <h3>{{ t("console.emptyTitle") }}</h3>
+          <p>{{ t("console.emptyBody") }}</p>
           <button class="btn btn-primary btn-sm" @click="openSetup">
             <AppIcon name="settings" :size="14" />
-            配置对局
+            {{ t("console.configure") }}
           </button>
         </div>
 
         <div v-else-if="!agentSeats.length" class="empty-state">
           <div class="empty-orb"><AppIcon name="user" :size="28" /></div>
-          <h3>这是一场人类对局</h3>
-          <p>把其中一个座位换成 LLM 或 RLCard，就能在这里看到实时思考与工具调用。</p>
-          <button class="btn btn-primary btn-sm" @click="openSetup">打开配置</button>
+          <h3>{{ t("console.humanMatchTitle") }}</h3>
+          <p>{{ t("console.humanMatchBody") }}</p>
+          <button class="btn btn-primary btn-sm" @click="openSetup">{{ t("console.openSetup") }}</button>
         </div>
 
         <div v-else-if="!turns.length" class="empty-state">
           <div class="empty-orb"><AppIcon name="brain" :size="28" /></div>
-          <h3>等待 {{ selectedLabel }} 的第一回合</h3>
-          <p>轮到它行动时，模型会先阅读牌局，然后调用牌型概率与执行动作工具。</p>
+          <h3>{{ t("console.waitingTitle", { name: selectedLabel }) }}</h3>
+          <p>{{ t("console.waitingBody") }}</p>
           <div class="empty-flow">
-            <span>读取牌局</span>
+            <span>{{ t("console.flowRead") }}</span>
             <AppIcon name="arrowRight" :size="12" />
-            <span>计算牌型</span>
+            <span>{{ t("console.flowEstimate") }}</span>
             <AppIcon name="arrowRight" :size="12" />
-            <span>提交动作</span>
+            <span>{{ t("console.flowAct") }}</span>
           </div>
         </div>
 
@@ -448,7 +453,7 @@ onUnmounted(() => {
                 </header>
                 <div class="bot-body">
                   <div class="bot-legal">
-                    <span class="faint">合法动作 ID</span>
+                    <span class="faint">{{ t("console.botLegal") }}</span>
                     <span
                       v-for="id in item.legalIds"
                       :key="id"
@@ -464,7 +469,13 @@ onUnmounted(() => {
                     </div>
                   </div>
                   <p class="bot-note">
-                    {{ item.agentType === "random" ? "RLCard RandomAgent：在合法动作中均匀采样，不产生思考链。" : item.agentType.startsWith("project_") ? "项目规则训练的 73 维 / 10 动作策略，动作由模型推理产生。" : "RLCard 策略已加载，动作由模型推理产生。" }}
+                    {{
+                      item.agentType === "random"
+                        ? t("console.botRandomNote")
+                        : item.agentType.startsWith("project_")
+                          ? t("console.botProjectNote")
+                          : t("console.botRlcardNote")
+                    }}
                   </p>
                 </div>
               </div>
@@ -485,8 +496,8 @@ onUnmounted(() => {
       <div v-else-if="mode === 'log'" class="log-body">
         <div v-if="!groups.length" class="empty-state">
           <div class="empty-orb"><AppIcon name="list" :size="28" /></div>
-          <h3>还没有行动记录</h3>
-          <p>每一次下注、跟注、弃牌都会按手牌归档到这里。</p>
+          <h3>{{ t("console.logEmptyTitle") }}</h3>
+          <p>{{ t("console.logEmptyBody") }}</p>
         </div>
         <section v-for="group in groups" :key="group.handId" class="log-group">
           <header class="log-head">
@@ -512,7 +523,7 @@ onUnmounted(() => {
                 {{ describeAction(action) }}
               </span>
               <span v-if="action.auto" class="auto-chip">AUTO</span>
-              <span class="log-pot mono">底池 {{ chips(action.potAfter) }}</span>
+              <span class="log-pot mono">{{ t("console.logPot", { amount: chips(action.potAfter) }) }}</span>
             </div>
           </div>
         </section>
@@ -526,25 +537,25 @@ onUnmounted(() => {
     <transition name="jump">
       <button v-if="showJump" class="jump-latest" @click="jumpLatest">
         <AppIcon name="arrowRight" :size="12" class="rotate" />
-        回到最新
+        {{ t("console.jumpLatest") }}
       </button>
     </transition>
 
     <footer class="console-foot">
       <span class="foot-dot" :class="{ live: anyLive }"></span>
-      <span>{{ anyLive ? "Agent 正在生成" : game.connected ? "空闲" : "连接已断开" }}</span>
+      <span>{{ anyLive ? t("console.generating") : game.connected ? t("console.idle") : t("console.disconnected") }}</span>
       <span class="foot-spacer"></span>
-      <span v-if="mode === 'log'" class="mono">{{ game.actionFeed.length }} actions</span>
-      <span v-else-if="mode === 'talk'" class="mono">{{ game.tableTalk.length }} messages</span>
+      <span v-if="mode === 'log'" class="mono">{{ t("console.actionsCount", { count: game.actionFeed.length }) }}</span>
+      <span v-else-if="mode === 'talk'" class="mono">{{ t("console.messagesCount", { count: game.tableTalk.length }) }}</span>
       <button
         v-if="reasoningDefaultCollapsed"
         class="foot-action"
         type="button"
-        title="恢复思考自动折叠"
+        :title="t('console.collapseTitle')"
         @click="setReasoningDefaultCollapsed(false)"
       >
         <AppIcon name="eyeOff" :size="11" />
-        思考默认折叠
+        {{ t("console.collapseDefault") }}
       </button>
     </footer>
   </aside>

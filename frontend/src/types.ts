@@ -1,4 +1,5 @@
 export type SeatKind = "human" | "llm" | "bot";
+export type AgentLocaleChoice = "auto" | "zh-CN" | "en-US";
 
 export interface CardInfo {
   code: string;
@@ -151,6 +152,7 @@ export interface MatchState {
   match_over: boolean;
   god_view: boolean;
   table_talk?: boolean;
+  agent_locale?: "zh-CN" | "en-US";
   can_next_hand: boolean;
   started_at: number;
   error: string;
@@ -200,8 +202,10 @@ export interface ControlSpec {
   max?: number;
   step?: number;
   hint?: string;
+  hint_en?: string;
   mode?: "toggle" | "always" | "off";
   label?: string;
+  label_en?: string;
   options?: string[];
 }
 
@@ -216,6 +220,7 @@ export interface ModelControls {
 export interface ProviderModel {
   provider_id: string;
   provider_name: string;
+  provider_name_en?: string;
   icon: string;
   accent: string;
   base_url: string;
@@ -225,6 +230,7 @@ export interface ProviderModel {
   id: string;
   name: string;
   tagline: string;
+  tagline_en?: string;
   context_window: number;
   max_output: number;
   defaults: {
@@ -240,6 +246,7 @@ export interface ProviderModel {
 export interface ProviderInfo {
   id: string;
   name: string;
+  name_en?: string;
   icon: string;
   accent: string;
   base_url: string;
@@ -258,6 +265,7 @@ export interface RLCardAgent {
   id: string;
   name: string;
   description: string;
+  description_en?: string;
   needs_model: boolean;
 }
 
@@ -296,6 +304,7 @@ export interface MatchSetupPayload {
   seats: [SeatSetup, SeatSetup];
   rules: Rules & { god_view: boolean };
   table_talk?: boolean;
+  agent_locale?: AgentLocaleChoice;
 }
 
 export interface DistributionItem {

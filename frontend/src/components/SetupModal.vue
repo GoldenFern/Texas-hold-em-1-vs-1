@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import AppIcon from "./AppIcon.vue";
+import LanguageSwitch from "./LanguageSwitch.vue";
 import { iconUrl } from "../api";
-import { agentNameFor } from "../format";
+import { agentNameFor, providerDisplayName } from "../format";
+import { languageName, locale, localizedText, t } from "../i18n";
 import {
   buildDefaultSetup,
   closeSetup,
@@ -36,10 +38,11 @@ const BOT_DELAY_MAX = 10;
 const setup = reactive<SetupDraft>({
   seats: [
     { kind: "llm", name: "LLM Agent" },
-    { kind: "human", name: "你" },
+    { kind: "human", name: t("common.you") },
   ],
   rules: { ...FALLBACK_RULES },
   table_talk: true,
+  agent_locale: "auto",
 });
 
 const boot = computed(() => game.boot);
@@ -81,6 +84,7 @@ function resetSetup(): void {
   const copy = deepCopy(source);
   setup.seats = copy.seats;
   setup.rules = { ...copy.rules };
+  setup.agent_locale = copy.agent_locale || "auto";
   const savedTalk = Boolean(copy.table_talk ?? true);
   setup.table_talk = savedTalk && setup.seats.every((item) => item.kind === "llm");
   tableTalkTouched.value = !savedTalk;
@@ -147,11 +151,11 @@ function setKind(index: number, kind: SeatSetup["kind"]): void {
   const current = seat(index);
   if (current.kind === kind) return;
   if (kind === "human" && otherSeat(index).kind === "human") {
-    pushToast("warn", "不能同时选择两个人类玩家", "请把另一个座位改成 LLM 或 RLCard。");
+    pushToast("warn", t("setup.toast.twoHumans"), t("setup.toast.twoHumansDetail"));
     return;
   }
   if (kind === "human") {
-    setup.seats[index] = { kind: "human", name: "你" };
+    setup.seats[index] = { kind: "human", name: t("common.you") };
   } else if (kind === "bot") {
     setup.seats[index] = {
       kind: "bot",
@@ -181,7 +185,7 @@ function selectProvider(index: number, provider: ProviderInfo): void {
   setup.seats[index] = {
     ...seat(index),
     kind: "llm",
-    name: agentNameFor(provider.name, model.name),
+    name: agentNameFor(providerDisplayName(provider.name, provider.name_en), model.name),
     provider_id: provider.id,
     model_id: model.id,
     params: { ...model.defaults },
@@ -192,12 +196,51 @@ function selectModel(index: number, model: ProviderModel): void {
   setup.seats[index] = {
     ...seat(index),
     kind: "llm",
-    name: agentNameFor(model.provider_name, model.name),
+    name: agentNameFor(
+      providerDisplayName(model.provider_name, model.provider_name_en),
+      model.name,
+    ),
     provider_id: model.provider_id,
     model_id: model.id,
     params: { ...model.defaults },
   } as SeatSetup;
 }
+
+function providerName(provider: ProviderInfo): string {
+  return providerDisplayName(provider.name, provider.name_en);
+}
+
+function modelProviderName(model: ProviderModel): string {
+  return providerDisplayName(model.provider_name, model.provider_name_en);
+}
+
+function modelTagline(model: ProviderModel): string {
+  return localizedText(model.tagline, model.tagline_en);
+}
+
+function controlHint(control?: { hint?: string; hint_en?: string }): string {
+  return localizedText(control?.hint, control?.hint_en);
+}
+
+function controlLabel(
+  control: { label?: string; label_en?: string } | undefined,
+  fallbackKey: "setup.thinking",
+): string {
+  return localizedText(control?.label, control?.label_en) || t(fallbackKey);
+}
+
+function botDescription(agent: { description: string; description_en?: string }): string {
+  return localizedText(agent.description, agent.description_en);
+}
+
+function setAgentLocale(value: "auto" | "zh-CN" | "en-US"): void {
+  setup.agent_locale = value;
+}
+
+const resolvedAgentLanguage = computed(() => {
+  const target = setup.agent_locale === "auto" ? locale.value : setup.agent_locale;
+  return languageName(target);
+});
 
 function paramsOf(index: number): Record<string, any> {
   const config = seat(index);
@@ -300,43 +343,54 @@ function limitError(key: string, label: string): string {
   if (!limit) return "";
   const value = numericRule(key as keyof SetupDraft["rules"]);
   if (value < limit.min || value > limit.max) {
-    return `${label}必须在 ${limit.min} 到 ${limit.max} 之间。`;
+    return t("setup.validation.range", { label, min: limit.min, max: limit.max });
   }
   return "";
 }
 
 const validation = computed(() => {
-  if (setup.seats.filter((item) => item.kind === "human").length >= 2) return "不能同时选择两个人类玩家。";
+  if (setup.seats.filter((item) => item.kind === "human").length >= 2) {
+    return t("setup.validation.twoHumans");
+  }
   for (const config of setup.seats) {
     if (config.kind === "llm") {
       const model = modelFor(config.provider_id || "", config.model_id || "");
-      if (!model) return "请为 LLM 座位选择模型。";
-      if (!model.key_present) return `缺少环境变量 ${model.api_key_env}，请写入 .env 后重启服务。`;
+      if (!model) return t("setup.validation.selectModel");
+      if (!model.key_present) return t("setup.validation.missingKey", { env: model.api_key_env });
     }
     if (config.kind === "bot") {
       const agentType = config.bot?.agent_type || "random";
       if (agentType !== "random" && !config.bot?.model_path) {
-        return `${agentType.startsWith("project_") ? "Project" : "RLCard"} ${agentType.toUpperCase()} 需要选择模型文件。`;
+        return t("setup.validation.botModel", {
+          framework: agentType.startsWith("project_") ? "Project" : "RLCard",
+          type: agentType.toUpperCase(),
+        });
       }
       if (!agentType.startsWith("project_") && rlcard.value && !rlcard.value.available) {
-        return "rlcard 未安装，无法使用 RLCard Bot。";
+        return t("setup.validation.rlcardMissing");
       }
     }
   }
   for (const [key, label] of [
-    ["starting_chips", "起始筹码"],
-    ["small_blind", "小盲"],
-    ["big_blind", "大盲"],
-    ["rebuy_amount", "重购筹码"],
-    ["max_hands", "最大手数"],
+    ["starting_chips", t("setup.startingChips")],
+    ["small_blind", t("setup.smallBlind")],
+    ["big_blind", t("setup.bigBlind")],
+    ["rebuy_amount", t("setup.rebuyAmount")],
+    ["max_hands", t("setup.maxHands")],
   ] as const) {
     const error = limitError(key, label);
     if (error) return error;
   }
-  if (numericRule("starting_chips") < numericRule("big_blind")) return "起始筹码不能低于大盲。";
-  if (numericRule("small_blind") <= 0 || numericRule("big_blind") <= 0) return "盲注必须大于 0。";
-  if (numericRule("small_blind") >= numericRule("big_blind")) return "大盲必须大于小盲。";
-  if (numericRule("max_hands") < 0) return "最大手数不能为负。";
+  if (numericRule("starting_chips") < numericRule("big_blind")) {
+    return t("setup.validation.startingChipsBelowBB");
+  }
+  if (numericRule("small_blind") <= 0 || numericRule("big_blind") <= 0) {
+    return t("setup.validation.blindsPositive");
+  }
+  if (numericRule("small_blind") >= numericRule("big_blind")) {
+    return t("setup.validation.bigBlindGreater");
+  }
+  if (numericRule("max_hands") < 0) return t("setup.validation.maxHandsNegative");
   return "";
 });
 
@@ -390,15 +444,15 @@ function rangePct(value: number, min: number, max: number): string {
 }
 
 function modelQuirk(model: ProviderModel): string {
-  if (model.provider_id === "minimax") return "M3.1 Flash 始终思考，会忽略 temperature / top_p。";
-  if (model.provider_id === "zhipu") return "GLM-5.3 Flash 思考常开，reasoning_effort 控制深度。";
-  if (model.provider_id === "kimi") return "K2.7 Code 强制思考，使用 think 模式返回 reasoning_content。";
-  if (model.provider_id === "qwen") return "Qwen3.8 思考模式默认开启，历史 reasoning_content 会原样回传。";
-  if (model.provider_id === "deepseek") return "DeepSeek V4 思考模式通过 thinking + reasoning_effort 控制。";
-  if (model.provider_id === "longcat") return "LongCat 开启思考时 temperature 固定为 1.0。";
-  if (model.provider_id === "mimo") return "MiMo V2.6 Flash 可开关思考，思考模式下采样参数固定为 1.0 / 0.95。";
-  if (model.provider_id === "4router") return "GPT-6 Luna 始终推理，用 reasoning_effort 调深度；中转站不回传思考正文。";
-  return "OpenAI 兼容接口，已按厂商文档适配工具调用参数。";
+  if (model.provider_id === "minimax") return t("setup.quirk.minimax");
+  if (model.provider_id === "zhipu") return t("setup.quirk.zhipu");
+  if (model.provider_id === "kimi") return t("setup.quirk.kimi");
+  if (model.provider_id === "qwen") return t("setup.quirk.qwen");
+  if (model.provider_id === "deepseek") return t("setup.quirk.deepseek");
+  if (model.provider_id === "longcat") return t("setup.quirk.longcat");
+  if (model.provider_id === "mimo") return t("setup.quirk.mimo");
+  if (model.provider_id === "4router") return t("setup.quirk.4router");
+  return t("setup.quirk.generic");
 }
 
 async function submit(): Promise<void> {
@@ -415,59 +469,60 @@ function close(): void {
 
 <template>
   <div v-if="game.setupOpen" class="modal-backdrop" @click.self="close" @keydown.esc="close">
-    <div ref="modalRef" class="modal setup-modal" role="dialog" aria-modal="true" aria-label="配置对局" tabindex="-1">
+    <div ref="modalRef" class="modal setup-modal" role="dialog" aria-modal="true" :aria-label="t('setup.aria')" tabindex="-1">
       <header class="modal-header">
         <div>
           <div class="eyebrow">MATCH SETUP</div>
-          <h2 class="modal-title">配置一局单挑</h2>
-          <p class="modal-subtitle">
-            人类、LLM、RLCard，任选其二。LLM 会通过两个工具读取牌型概率并提交动作。
-          </p>
+          <h2 class="modal-title">{{ t("setup.title") }}</h2>
+          <p class="modal-subtitle">{{ t("setup.subtitle") }}</p>
         </div>
-        <button class="btn btn-ghost btn-icon" aria-label="关闭" @click="close">
-          <AppIcon name="x" :size="18" />
-        </button>
+        <div class="modal-head-tools">
+          <LanguageSwitch />
+          <button class="btn btn-ghost btn-icon" :aria-label="t('common.close')" @click="close">
+            <AppIcon name="x" :size="18" />
+          </button>
+        </div>
       </header>
 
       <div class="modal-body setup-body">
         <div class="preset-row">
-          <span class="preset-label">快速开始</span>
+          <span class="preset-label">{{ t("setup.quickStart") }}</span>
           <button class="preset" @click="applyPreset('human_deepseek')">
-            <AppIcon name="user" :size="12" /> 人 vs DeepSeek
+            <AppIcon name="user" :size="12" /> {{ t("setup.presetHumanDeepseek") }}
           </button>
           <button class="preset" @click="applyPreset('deepseek_glm')">
-            <AppIcon name="sparkles" :size="12" /> DeepSeek vs GLM
+            <AppIcon name="sparkles" :size="12" /> {{ t("setup.presetLlmDuel") }}
           </button>
           <button class="preset" @click="applyPreset('human_bot')">
-            <AppIcon name="bot" :size="12" /> 人 vs RLCard
+            <AppIcon name="bot" :size="12" /> {{ t("setup.presetHumanBot") }}
           </button>
-          <span class="preset-hint">选择后会覆盖双方配置</span>
+          <span class="preset-hint">{{ t("setup.presetHint") }}</span>
         </div>
 
         <section class="setup-section">
           <div class="section-head">
             <div>
               <span class="section-kicker">01</span>
-              <h3>对局双方</h3>
+              <h3>{{ t("setup.players") }}</h3>
             </div>
-            <span class="section-note">不能同时选择两个人类玩家</span>
+            <span class="section-note">{{ t("setup.twoHumansNote") }}</span>
           </div>
 
           <div class="seat-grid">
             <article v-for="(config, index) in setup.seats" :key="index" class="seat-config" :class="{ human: config.kind === 'human' }">
               <header class="seat-config-head">
                 <div class="seat-label">
-                  <span class="seat-tag">SEAT {{ index === 0 ? "A" : "B" }}</span>
-                  <span class="seat-position">{{ index === 0 ? "上座" : "下座" }}</span>
+                  <span class="seat-tag">{{ t("setup.seatLabel", { seat: index === 0 ? "A" : "B" }) }}</span>
+                  <span class="seat-position">{{ index === 0 ? t("setup.topSeat") : t("setup.bottomSeat") }}</span>
                 </div>
                 <div class="segmented kind-switch">
                   <button
                     :class="{ active: config.kind === 'human' }"
                     :disabled="config.kind !== 'human' && otherSeat(index).kind === 'human'"
-                    :title="otherSeat(index).kind === 'human' && config.kind !== 'human' ? '不能同时选择两个人类玩家' : ''"
+                    :title="otherSeat(index).kind === 'human' && config.kind !== 'human' ? t('setup.twoHumansNote') : ''"
                     @click="setKind(index, 'human')"
                   >
-                    人类
+                    {{ t("setup.human") }}
                   </button>
                   <button :class="{ active: config.kind === 'llm' }" @click="setKind(index, 'llm')">LLM</button>
                   <button :class="{ active: config.kind === 'bot' }" @click="setKind(index, 'bot')">RLCard</button>
@@ -477,16 +532,14 @@ function close(): void {
               <!-- Human -->
               <div v-if="config.kind === 'human'" class="seat-body human-body">
                 <div class="human-orb"><AppIcon name="user" :size="24" /></div>
-                <h4>你亲自上桌</h4>
-                <p>轮到你时，底部的行动栏会亮起。支持快捷键：F 弃牌、C 过牌/跟注、R 加注、A 全下。</p>
+                <h4>{{ t("setup.humanTitle") }}</h4>
+                <p>{{ t("setup.humanBody") }}</p>
                 <div class="human-features">
-                  <span class="chip"><AppIcon name="eye" :size="10" /> 自己的底牌可见</span>
-                  <span class="chip"><AppIcon name="clock" :size="10" /> 无限思考时间</span>
-                  <span class="chip"><AppIcon name="cards" :size="10" /> 上帝视角可选</span>
+                  <span class="chip"><AppIcon name="eye" :size="10" /> {{ t("setup.humanFeatureHole") }}</span>
+                  <span class="chip"><AppIcon name="clock" :size="10" /> {{ t("setup.humanFeatureTime") }}</span>
+                  <span class="chip"><AppIcon name="cards" :size="10" /> {{ t("setup.humanFeatureGod") }}</span>
                 </div>
-                <blockquote class="human-quote">
-                  单挑是最纯粹的德州扑克：位置、范围与心理，每一手都在对话。
-                </blockquote>
+                <blockquote class="human-quote">{{ t("setup.humanQuote") }}</blockquote>
               </div>
 
               <!-- LLM -->
@@ -501,9 +554,9 @@ function close(): void {
                     @click="selectProvider(index, provider)"
                   >
                     <span class="provider-icon logo-tile">
-                      <img :src="iconUrl(provider.icon)" :alt="provider.name" />
+                      <img :src="iconUrl(provider.icon)" :alt="providerName(provider)" />
                     </span>
-                    <span class="provider-name">{{ provider.name }}</span>
+                    <span class="provider-name">{{ providerName(provider) }}</span>
                     <span v-if="provider.models.some((model) => model.key_present)" class="key-dot ok"></span>
                     <span v-else class="key-dot missing"></span>
                   </button>
@@ -512,10 +565,10 @@ function close(): void {
                 <template v-if="currentModel(index)">
                   <div class="model-card" :style="{ '--provider-accent': currentModel(index)!.accent }">
                     <div class="model-head">
-                      <span class="model-icon logo-tile"><img :src="iconUrl(currentModel(index)!.icon)" :alt="currentModel(index)!.provider_name" /></span>
+                      <span class="model-icon logo-tile"><img :src="iconUrl(currentModel(index)!.icon)" :alt="modelProviderName(currentModel(index)!)" /></span>
                       <div class="model-title">
                         <strong>{{ currentModel(index)!.name }}</strong>
-                        <span>{{ currentModel(index)!.tagline }}</span>
+                        <span>{{ modelTagline(currentModel(index)!) }}</span>
                       </div>
                       <div class="model-specs">
                         <span class="chip mono">CTX {{ compactNumber(currentModel(index)!.context_window) }}</span>
@@ -526,21 +579,21 @@ function close(): void {
                     <div class="key-row">
                       <span v-if="currentModel(index)!.key_present" class="key-state ok">
                         <span class="dot live"></span>
-                        KEY 已配置 · {{ currentModel(index)!.api_key_env }}
+                        {{ t("setup.keyConfigured", { env: currentModel(index)!.api_key_env }) }}
                       </span>
                       <span v-else class="key-state missing">
                         <AppIcon name="alert" :size="11" />
-                        缺少 {{ currentModel(index)!.api_key_env }}
+                        {{ t("setup.keyMissing", { env: currentModel(index)!.api_key_env }) }}
                       </span>
                       <a class="docs-link" :href="currentModel(index)!.docs_url" target="_blank" rel="noopener">
-                        文档 <AppIcon name="external" :size="10" />
+                        {{ t("setup.docs") }} <AppIcon name="external" :size="10" />
                       </a>
                     </div>
 
                     <div class="param-grid">
                       <label v-if="currentModel(index)!.controls.temperature?.show" class="param">
                         <div class="param-head">
-                          <span>温度 <span class="param-en">temperature</span></span>
+                          <span>{{ t("setup.temperature") }} <span class="param-en">temperature</span></span>
                           <strong class="mono">{{ Number(paramsOf(index).temperature ?? 0).toFixed(2) }}</strong>
                         </div>
                         <input
@@ -553,12 +606,12 @@ function close(): void {
                           :style="{ '--pct': rangePct(Number(paramsOf(index).temperature ?? 0), currentModel(index)!.controls.temperature!.min ?? 0, currentModel(index)!.controls.temperature!.max ?? 1) }"
                           @input="setParam(index, 'temperature', Number(($event.target as HTMLInputElement).value))"
                         />
-                        <span class="param-hint">{{ currentModel(index)!.controls.temperature!.hint }}</span>
+                        <span class="param-hint">{{ controlHint(currentModel(index)!.controls.temperature) }}</span>
                       </label>
 
                       <label v-if="currentModel(index)!.controls.top_p?.show" class="param">
                         <div class="param-head">
-                          <span>Top P <span class="param-en">top_p</span></span>
+                          <span>{{ t("setup.topP") }} <span class="param-en">top_p</span></span>
                           <strong class="mono">{{ Number(paramsOf(index).top_p ?? 0).toFixed(2) }}</strong>
                         </div>
                         <input
@@ -571,12 +624,12 @@ function close(): void {
                           :style="{ '--pct': rangePct(Number(paramsOf(index).top_p ?? 0), currentModel(index)!.controls.top_p!.min ?? 0, currentModel(index)!.controls.top_p!.max ?? 1) }"
                           @input="setParam(index, 'top_p', Number(($event.target as HTMLInputElement).value))"
                         />
-                        <span class="param-hint">{{ currentModel(index)!.controls.top_p!.hint }}</span>
+                        <span class="param-hint">{{ controlHint(currentModel(index)!.controls.top_p) }}</span>
                       </label>
 
                       <label v-if="currentModel(index)!.controls.max_tokens?.show" class="param span-2">
                         <div class="param-head">
-                          <span>最大输出 <span class="param-en">max_tokens</span></span>
+                          <span>{{ t("setup.maxOutput") }} <span class="param-en">max_tokens</span></span>
                           <strong class="mono">{{ Number(paramsOf(index).max_tokens ?? 0).toLocaleString("en-US") }}</strong>
                         </div>
                         <input
@@ -589,14 +642,14 @@ function close(): void {
                           :style="{ '--pct': rangePct(Number(paramsOf(index).max_tokens ?? 0), currentModel(index)!.controls.max_tokens!.min ?? 1024, currentModel(index)!.controls.max_tokens!.max ?? 8192) }"
                           @input="setParam(index, 'max_tokens', Number(($event.target as HTMLInputElement).value))"
                         />
-                        <span class="param-hint">{{ currentModel(index)!.controls.max_tokens!.hint }}</span>
+                        <span class="param-hint">{{ controlHint(currentModel(index)!.controls.max_tokens) }}</span>
                       </label>
                     </div>
 
                     <div class="mode-row" v-if="currentModel(index)!.controls.thinking">
                       <div class="mode-label">
-                        <span>{{ currentModel(index)!.controls.thinking!.label || "深度思考" }}</span>
-                        <span class="param-hint">{{ currentModel(index)!.controls.thinking!.hint }}</span>
+                        <span>{{ controlLabel(currentModel(index)!.controls.thinking, "setup.thinking") }}</span>
+                        <span class="param-hint">{{ controlHint(currentModel(index)!.controls.thinking) }}</span>
                       </div>
                       <button
                         v-if="currentModel(index)!.controls.thinking!.mode === 'toggle'"
@@ -605,9 +658,9 @@ function close(): void {
                         @click="setParam(index, 'thinking', !paramsOf(index).thinking)"
                       ></button>
                       <span v-else-if="currentModel(index)!.controls.thinking!.mode === 'always'" class="chip gold">
-                        始终开启
+                        {{ t("setup.thinkingAlways") }}
                       </span>
-                      <span v-else class="chip">不支持</span>
+                      <span v-else class="chip">{{ t("setup.thinkingUnsupported") }}</span>
                     </div>
 
                     <div
@@ -615,8 +668,8 @@ function close(): void {
                       class="mode-row"
                     >
                       <div class="mode-label">
-                        <span>推理深度 <span class="param-en">reasoning_effort</span></span>
-                        <span class="param-hint">{{ currentModel(index)!.controls.reasoning_effort!.hint }}</span>
+                        <span>{{ t("setup.reasoningEffort") }} <span class="param-en">reasoning_effort</span></span>
+                        <span class="param-hint">{{ controlHint(currentModel(index)!.controls.reasoning_effort) }}</span>
                       </div>
                       <div class="segmented effort-switch">
                         <button
@@ -639,7 +692,7 @@ function close(): void {
                       <button class="btn btn-sm" :disabled="!currentModel(index)!.key_present || isTesting(index)" @click="testConnection(index)">
                         <span v-if="isTesting(index)" class="spinner"></span>
                         <AppIcon v-else name="play" :size="12" />
-                        测试连接
+                        {{ t("setup.testConnection") }}
                       </button>
                       <div v-if="testResult(index)" class="test-result" :class="testResult(index)!.status">
                         <span v-if="testResult(index)!.status === 'testing'" class="spinner"></span>
@@ -651,7 +704,7 @@ function close(): void {
                     </div>
                   </div>
                 </template>
-                <div v-else class="seat-placeholder">选择一个 Provider 和模型。</div>
+                <div v-else class="seat-placeholder">{{ t("setup.selectProviderModel") }}</div>
               </div>
 
               <!-- Bot -->
@@ -667,14 +720,14 @@ function close(): void {
                     <span class="bot-icon"><AppIcon :name="agent.id === 'random' ? 'zap' : 'brain'" :size="16" /></span>
                     <span class="bot-text">
                       <strong>{{ agent.name }}</strong>
-                      <small>{{ agent.description }}</small>
+                      <small>{{ botDescription(agent) }}</small>
                     </span>
                   </button>
                 </div>
 
                 <label class="field">
                   <div class="param-head">
-                    <span>行动延迟 <span class="param-en">delay</span></span>
+                    <span>{{ t("setup.botDelay") }} <span class="param-en">delay</span></span>
                     <strong class="mono">{{ botDelay(index).toFixed(1) }}s</strong>
                   </div>
                   <input
@@ -687,30 +740,30 @@ function close(): void {
                     :style="{ '--pct': rangePct(botDelay(index), BOT_DELAY_MIN, BOT_DELAY_MAX) }"
                     @input="setBotDelay(index, $event)"
                   />
-                  <span class="field-hint">每次行动前暂停，方便你看清牌桌变化；0 秒表示立即出手。</span>
+                  <span class="field-hint">{{ t("setup.botDelayHint") }}</span>
                 </label>
 
                 <label v-if="config.bot?.agent_type !== 'random'" class="field">
-                  <span class="field-label">模型文件</span>
+                  <span class="field-label">{{ t("setup.modelFile") }}</span>
                   <select class="input" :value="config.bot?.model_path || ''" @change="setBotModel(index, ($event.target as HTMLSelectElement).value)">
-                    <option value="">选择 {{ rlcard?.model_dir }} 下的模型</option>
+                    <option value="">{{ t("setup.selectModel", { dir: rlcard?.model_dir || "" }) }}</option>
                     <option v-for="model in botModels(config.bot?.agent_type || 'random')" :key="model.path" :value="model.path">
                       {{ model.name }} · {{ model.size_kb }} KB
                     </option>
                   </select>
                   <span class="field-hint" v-if="!(rlcard?.models || []).length">
-                    还没有模型文件。可以先使用 RandomAgent 验证链路，或运行 scripts/train_rlcard.py 训练。
+                    {{ t("setup.noModels") }}
                   </span>
                 </label>
 
                 <div class="bot-note">
                   <AppIcon name="bot" :size="13" />
-                  <span>RLCard Bot 不产生思考链；它的动作会以紧凑卡片出现在右侧 Agent 面板。</span>
+                  <span>{{ t("setup.botNoReasoning") }}</span>
                 </div>
 
                 <div v-if="rlcard && !rlcard.available" class="inline-warning">
                   <AppIcon name="alert" :size="12" />
-                  rlcard 未安装，当前无法使用 RLCard Bot。
+                  {{ t("setup.rlcardMissing") }}
                 </div>
               </div>
             </article>
@@ -721,18 +774,18 @@ function close(): void {
           <div class="section-head">
             <div>
               <span class="section-kicker">02</span>
-              <h3>牌局规则</h3>
+              <h3>{{ t("setup.rules") }}</h3>
             </div>
-            <span class="section-note">上帝视角只影响观战界面，Agent 永远看不到对手底牌</span>
+            <span class="section-note">{{ t("setup.godViewNote") }}</span>
           </div>
 
           <div class="rules-grid">
             <label class="field">
-              <span class="field-label">起始筹码</span>
+              <span class="field-label">{{ t("setup.startingChips") }}</span>
               <input class="input" type="number" :min="limits.starting_chips?.min || 100" :max="limits.starting_chips?.max || 100000" :value="numericRule('starting_chips')" @input="setNumericRule('starting_chips', $event)" />
             </label>
             <label class="field">
-              <span class="field-label">小盲 / 大盲</span>
+              <span class="field-label">{{ t("setup.blinds") }}</span>
               <div class="blind-row">
                 <input class="input" type="number" :min="1" :value="numericRule('small_blind')" @input="setNumericRule('small_blind', $event)" />
                 <span class="blind-sep">/</span>
@@ -740,41 +793,39 @@ function close(): void {
               </div>
             </label>
             <label class="field">
-              <span class="field-label">最大手数 <span class="field-hint-inline">0 = 不限</span></span>
+              <span class="field-label">{{ t("setup.maxHands") }} <span class="field-hint-inline">{{ t("setup.unlimited") }}</span></span>
               <input class="input" type="number" min="0" :max="limits.max_hands?.max || 1000" :value="numericRule('max_hands')" @input="setNumericRule('max_hands', $event)" />
             </label>
             <label class="field">
-              <span class="field-label">随机种子 <span class="field-hint-inline">留空 = 随机</span></span>
-              <input class="input" type="number" placeholder="random" :value="setup.rules.seed ?? ''" @input="setSeed" />
+              <span class="field-label">{{ t("setup.seed") }} <span class="field-hint-inline">{{ t("setup.seedHint") }}</span></span>
+              <input class="input" type="number" :placeholder="t('setup.seedPlaceholder')" :value="setup.rules.seed ?? ''" @input="setSeed" />
             </label>
           </div>
 
           <div class="rules-row">
             <div class="rule-toggle">
               <div class="rule-text">
-                <strong>自动重购</strong>
-                <span>输光筹码后，下一手自动补回起始筹码。</span>
+                <strong>{{ t("setup.autoRebuy") }}</strong>
+                <span>{{ t("setup.autoRebuyHint") }}</span>
               </div>
               <button class="toggle" :class="{ on: setup.rules.auto_rebuy }" @click="setRule('auto_rebuy', !setup.rules.auto_rebuy)"></button>
             </div>
             <label v-if="setup.rules.auto_rebuy" class="field rebuy-field">
-              <span class="field-label">重购筹码</span>
+              <span class="field-label">{{ t("setup.rebuyAmount") }}</span>
               <input class="input" type="number" :min="limits.rebuy_amount?.min || 100" :max="limits.rebuy_amount?.max || 100000" :value="numericRule('rebuy_amount')" @input="setNumericRule('rebuy_amount', $event)" />
             </label>
             <div class="rule-toggle">
               <div class="rule-text">
-                <strong>上帝视角</strong>
-                <span>显示双方底牌、烧牌与完整牌堆。Agent 不受影响。</span>
+                <strong>{{ t("setup.godView") }}</strong>
+                <span>{{ t("setup.godViewHint") }}</span>
               </div>
               <button class="toggle" :class="{ on: setup.rules.god_view }" @click="setRule('god_view', !setup.rules.god_view)"></button>
             </div>
             <div class="rule-toggle" :class="{ disabled: !canTableTalk }">
               <div class="rule-text">
-                <strong>桌边喊话</strong>
+                <strong>{{ t("setup.tableTalk") }}</strong>
                 <span>
-                  {{ canTableTalk
-                    ? "双方 LLM 每个行动回合都必须先喊话一次，再提交动作；比赛结束后还可以再说一句。内容可能是谎言，系统不做真伪核查。"
-                    : "仅双 LLM 对局可用。" }}
+                  {{ canTableTalk ? t("setup.tableTalkHint") : t("setup.tableTalkUnavailable") }}
                 </span>
               </div>
               <button
@@ -786,8 +837,27 @@ function close(): void {
             </div>
           </div>
 
+          <div v-if="setup.seats.some((item) => item.kind === 'llm')" class="rule-toggle agent-language">
+            <div class="rule-text">
+              <strong>{{ t("setup.agentLanguage") }}</strong>
+              <span>{{ t("setup.agentLanguageHint") }}</span>
+              <span class="field-hint-inline">{{ t("setup.agentLanguageResolved", { language: resolvedAgentLanguage }) }}</span>
+            </div>
+            <div class="segmented effort-switch">
+              <button :class="{ active: setup.agent_locale === 'auto' }" @click="setAgentLocale('auto')">
+                {{ t("setup.agentLanguageAuto") }}
+              </button>
+              <button :class="{ active: setup.agent_locale === 'zh-CN' }" @click="setAgentLocale('zh-CN')">
+                {{ t("setup.agentLanguageZh") }}
+              </button>
+              <button :class="{ active: setup.agent_locale === 'en-US' }" @click="setAgentLocale('en-US')">
+                {{ t("setup.agentLanguageEn") }}
+              </button>
+            </div>
+          </div>
+
           <div class="blind-presets">
-            <span class="faint">快速盲注</span>
+            <span class="faint">{{ t("setup.quickBlinds") }}</span>
             <button class="chip" @click="setBlinds(5, 10)">5 / 10</button>
             <button class="chip" @click="setBlinds(10, 20)">10 / 20</button>
             <button class="chip" @click="setBlinds(25, 50)">25 / 50</button>
@@ -803,19 +873,19 @@ function close(): void {
           </span>
           <span v-else class="validation ok">
             <AppIcon name="shield" :size="12" />
-            配置有效 · 每个 Agent 只读取自己的底牌，喊话不改变信息边界
+            {{ t("setup.valid") }}
           </span>
           <span class="footer-hint">
-            <template v-if="game.snapshot?.has_match">开始后将终止当前对局 · </template>
-            快捷键 F / C / R / A
+            <template v-if="game.snapshot?.has_match">{{ t("setup.willEndMatch") }}</template>
+            {{ t("setup.shortcuts") }}
           </span>
         </div>
         <div class="footer-actions">
-          <button class="btn" :disabled="busy" @click="close">取消</button>
+          <button class="btn" :disabled="busy" @click="close">{{ t("common.cancel") }}</button>
           <button class="btn btn-primary start-btn" :disabled="!canStart" @click="submit">
             <span v-if="busy" class="spinner"></span>
             <AppIcon v-else name="play" :size="14" />
-            {{ busy ? "正在开局…" : "开始对局" }}
+            {{ busy ? t("setup.starting") : t("setup.start") }}
           </button>
         </div>
       </footer>
@@ -827,6 +897,24 @@ function close(): void {
 .setup-modal {
   width: min(1120px, 100%);
   max-height: min(960px, calc(100vh - 28px));
+}
+
+.modal-head-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.agent-language .rule-text {
+  flex: 1;
+}
+
+@media (max-width: 720px) {
+  .agent-language {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
 
 .setup-body { gap: 16px; }

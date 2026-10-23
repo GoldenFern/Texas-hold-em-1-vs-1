@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import AppIcon from "./AppIcon.vue";
 import PlayingCard from "./PlayingCard.vue";
+import { t } from "../i18n";
 import type { CardInfo } from "../types";
 
 const props = withDefaults(
@@ -23,17 +24,17 @@ const extra = computed(() => Math.max(0, props.count - shown.value.length));
     <div class="deck-head">
       <div class="deck-title">
         <AppIcon name="cards" :size="14" />
-        <span>牌堆</span>
-        <span v-if="dealing" class="mono deck-count">发牌中</span>
-        <span v-else class="mono deck-count">{{ count }} 张</span>
+        <span>{{ t("table.deck") }}</span>
+        <span v-if="dealing" class="mono deck-count">{{ t("table.deckDealing") }}</span>
+        <span v-else class="mono deck-count">{{ t("table.deckCount", { count }) }}</span>
       </div>
-      <span v-if="dealing" class="deck-hint">底牌落桌后更新牌堆</span>
-      <span v-else class="deck-hint">按发出顺序排列 · 下一张在左</span>
+      <span v-if="dealing" class="deck-hint">{{ t("table.deckHintDealing") }}</span>
+      <span v-else class="deck-hint">{{ t("table.deckHint") }}</span>
     </div>
 
     <div v-if="dealing" class="deck-placeholder">
-      <span>正在发牌…</span>
-      <span class="mono">公共牌会按顺序展示</span>
+      <span>{{ t("table.deckShuffling") }}</span>
+      <span class="mono">{{ t("table.deckOrder") }}</span>
     </div>
 
     <div v-else class="deck-body">
@@ -43,11 +44,11 @@ const extra = computed(() => Math.max(0, props.count - shown.value.length));
           <span v-if="index === 0" class="next-tag">NEXT</span>
         </div>
         <div v-if="extra" class="deck-more mono">+{{ extra }}</div>
-        <div v-if="!shown.length" class="deck-empty">牌堆已发完</div>
+        <div v-if="!shown.length" class="deck-empty">{{ t("table.deckEmpty") }}</div>
       </div>
 
       <div v-if="burned.length" class="burn-row">
-        <span class="burn-label">烧牌</span>
+        <span class="burn-label">{{ t("table.burn") }}</span>
         <div class="burn-cards">
           <PlayingCard v-for="(card, index) in burned" :key="card.code" :card="card" size="mini" :index="index" dim />
         </div>

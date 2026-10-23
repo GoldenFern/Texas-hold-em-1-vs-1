@@ -2,6 +2,8 @@
 import { computed, ref } from "vue";
 import AppIcon from "./AppIcon.vue";
 import { actionLabel, chips, compactPercent, duration } from "../format";
+import { handCategoryLabel, handCategoryShort, toolLabel } from "../i18n/labels";
+import { t, type MessageKey } from "../i18n";
 import type { ToolView } from "../types";
 
 const props = defineProps<{ tool: ToolView }>();
@@ -50,14 +52,10 @@ const callAmount = computed(() => Number(result.value.call_amount || 0));
 const effectivePot = computed(() => Number(result.value.effective_pot || 0));
 const equitySource = computed(() => String(result.value.equity_source || "internal"));
 const equityMethod = computed(() => String(result.value.equity_method || result.value.method || ""));
-const streetLabel = computed(() => {
-  const labels: Record<string, string> = {
-    preflop: "翻前",
-    flop: "翻牌",
-    turn: "转牌",
-    river: "河牌",
-  };
-  return labels[String(result.value.street || "")] || "";
+const resultStreet = computed(() => {
+  const street = String(result.value.street || "");
+  if (!street) return "";
+  return t(`tool.street.${street}` as MessageKey);
 });
 const action = computed(() => String(parsed.value.action || result.value.action || ""));
 const amount = computed(() => Number(parsed.value.amount || result.value.amount || 0));
@@ -79,10 +77,10 @@ const legalActions = computed<string[]>(() => {
   return Array.isArray(value) ? (value as string[]) : [];
 });
 const statusLabel = computed(() => {
-  if (ignored.value) return "已忽略";
-  if (props.tool.status === "running") return "运行中";
-  if (props.tool.status === "error") return "失败";
-  return "完成";
+  if (ignored.value) return t("tool.status.ignored");
+  if (props.tool.status === "running") return t("tool.status.running");
+  if (props.tool.status === "error") return t("tool.status.error");
+  return t("tool.status.done");
 });
 const variant = computed(() => {
   if (isEstimate.value) return "estimate";
@@ -108,41 +106,54 @@ const icon = computed(() =>
 );
 const title = computed(() =>
   isEstimate.value
-    ? "牌型概率"
+    ? t("tool.title.estimate")
     : isEquity.value
-      ? "胜率估算"
+      ? t("tool.title.equity")
       : isAction.value
-        ? "执行动作"
+        ? t("tool.title.action")
         : isRandom.value
-          ? "随机数"
+          ? t("tool.title.random")
           : isCallEv.value
-            ? "跟注 EV"
+            ? t("tool.title.callEv")
             : isTalk.value
-              ? "桌边喊话"
-              : props.tool.name || "工具",
+              ? t("tool.title.talk")
+              : props.tool.name || t("tool.title.generic"),
 );
 const detail = computed(() => {
   if (isEstimate.value || isEquity.value) {
-    if (method.value === "exact") return `精确枚举 · ${samples.value.toLocaleString()} 种`;
-    if (method.value === "monte_carlo") return `蒙特卡洛 · ${samples.value.toLocaleString()} 次`;
-    return "计算中…";
+    if (method.value === "exact") {
+      return t("tool.detail.exact", { count: samples.value.toLocaleString() });
+    }
+    if (method.value === "monte_carlo") {
+      return t("tool.detail.monteCarlo", { count: samples.value.toLocaleString() });
+    }
+    return t("tool.detail.calculating");
   }
   if (isAction.value) {
-    const label = actionLabel(action.value) || "动作";
-    return amount.value ? `${label} → ${chips(amount.value)}` : label;
+    const label = actionLabel(action.value) || action.value || t("tool.title.generic");
+    return amount.value
+      ? t("tool.detail.action", { action: label, amount: chips(amount.value) })
+      : label;
   }
   if (isRandom.value) {
-    return randomValue.value !== null ? randomValue.value.toFixed(4) : "0 ≤ x < 1";
+    return randomValue.value !== null ? randomValue.value.toFixed(4) : t("tool.detail.random");
   }
   if (isCallEv.value) {
-    if (result.value.applicable === false) return "当前不适用";
-    return `EV ${evCall.value > 0 ? "+" : ""}${evCall.value.toFixed(1)}`;
+    if (result.value.applicable === false) return t("tool.detail.callEvNa");
+    return t("tool.detail.callEv", { value: `${evCall.value > 0 ? "+" : ""}${evCall.value.toFixed(1)}` });
   }
   if (isTalk.value) {
-    if (props.tool.status === "running") return "发送中";
-    return talkAccepted.value ? "已发送" : "被拒绝";
+    if (props.tool.status === "running") return t("tool.detail.sending");
+    return talkAccepted.value ? t("tool.detail.sent") : t("tool.detail.rejected");
   }
   return props.tool.name || "";
+});
+
+const bestLabel = computed(() => handCategoryLabel(bestKey.value, currentBest.value?.category_name || ""));
+const methodLabel = computed(() => {
+  if (method.value === "exact") return t("tool.method.exact");
+  if (method.value === "monte_carlo") return t("tool.method.monteCarlo");
+  return t("tool.method.calculating");
 });
 const argsPretty = computed(() => {
   if (props.tool.parsed) return JSON.stringify(props.tool.parsed, null, 2);
@@ -214,16 +225,18 @@ function percent(value: number): string {
       <div v-if="isEstimate" class="estimate-block">
         <div v-if="tool.status === 'error'" class="generic-error">
           <AppIcon name="alert" :size="13" />
-          {{ errorText || "牌型概率计算失败" }}
+          {{ errorText || t("tool.error.estimate") }}
         </div>
         <div class="estimate-meta">
-          <span class="chip gold">{{ method === "exact" ? "精确枚举" : method === "monte_carlo" ? "蒙特卡洛" : "计算中" }}</span>
-          <span v-if="samples" class="mono">{{ samples.toLocaleString() }} {{ method === "exact" ? "种" : "次" }}</span>
+          <span class="chip gold">{{ methodLabel }}</span>
+          <span v-if="samples" class="mono">
+            {{ samples.toLocaleString() }} {{ method === "exact" ? t("tool.unit.combos") : t("tool.unit.samples") }}
+          </span>
           <span v-if="elapsed" class="mono faint">{{ elapsed.toFixed(1) }}ms</span>
           <span v-if="currentBest" class="best-inline">
-            当前最佳 <strong>{{ currentBest.category_name }}</strong>
+            {{ t("tool.best") }} <strong>{{ bestLabel }}</strong>
           </span>
-          <span v-else class="faint">翻牌前 · 尚未成牌</span>
+          <span v-else class="faint">{{ t("tool.preflopNoHand") }}</span>
         </div>
 
         <div v-if="distribution.length" class="dist">
@@ -233,7 +246,7 @@ function percent(value: number): string {
             class="dist-row"
             :class="{ best: bestKey === item.key }"
           >
-            <span class="dist-name">{{ item.short || item.name }}</span>
+            <span class="dist-name">{{ handCategoryShort(item.key, item.short || item.name) }}</span>
             <div class="dist-track">
               <div
                 class="dist-fill"
@@ -249,25 +262,27 @@ function percent(value: number): string {
             <span class="skeleton-bar" :style="{ width: `${70 - n * 8}%` }"></span>
           </div>
         </div>
-        <div v-else class="empty-result">没有可展示的分布。</div>
+        <div v-else class="empty-result">{{ t("tool.emptyDistribution") }}</div>
       </div>
 
       <!-- Equity result -->
       <div v-else-if="isEquity" class="equity-block">
         <div v-if="tool.status === 'error'" class="generic-error">
           <AppIcon name="alert" :size="13" />
-          {{ errorText || "胜率计算失败" }}
+          {{ errorText || t("tool.error.equity") }}
         </div>
         <template v-else>
           <div class="equity-readout">
             <div class="equity-main">
               <span class="equity-value mono">{{ percent(equityRate) }}</span>
-              <span class="equity-caption">摊牌 equity</span>
+              <span class="equity-caption">{{ t("tool.equityCaption") }}</span>
             </div>
             <div class="equity-meta">
-              <span class="chip gold">{{ method === "exact" ? "精确枚举" : method === "monte_carlo" ? "蒙特卡洛" : "计算中" }}</span>
-              <span v-if="samples" class="mono faint">{{ samples.toLocaleString() }} {{ method === "exact" ? "种" : "次" }}</span>
-              <span v-if="result.cached" class="chip">缓存</span>
+              <span class="chip gold">{{ methodLabel }}</span>
+              <span v-if="samples" class="mono faint">
+                {{ samples.toLocaleString() }} {{ method === "exact" ? t("tool.unit.combos") : t("tool.unit.samples") }}
+              </span>
+              <span v-if="result.cached" class="chip">{{ t("tool.cached") }}</span>
             </div>
           </div>
           <div class="equity-bar">
@@ -276,13 +291,13 @@ function percent(value: number): string {
             <span class="equity-seg lose" :style="{ width: pctWidth(loseRate) }"></span>
           </div>
           <div class="equity-legend">
-            <span><i class="dot win"></i>胜 {{ percent(winRate) }}</span>
-            <span><i class="dot tie"></i>平 {{ percent(tieRate) }}</span>
-            <span><i class="dot lose"></i>负 {{ percent(loseRate) }}</span>
-            <span class="faint">对手随机 · {{ streetLabel }}</span>
+            <span><i class="dot win"></i>{{ t("tool.win", { value: percent(winRate) }) }}</span>
+            <span><i class="dot tie"></i>{{ t("tool.tie", { value: percent(tieRate) }) }}</span>
+            <span><i class="dot lose"></i>{{ t("tool.lose", { value: percent(loseRate) }) }}</span>
+            <span class="faint">{{ t("tool.opponentRandom", { street: resultStreet }) }}</span>
           </div>
           <div v-if="stdError > 0" class="equity-note">
-            采样误差约 ±{{ percent(stdError * 1.96) }}（95%）
+            {{ t("tool.samplingError", { value: percent(stdError * 1.96) }) }}
           </div>
         </template>
       </div>
@@ -291,31 +306,31 @@ function percent(value: number): string {
       <div v-else-if="isCallEv" class="callev-block">
         <div v-if="tool.status === 'error'" class="generic-error">
           <AppIcon name="alert" :size="13" />
-          {{ errorText || "跟注 EV 计算失败" }}
+          {{ errorText || t("tool.error.callEv") }}
         </div>
         <div v-else-if="result.applicable === false" class="callev-na">
           <AppIcon name="alert" :size="13" />
-          <span>{{ result.reason || "当前不适用" }}</span>
+          <span>{{ result.reason || t("tool.detail.callEvNa") }}</span>
         </div>
         <template v-else>
           <div class="callev-readout">
             <span class="callev-value mono" :class="{ positive: evCall > 0, negative: evCall < 0 }">
               {{ evCall > 0 ? "+" : "" }}{{ evCall.toFixed(1) }}
             </span>
-            <span class="callev-caption">跟注 EV</span>
+            <span class="callev-caption">{{ t("tool.title.callEv") }}</span>
             <span class="chip" :class="evCall > 0 ? 'gold' : evCall < 0 ? 'red' : ''">
-              {{ evCall > 0 ? "正期望" : evCall < 0 ? "负期望" : "盈亏平衡" }}
+              {{ evCall > 0 ? t("tool.positiveEv") : evCall < 0 ? t("tool.negativeEv") : t("tool.breakeven") }}
             </span>
-            <span class="chip">{{ equitySource === "model" ? "模型传入" : "内部估算" }}</span>
-            <span v-if="streetLabel" class="chip">{{ streetLabel }}</span>
+            <span class="chip">{{ equitySource === "model" ? t("tool.fromModel") : t("tool.internalEstimate") }}</span>
+            <span v-if="resultStreet" class="chip">{{ resultStreet }}</span>
           </div>
           <div class="callev-grid">
-            <span>底池 <strong class="mono">{{ chips(Number(result.pot || 0)) }}</strong></span>
-            <span>跟注 <strong class="mono">{{ chips(Number(callAmount)) }}</strong></span>
-            <span>有效底池 <strong class="mono">{{ chips(Number(effectivePot)) }}</strong></span>
-            <span>临界胜率 <strong class="mono">{{ percent(breakeven) }}</strong></span>
-            <span>你的胜率 <strong class="mono">{{ percent(equityRate) }}</strong></span>
-            <span>底池赔率 <strong class="mono">{{ result.pot_to_call_ratio ? `${Number(result.pot_to_call_ratio).toFixed(2)} : 1` : "—" }}</strong></span>
+            <span>{{ t("tool.pot") }} <strong class="mono">{{ chips(Number(result.pot || 0)) }}</strong></span>
+            <span>{{ t("tool.call") }} <strong class="mono">{{ chips(Number(callAmount)) }}</strong></span>
+            <span>{{ t("tool.effectivePot") }} <strong class="mono">{{ chips(Number(effectivePot)) }}</strong></span>
+            <span>{{ t("tool.breakevenEquity") }} <strong class="mono">{{ percent(breakeven) }}</strong></span>
+            <span>{{ t("tool.yourEquity") }} <strong class="mono">{{ percent(equityRate) }}</strong></span>
+            <span>{{ t("tool.potOdds") }} <strong class="mono">{{ result.pot_to_call_ratio ? `${Number(result.pot_to_call_ratio).toFixed(2)} : 1` : t("common.none") }}</strong></span>
           </div>
           <div class="callev-compare">
             <div class="compare-track">
@@ -324,14 +339,14 @@ function percent(value: number): string {
             </div>
             <div class="compare-scale mono">
               <span>0</span>
-              <span>临界 {{ percent(breakeven) }}</span>
+              <span>{{ t("tool.breakevenShort", { value: percent(breakeven) }) }}</span>
               <span>100%</span>
             </div>
           </div>
           <div v-if="equityMethod && equityMethod !== 'model'" class="callev-note mono">
-            {{ equityMethod === "exact" ? "精确" : "采样" }} {{ Number(result.equity_samples || 0).toLocaleString() }}
+            {{ equityMethod === "exact" ? t("tool.exact") : t("tool.sampled") }} {{ Number(result.equity_samples || 0).toLocaleString() }}
           </div>
-          <div class="callev-note">{{ result.note || "静态跟注 EV，假设后续不再下注。" }}</div>
+          <div class="callev-note">{{ result.note || t("tool.staticNote") }}</div>
         </template>
       </div>
 
@@ -339,26 +354,26 @@ function percent(value: number): string {
       <div v-else-if="isAction" class="action-block">
         <div v-if="tool.status === 'running'" class="running-line">
           <span class="spinner"></span>
-          <span>正在提交动作…</span>
+          <span>{{ t("tool.submitting") }}</span>
         </div>
         <div v-else-if="ok && result.ok !== false" class="action-ok">
           <span class="action-pill" :class="action">{{ actionLabel(action) || action }}</span>
           <span v-if="amount" class="mono amount">→ {{ chips(amount) }}</span>
-          <span class="ok-text"><AppIcon name="check" :size="12" /> 动作已接受</span>
+          <span class="ok-text"><AppIcon name="check" :size="12" /> {{ t("tool.actionAccepted") }}</span>
         </div>
         <div v-else class="action-fail">
           <div class="fail-line">
             <AppIcon name="alert" :size="13" />
-            <span>{{ errorText || "动作被拒绝" }}</span>
+            <span>{{ errorText || t("tool.error.action") }}</span>
           </div>
           <div v-if="constraint" class="constraint-grid">
-            <span v-if="constraint.to_call !== undefined" class="chip">需跟注 <strong class="mono">{{ chips(Number(constraint.to_call)) }}</strong></span>
-            <span v-if="constraint.min_raise_to !== undefined" class="chip">最小加注 <strong class="mono">{{ chips(Number(constraint.min_raise_to)) }}</strong></span>
-            <span v-if="constraint.max_raise_to !== undefined" class="chip">最大 <strong class="mono">{{ chips(Number(constraint.max_raise_to)) }}</strong></span>
-            <span v-if="constraint.pot !== undefined" class="chip">底池 <strong class="mono">{{ chips(Number(constraint.pot)) }}</strong></span>
+            <span v-if="constraint.to_call !== undefined" class="chip">{{ t("tool.toCall", { amount: chips(Number(constraint.to_call)) }) }}</span>
+            <span v-if="constraint.min_raise_to !== undefined" class="chip">{{ t("tool.minRaise", { amount: chips(Number(constraint.min_raise_to)) }) }}</span>
+            <span v-if="constraint.max_raise_to !== undefined" class="chip">{{ t("tool.max", { amount: chips(Number(constraint.max_raise_to)) }) }}</span>
+            <span v-if="constraint.pot !== undefined" class="chip">{{ t("tool.pot") }} <strong class="mono">{{ chips(Number(constraint.pot)) }}</strong></span>
           </div>
           <div v-if="legalActions.length" class="legal-row">
-            <span class="faint">合法动作</span>
+            <span class="faint">{{ t("tool.legalActions") }}</span>
             <span v-for="item in legalActions" :key="item" class="chip">{{ actionLabel(item) }}</span>
           </div>
         </div>
@@ -368,12 +383,12 @@ function percent(value: number): string {
       <div v-else-if="isRandom" class="random-block">
         <div v-if="tool.status === 'error'" class="generic-error">
           <AppIcon name="alert" :size="13" />
-          {{ errorText || "随机数生成失败" }}
+          {{ errorText || t("tool.error.random") }}
         </div>
         <template v-else>
           <div class="random-readout">
-            <span class="random-value mono">{{ randomValue !== null ? randomValue.toFixed(4) : "—" }}</span>
-            <span class="random-unit">均匀随机 · 0 ≤ x &lt; 1</span>
+            <span class="random-value mono">{{ randomValue !== null ? randomValue.toFixed(4) : t("common.none") }}</span>
+            <span class="random-unit">{{ t("tool.randomUniform") }}</span>
           </div>
           <template v-if="randomValue !== null">
             <div class="random-track">
@@ -392,15 +407,15 @@ function percent(value: number): string {
       <div v-else-if="isTalk" class="talk-block">
         <div v-if="!talkAccepted" class="generic-error">
           <AppIcon name="alert" :size="13" />
-          {{ errorText || "喊话被拒绝" }}
+          {{ errorText || t("tool.error.talk") }}
         </div>
         <template v-else>
-          <div class="talk-quote">「{{ talkText || "空消息" }}」</div>
+          <div class="talk-quote">{{ t("tool.talkQuote", { text: talkText || t("tool.emptyMessage") }) }}</div>
           <div class="talk-meta-row">
-            <span v-if="tool.status === 'running'" class="chip">发送中</span>
+            <span v-if="tool.status === 'running'" class="chip">{{ t("tool.detail.sending") }}</span>
             <template v-else>
-              <span class="chip gold">本回合喊话完成</span>
-              <span class="chip">对手下一次决策时看到</span>
+              <span class="chip gold">{{ t("tool.talkDone") }}</span>
+              <span class="chip">{{ t("tool.talkSeen") }}</span>
             </template>
           </div>
         </template>
@@ -409,19 +424,19 @@ function percent(value: number): string {
       <!-- Generic result -->
       <div v-else-if="tool.status === 'error'" class="generic-error">
         <AppIcon name="alert" :size="13" />
-        {{ errorText || "工具调用失败" }}
+        {{ errorText || t("tool.error.generic") }}
       </div>
 
       <div v-if="tool.status === 'running'" class="running-line">
         <span class="spinner"></span>
-        <span>正在执行 {{ tool.name }}…</span>
+        <span>{{ t("tool.executing", { name: toolLabel(tool.name) }) }}</span>
       </div>
 
       <details class="tool-section">
         <summary>
-          <span>参数</span>
+          <span>{{ t("tool.args") }}</span>
           <button class="copy-btn" type="button" @click.stop.prevent="copy(argsPretty, 'args')">
-            {{ copied === "args" ? "已复制" : "复制" }}
+            {{ copied === "args" ? t("common.copied") : t("common.copy") }}
           </button>
         </summary>
         <pre class="tool-pre">{{ argsPretty }}</pre>
@@ -429,9 +444,9 @@ function percent(value: number): string {
 
       <details class="tool-section" v-if="tool.result">
         <summary>
-          <span>原始结果</span>
+          <span>{{ t("tool.rawResult") }}</span>
           <button class="copy-btn" type="button" @click.stop.prevent="copy(resultPretty, 'result')">
-            {{ copied === "result" ? "已复制" : "复制" }}
+            {{ copied === "result" ? t("common.copied") : t("common.copy") }}
           </button>
         </summary>
         <pre class="tool-pre result-pre">{{ resultPretty }}</pre>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { t } from "../i18n";
 import type { CardInfo } from "../types";
 
 const props = withDefaults(
@@ -29,8 +30,8 @@ const displayRank = computed(() => {
 });
 
 const label = computed(() => {
-  if (props.faceDown) return "暗牌";
-  if (!props.card) return "空牌位";
+  if (props.faceDown) return t("card.faceDown");
+  if (!props.card) return t("card.emptySlot");
   return `${displayRank.value}${props.card.symbol}`;
 });
 </script>

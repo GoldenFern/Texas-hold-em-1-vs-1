@@ -11,6 +11,7 @@ A lab built specifically for **heads-up no-limit Texas Hold'em**: pick any two o
 - God view: both hole cards, burn cards, and the full deck
 - LLM: DeepSeek / Volcengine / MiniMax / Qwen / Zhipu GLM / Kimi / LongCat / MiMo / 4Router
 - Bots: RLCard (RandomAgent works out of the box; can load DQN/NFSP/DMC checkpoints)
+- Language: the interface defaults to English. Switch between 中文 and EN in the top bar or match setup; the choice is saved. `?lang=zh-CN` or `?lang=en` overrides it for one link. Agent language is set separately at match start.
 
 ---
 

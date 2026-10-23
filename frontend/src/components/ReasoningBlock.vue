@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { reasoningDefaultCollapsed, setReasoningDefaultCollapsed } from "../reasoning";
+import { t } from "../i18n";
 import AppIcon from "./AppIcon.vue";
 
 const props = withDefaults(
@@ -40,9 +41,9 @@ function toggle(): void {
   <div class="reasoning" :class="{ open, streaming }">
     <button class="reasoning-head" type="button" :aria-expanded="open" @click="toggle">
       <span class="reasoning-icon"><AppIcon name="sparkles" :size="13" /></span>
-      <span class="reasoning-title">思考</span>
+      <span class="reasoning-title">{{ t("turn.reasoning") }}</span>
       <span v-if="streaming" class="live-pill"><span class="dot live"></span>LIVE</span>
-      <span class="reasoning-meta mono">{{ charCount }} chars</span>
+      <span class="reasoning-meta mono">{{ t("common.chars", { count: charCount }) }}</span>
       <span class="chevron" :class="{ open }"><AppIcon name="chevronDown" :size="13" /></span>
     </button>
     <div v-show="open" class="reasoning-body">

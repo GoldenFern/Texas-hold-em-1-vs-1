@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import AppIcon from "./AppIcon.vue";
-import { compactPercent, compactSeatName } from "../format";
+import { compactPercent, seatDisplayName } from "../format";
+import { handCategoryLabel } from "../i18n/labels";
+import { t } from "../i18n";
 import { boardLocked } from "../boardReveal";
 import {
   game,
@@ -47,8 +49,10 @@ const topCategory = computed(() => {
 });
 const methodText = computed(() => {
   if (!analysis.value) return "";
-  if (analysis.value.method === "exact") return `精确枚举 · ${analysis.value.total.toLocaleString("en-US")} 种`;
-  return `蒙特卡洛 · ${analysis.value.total.toLocaleString("en-US")} 次`;
+  const count = analysis.value.total.toLocaleString("en-US");
+  return analysis.value.method === "exact"
+    ? t("analysis.exact", { count })
+    : t("analysis.monteCarlo", { count });
 });
 const stale = computed(() => {
   if (!analysis.value || !snapshot.value) return false;
@@ -60,10 +64,13 @@ const maxProbability = computed(() => {
 });
 const summaryName = computed(() => {
   const player = selectedPlayer.value;
-  if (!player) return "—";
-  return player.kind === "llm"
-    ? compactSeatName(player.name, selectedInfo.value?.model_name)
-    : player.name;
+  if (!player) return t("common.none");
+  return seatDisplayName(player.name, player.kind, selectedInfo.value?.model_name) || player.name;
+});
+
+const topCategoryName = computed(() => {
+  const item = topCategory.value;
+  return item ? handCategoryLabel(item.key, item.name) : "";
 });
 
 function barWidth(value: number): string {
@@ -97,25 +104,25 @@ function toggleExpanded(): void {
       <button
         class="analysis-toggle"
         type="button"
-        title="展开或收起牌型分布"
+        :title="t('analysis.toggleTitle')"
         :aria-expanded="expanded"
         @click="toggleExpanded"
       >
         <span class="toggle-icon"><AppIcon name="chart" :size="14" /></span>
-        <span class="toggle-title">牌型分布</span>
+        <span class="toggle-title">{{ t("analysis.title") }}</span>
 
         <template v-if="canAnalyze">
           <span class="summary-name">{{ summaryName }}</span>
           <span v-if="topCategory" class="summary-stat summary-top">
-            <span class="summary-key">最可能</span>
-            {{ topCategory.name }} {{ compactPercent(topCategory.probability) }}
+            <span class="summary-key">{{ t("analysis.mostLikely") }}</span>
+            {{ topCategoryName }} {{ compactPercent(topCategory.probability) }}
           </span>
         </template>
-        <span v-else class="summary-muted">{{ match ? "等待底牌" : "开局后显示" }}</span>
+        <span v-else class="summary-muted">{{ match ? t("analysis.waitingHole") : t("analysis.showAfterStart") }}</span>
 
-        <span v-if="boardLocked" class="summary-state"><span class="spinner"></span>发牌中</span>
-        <span v-else-if="stale" class="summary-state"><span class="spinner"></span>重算中</span>
-        <span v-else-if="game.analysisLoading" class="summary-state"><span class="spinner"></span>计算中</span>
+        <span v-if="boardLocked" class="summary-state"><span class="spinner"></span>{{ t("analysis.dealing") }}</span>
+        <span v-else-if="stale" class="summary-state"><span class="spinner"></span>{{ t("analysis.recalculating") }}</span>
+        <span v-else-if="game.analysisLoading" class="summary-state"><span class="spinner"></span>{{ t("analysis.calculating") }}</span>
 
         <AppIcon name="chevronDown" :size="14" class="toggle-chevron" />
       </button>
@@ -128,12 +135,12 @@ function toggleExpanded(): void {
             :class="{ active: selectedSeat === seat.seat }"
             @click="pickSeat(seat.seat)"
           >
-            {{ seat.name }}
+            {{ seatDisplayName(seat.name, seat.kind, seat.model_name) || seat.name }}
           </button>
         </div>
         <button class="btn btn-ghost btn-sm" :disabled="game.analysisLoading || !canAnalyze" @click="reload">
           <AppIcon name="refresh" :size="13" :class="{ spin: game.analysisLoading }" />
-          重算
+          {{ t("analysis.recalculate") }}
         </button>
       </div>
     </header>
@@ -142,19 +149,19 @@ function toggleExpanded(): void {
       <div v-if="!match || !canAnalyze" class="analysis-empty">
         <AppIcon name="chart" :size="18" />
         <span>
-          {{ !match ? "配置两位玩家并开始对局，这里会展示手牌分布。" : game.godView ? "等待发牌。" : "开启上帝视角后，可以分析所有玩家。" }}
+          {{ !match ? t("analysis.emptyNoMatch") : game.godView ? t("analysis.emptyWaitingDeal") : t("analysis.emptyGodView") }}
         </span>
       </div>
 
       <div v-else-if="game.analysisLoading && !analysis" class="analysis-loading">
         <span class="spinner"></span>
-        正在计算牌型分布…
+        {{ t("analysis.calculatingDistribution") }}
       </div>
 
       <div v-else-if="game.analysisError" class="analysis-error">
         <AppIcon name="alert" :size="14" />
         <span>{{ game.analysisError }}</span>
-        <button class="btn btn-sm" @click="reload">重试</button>
+        <button class="btn btn-sm" @click="reload">{{ t("analysis.retry") }}</button>
       </div>
 
       <div v-else-if="distribution.length" class="chart" :class="{ stale, locked: boardLocked }">
@@ -165,7 +172,7 @@ function toggleExpanded(): void {
           :class="{ best: bestKey === item.key, zero: item.probability === 0 }"
           :style="{ '--delay': `${index * 28}ms`, '--bar-color': item.color }"
         >
-          <span class="chart-name">{{ item.name }}</span>
+          <span class="chart-name">{{ handCategoryLabel(item.key, item.name) }}</span>
           <div class="chart-track">
             <div class="chart-fill" :style="{ width: barWidth(item.probability) }"></div>
           </div>
@@ -175,11 +182,11 @@ function toggleExpanded(): void {
 
       <div v-else class="analysis-loading">
         <span class="spinner"></span>
-        等待牌型数据…
+        {{ t("analysis.waitingData") }}
       </div>
 
       <footer v-if="analysis" class="analysis-foot">
-        <span class="foot-note">最终牌型分布，不是胜率；条形按本次最大概率归一化。</span>
+        <span class="foot-note">{{ t("analysis.foot") }}</span>
         <span class="mono faint">{{ methodText }} · {{ analysis.elapsed_ms.toFixed(1) }}ms</span>
       </footer>
     </div>

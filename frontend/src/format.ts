@@ -1,3 +1,15 @@
+import { localizedText, t } from "./i18n";
+
+export {
+  actionLabel,
+  handCategoryLabel,
+  handCategoryShort,
+  positionLabel,
+  statusLabel,
+  streetLabel,
+  toolLabel,
+} from "./i18n/labels";
+
 export function chips(value: number | null | undefined): string {
   const number = Number(value ?? 0);
   return number.toLocaleString("en-US");
@@ -35,20 +47,6 @@ export function secondsSince(start: number, now = Date.now()): string {
   return `${Math.round(value)}s`;
 }
 
-export function streetLabel(street?: string): string {
-  return (
-    {
-      waiting: "等待",
-      preflop: "翻牌前",
-      flop: "翻牌",
-      turn: "转牌",
-      river: "河牌",
-      showdown: "摊牌",
-      finished: "本手结束",
-    }[street || ""] || street || ""
-  );
-}
-
 export function streetShort(street?: string): string {
   return (
     {
@@ -62,19 +60,6 @@ export function streetShort(street?: string): string {
   );
 }
 
-export function actionLabel(type?: string): string {
-  return (
-    {
-      fold: "弃牌",
-      check: "过牌",
-      call: "跟注",
-      bet: "下注",
-      raise: "加注",
-      all_in: "全下",
-    }[type || ""] || type || ""
-  );
-}
-
 export function actionTone(type?: string): string {
   return (
     {
@@ -85,23 +70,6 @@ export function actionTone(type?: string): string {
       raise: "raise",
       all_in: "allin",
     }[type || ""] || "neutral"
-  );
-}
-
-export function positionLabel(position?: string): string {
-  if (position === "button") return "按钮 / 小盲";
-  if (position === "big_blind") return "大盲";
-  return position || "";
-}
-
-export function statusLabel(status?: string): string {
-  return (
-    {
-      active: "行动中",
-      folded: "已弃牌",
-      all_in: "全下",
-      out: "出局",
-    }[status || ""] || status || ""
   );
 }
 
@@ -140,6 +108,28 @@ export function compactSeatName(name: string, modelName?: string): string {
   }
   const rest = model.slice(provider.length).replace(/^[\s·:_-]+/, "").trim();
   return rest || model;
+}
+
+/** Pick the provider name for the active interface language. */
+export function providerDisplayName(name: string, nameEn?: string): string {
+  return localizedText(name, nameEn);
+}
+
+/** Human seats always use the localized "You" label. */
+export function humanSeatLabel(): string {
+  return t("common.you");
+}
+
+/** Display name for a player seat, normalizing the human label. */
+export function seatDisplayName(
+  name: string | null | undefined,
+  kind: string | null | undefined,
+  modelName?: string,
+): string {
+  if (kind === "human") return humanSeatLabel();
+  const value = String(name || "").trim();
+  if (!value) return "";
+  return kind === "llm" ? compactSeatName(value, modelName) : value;
 }
 
 export function tokenText(value: number | undefined): string {

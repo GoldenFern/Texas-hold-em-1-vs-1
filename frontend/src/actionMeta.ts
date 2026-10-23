@@ -1,4 +1,6 @@
 import { chips } from "./format";
+import { actionLabel } from "./i18n/labels";
+import { t } from "./i18n";
 import type { ActionLog } from "./types";
 
 export interface ActionLike {
@@ -7,24 +9,20 @@ export interface ActionLike {
   amount?: number;
 }
 
-const ACTION_LABELS: Record<string, string> = {
-  fold: "弃牌",
-  check: "过牌",
-  call: "跟注",
-  bet: "下注",
-  raise: "加注",
-  all_in: "全下",
-};
-
 /** Human-friendly action text shared by the table and the action log. */
 export function describeAction(action: ActionLike | null | undefined): string {
   if (!action) return "";
-  const label = action.label || ACTION_LABELS[action.type] || action.type;
+  const localized = actionLabel(action.type);
+  const label = localized && localized !== action.type
+    ? localized
+    : action.label || localized || action.type;
   const amount = Number(action.amount || 0);
   if (!amount) return label;
-  if (action.type === "raise") return `${label}到 ${chips(amount)}`;
+  if (action.type === "raise") {
+    return t("action.raiseToLabel", { action: label, amount: chips(amount) });
+  }
   if (action.type === "bet" || action.type === "call" || action.type === "all_in") {
-    return `${label} ${chips(amount)}`;
+    return t("action.withAmount", { action: label, amount: chips(amount) });
   }
   return label;
 }

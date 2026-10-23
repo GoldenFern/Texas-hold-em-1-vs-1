@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { describeAction, lastActionForSeat } from "./actionMeta";
+import { setLocale } from "./i18n";
 import type { ActionLog } from "./types";
 
 function log(overrides: Partial<ActionLog> = {}): ActionLog {
@@ -34,6 +35,12 @@ describe("describeAction", () => {
   it("falls back to the action type when no label exists", () => {
     expect(describeAction({ type: "call", amount: 10 })).toBe("跟注 10");
     expect(describeAction(null)).toBe("");
+  });
+
+  it("ignores Chinese server labels in the English UI", () => {
+    setLocale("en-US", false);
+    expect(describeAction(log({ label: "加注", amount: 30 }))).toBe("Raise to 30");
+    expect(describeAction(log({ type: "call", label: "跟注", amount: 1200 }))).toBe("Call 1,200");
   });
 });
 

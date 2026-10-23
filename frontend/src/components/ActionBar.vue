@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import AppIcon from "./AppIcon.vue";
-import { chips, percent, streetLabel } from "../format";
+import { chips, percent, seatDisplayName, streetLabel } from "../format";
+import { t } from "../i18n";
 import { board, boardLocked, streetForCommunity } from "../boardReveal";
 import {
   game,
@@ -59,28 +60,42 @@ const potOdds = computed(() => {
 });
 const actingName = computed(() => {
   const seat = snapshot.value?.acting_seat;
-  return snapshot.value?.players?.find((player) => player.seat === seat)?.name || "对手";
+  const player = snapshot.value?.players?.find((item) => item.seat === seat);
+  return player
+    ? seatDisplayName(player.name, player.kind) || player.name
+    : t("common.opponent");
 });
 const winnerNames = computed(() => {
   const result = game.lastResult;
   if (!result) return "";
   return result.winner_seats
-    .map((seat) => snapshot.value?.players?.find((player) => player.seat === seat)?.name || `座位 ${seat}`)
+    .map((seat) => {
+      const player = snapshot.value?.players?.find((item) => item.seat === seat);
+      return player
+        ? seatDisplayName(player.name, player.kind) || player.name
+        : t("common.seat", { seat });
+    })
     .join(" · ");
 });
 const phaseText = computed(() => {
-  if (board.holeHold) return "发牌中";
+  if (board.holeHold) return t("table.dealing");
   if (board.busy) {
-    return board.community.length ? `翻牌中 · ${streetLabel(displayStreet.value)}` : "发牌中";
+    return board.community.length
+      ? t("table.revealing", { street: streetLabel(displayStreet.value) })
+      : t("table.dealing");
   }
-  if (game.busy) return "正在提交动作";
-  if (!match.value) return "尚未开局";
-  if (match.value.match_over) return "比赛结束";
-  if (snapshot.value?.street === "finished") return "本手结束";
-  if (snapshot.value?.acting_kind === "human") return "轮到你行动";
-  if (snapshot.value?.acting_kind === "llm") return `${actingName.value} 正在思考`;
-  if (snapshot.value?.acting_kind === "bot") return `${actingName.value} 正在决策`;
-  return "等待中";
+  if (game.busy) return t("table.submitting");
+  if (!match.value) return t("topbar.noMatch");
+  if (match.value.match_over) return t("table.matchOver");
+  if (snapshot.value?.street === "finished") return t("table.handOver");
+  if (snapshot.value?.acting_kind === "human") return t("table.yourTurn");
+  if (snapshot.value?.acting_kind === "llm") {
+    return t("table.thinking", { name: actingName.value });
+  }
+  if (snapshot.value?.acting_kind === "bot") {
+    return t("table.deciding", { name: actingName.value });
+  }
+  return t("table.waitingShort");
 });
 
 function clampRaise(value: number): number {
@@ -195,56 +210,56 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
         <span class="status-text">{{ phaseText }}</span>
       </div>
       <div v-if="canAct && toCall > 0" class="status-sub">
-        <span class="pot-odds">底池赔率 <strong class="mono">{{ percent(potOdds, 0) }}</strong></span>
+        <span class="pot-odds">{{ t("table.potOdds") }} <strong class="mono">{{ percent(potOdds, 0) }}</strong></span>
       </div>
     </div>
 
     <div v-if="match && displayStreet === 'finished'" class="end-actions">
       <div class="winner-line">
         <AppIcon name="sparkles" :size="14" />
-        <span>{{ winnerNames || "本手结束" }} 赢下底池 <strong class="mono gold">{{ chips(game.lastResult?.pot || 0) }}</strong></span>
+        <span>{{ t("table.winnerPrefix", { names: winnerNames || t("table.handOver") }) }} <strong class="mono gold">{{ chips(game.lastResult?.pot || 0) }}</strong></span>
       </div>
       <button v-if="match.can_next_hand" class="btn btn-primary" :disabled="game.busy || boardLocked" @click="nextHand">
-        下一手
+        {{ t("table.nextHand") }}
         <AppIcon name="arrowRight" :size="15" />
       </button>
-      <button class="btn btn-ghost" @click="openSetup">新比赛</button>
+      <button class="btn btn-ghost" @click="openSetup">{{ t("table.newMatch") }}</button>
     </div>
 
     <div v-else-if="canAct" class="controls">
       <div class="primary-actions">
-        <button v-if="canFold" class="btn btn-danger action-btn" @click="act('fold')" title="快捷键 F">
+        <button v-if="canFold" class="btn btn-danger action-btn" @click="act('fold')" :title="t('table.shortcut', { key: 'F' })">
           <AppIcon name="x" :size="15" />
-          弃牌
+          {{ t("action.fold") }}
           <kbd>F</kbd>
         </button>
         <button
           v-if="canCheck || canCall"
           class="btn btn-emerald action-btn main-action"
           @click="act(canCheck ? 'check' : 'call')"
-          title="快捷键 C"
+          :title="t('table.shortcut', { key: 'C' })"
         >
           <AppIcon :name="canCheck ? 'check' : 'arrowRight'" :size="15" />
-          {{ canCheck ? "过牌" : `跟注 ${chips(callAmount)}` }}
+          {{ canCheck ? t("action.check") : t("action.callAmount", { amount: chips(callAmount) }) }}
           <kbd>C</kbd>
         </button>
-        <button v-if="isRaise" class="btn btn-primary action-btn main-action" @click="raiseAction" title="快捷键 R">
+        <button v-if="isRaise" class="btn btn-primary action-btn main-action" @click="raiseAction" :title="t('table.shortcut', { key: 'R' })">
           <AppIcon name="zap" :size="15" />
-          {{ legal.includes("bet") ? "下注" : "加注" }}到 {{ chips(raiseTo) }}
+          {{ t(legal.includes("bet") ? "action.betTo" : "action.raiseTo", { amount: chips(raiseTo) }) }}
           <kbd>R</kbd>
         </button>
-        <button v-if="canAllIn" class="btn allin-btn" @click="act('all_in')" title="快捷键 A">
+        <button v-if="canAllIn" class="btn allin-btn" @click="act('all_in')" :title="t('table.shortcut', { key: 'A' })">
           <AppIcon name="flame" :size="14" />
-          ALL-IN
+          {{ t("action.allInShort") }}
           <kbd>A</kbd>
         </button>
       </div>
 
       <div v-if="isRaise" class="raise-panel">
         <div class="quick-row">
-          <button class="quick" :class="{ active: quickFraction === 'half' }" @click="setFraction(0.5, 'half')">½ 池</button>
-          <button class="quick" :class="{ active: quickFraction === 'three' }" @click="setFraction(0.75, 'three')">¾ 池</button>
-          <button class="quick" :class="{ active: quickFraction === 'pot' }" @click="setFraction(1, 'pot')">1 池</button>
+          <button class="quick" :class="{ active: quickFraction === 'half' }" @click="setFraction(0.5, 'half')">{{ t("table.halfPot") }}</button>
+          <button class="quick" :class="{ active: quickFraction === 'three' }" @click="setFraction(0.75, 'three')">{{ t("table.threeQuarterPot") }}</button>
+          <button class="quick" :class="{ active: quickFraction === 'pot' }" @click="setFraction(1, 'pot')">{{ t("table.onePot") }}</button>
         </div>
         <div class="slider-row">
           <input
@@ -258,7 +273,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
             @input="setRaise(Number(($event.target as HTMLInputElement).value))"
           />
           <div class="amount-input">
-            <span class="amount-prefix">到</span>
+            <span class="amount-prefix">{{ t("table.to") }}</span>
             <input
               ref="raiseInput"
               class="input"
@@ -275,8 +290,8 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
     </div>
 
     <div v-else-if="match?.match_over" class="waiting-side">
-      <span class="match-end">比赛结束</span>
-      <button class="btn btn-primary" @click="openSetup">新比赛</button>
+      <span class="match-end">{{ t("table.matchEnded") }}</span>
+      <button class="btn btn-primary" @click="openSetup">{{ t("table.newMatch") }}</button>
     </div>
   </div>
 </template>

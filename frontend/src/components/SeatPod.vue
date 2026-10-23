@@ -4,7 +4,9 @@ import AppIcon from "./AppIcon.vue";
 import FlipCard from "./FlipCard.vue";
 import { iconUrl } from "../api";
 import { describeAction } from "../actionMeta";
-import { chips, compactSeatName, shortName } from "../format";
+import { chips, seatDisplayName, shortName } from "../format";
+import { handCategoryLabel } from "../i18n/labels";
+import { t } from "../i18n";
 import type { ActionLog, HandResult, PlayerState, SeatInfo } from "../types";
 
 const props = withDefaults(
@@ -33,13 +35,9 @@ const props = withDefaults(
   },
 );
 
-const fullName = computed(() => props.player?.name || props.seatInfo?.name || "等待入座");
+const fullName = computed(() => props.player?.name || props.seatInfo?.name || t("table.waitingSeat"));
 const kind = computed(() => props.player?.kind || props.seatInfo?.kind || "human");
-const name = computed(() => (
-  kind.value === "llm"
-    ? compactSeatName(fullName.value, props.seatInfo?.model_name)
-    : fullName.value
-));
+const name = computed(() => seatDisplayName(fullName.value, kind.value, props.seatInfo?.model_name) || fullName.value);
 const stack = computed(() => props.player?.chips ?? 0);
 const isFolded = computed(() => props.player?.status === "folded");
 const isAllIn = computed(() => props.player?.status === "all_in");
@@ -58,15 +56,20 @@ const avatarIcon = computed(() => {
 });
 const providerIcon = computed(() => props.seatInfo?.icon || "");
 const roleLabel = computed(() => {
-  if (kind.value === "llm") return props.seatInfo?.model_name || "LLM Agent";
-  if (kind.value === "bot") return props.seatInfo?.agent?.agent_type?.startsWith("project_") ? "Project RL" : "RLCard";
-  return "人类玩家";
+  if (kind.value === "llm") return props.seatInfo?.model_name || t("table.roleLlm");
+  if (kind.value === "bot") {
+    return props.seatInfo?.agent?.agent_type?.startsWith("project_")
+      ? t("table.roleProject")
+      : t("table.roleRlcard");
+  }
+  return t("table.humanPlayer");
 });
 const action = computed(() => props.lastAction || null);
 const actionText = computed(() => describeAction(action.value));
 const assessment = computed(() => {
   if (props.holdAssessment) return "";
-  return props.player?.assessment?.category_name || "";
+  const current = props.player?.assessment;
+  return handCategoryLabel(current?.category, current?.category_name);
 });
 
 function dealOrder(index: number): number {
@@ -146,13 +149,13 @@ function dealOrder(index: number): number {
       </div>
 
       <div class="badges">
-        <span v-if="player?.is_button" class="badge dealer" title="庄家 / 小盲">D</span>
+        <span v-if="player?.is_button" class="badge dealer" :title="t('table.dealer')">D</span>
         <span v-if="isAllIn" class="badge allin">ALL-IN</span>
       </div>
 
       <div v-if="active" class="turn-flag">
         <span class="dot live"></span>
-        <span>{{ kind === "human" ? "你的回合" : "思考中" }}</span>
+        <span>{{ kind === "human" ? t("table.yourTurnShort") : t("table.thinkingShort") }}</span>
       </div>
     </div>
 
@@ -194,7 +197,7 @@ function dealOrder(index: number): number {
 
     <div v-if="isWinner && result" class="winner-badge">
       <AppIcon name="sparkles" :size="12" />
-      赢得 {{ chips(winnerAmount) }}
+      {{ t("table.won", { amount: chips(winnerAmount) }) }}
     </div>
   </div>
 </template>

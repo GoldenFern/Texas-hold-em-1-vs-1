@@ -4,6 +4,7 @@ import AppIcon from "./AppIcon.vue";
 import ReasoningBlock from "./ReasoningBlock.vue";
 import ToolCard from "./ToolCard.vue";
 import { actionLabel, chips, duration, secondsSince, streetLabel, tokenText } from "../format";
+import { t } from "../i18n";
 import { turnPendingLabel } from "../turnPhase";
 import type { TurnView } from "../types";
 
@@ -47,9 +48,11 @@ const elapsed = computed(() => {
   return secondsSince(props.turn.startedAt, now.value);
 });
 const statusText = computed(() => {
-  if (props.turn.status === "running") return props.live ? "思考中" : "运行中";
-  if (props.turn.auto) return "系统兜底";
-  return "已完成";
+  if (props.turn.status === "running") {
+    return props.live ? t("console.statusThinking") : t("console.statusRunning");
+  }
+  if (props.turn.auto) return t("console.statusAuto");
+  return t("console.statusDone");
 });
 const pendingText = computed(() => turnPendingLabel(props.turn));
 const streetClass = computed(() => props.turn.header.street || "preflop");
@@ -67,12 +70,12 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
           <span class="turn-index mono">TURN {{ String(turnNumber || 1).padStart(2, "0") }}</span>
           <span class="street-pill" :class="streetClass">{{ streetLabel(turn.header.street) }}</span>
           <span v-if="turn.header.position" class="position-chip">
-            {{ turn.header.position === "button" ? "BTN / SB" : "BB" }}
+            {{ turn.header.position === "button" ? t("turn.positionBtn") : t("turn.positionBb") }}
           </span>
           <span class="faint mono hand-no">#{{ turn.header.handId }}</span>
           <span v-if="turn.header.receivedTalk" class="talk-received">
             <AppIcon name="message" :size="10" />
-            收到 {{ turn.header.receivedTalk }} 条喊话
+            {{ t("turn.receivedTalk", { count: turn.header.receivedTalk }) }}
           </span>
           <span class="turn-status" :class="{ live, auto: turn.auto }">
             <span v-if="turn.status === 'running'" class="dot live"></span>
@@ -87,9 +90,9 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
       <details v-if="turn.stateText" class="state-input">
         <summary>
           <AppIcon name="terminal" :size="11" />
-          <span>牌局输入</span>
-          <span class="mono state-size">{{ turn.stateText.length }} chars</span>
-          <span class="state-hint">Agent 看到的完整信息</span>
+          <span>{{ t("turn.stateInput") }}</span>
+          <span class="mono state-size">{{ t("common.chars", { count: turn.stateText.length }) }}</span>
+          <span class="state-hint">{{ t("turn.stateHint") }}</span>
           <AppIcon name="chevronDown" :size="11" class="state-chevron" />
         </summary>
         <pre>{{ turn.stateText }}</pre>
@@ -98,7 +101,7 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
       <div class="messages">
         <div v-if="!turn.messages.length && turn.status === 'running'" class="thinking-placeholder">
           <span class="spinner"></span>
-          <span>{{ seatName }} 正在阅读牌局…</span>
+          <span>{{ t("turn.reading", { name: seatName }) }}</span>
         </div>
 
         <div v-for="message in turn.messages" :key="message.id" class="message" :class="message.status">
@@ -141,7 +144,7 @@ const streetClass = computed(() => props.turn.header.street || "preflop");
 
       <footer class="turn-foot">
         <div v-if="action" class="final-action" :class="actionType">
-          <span class="final-label">最终动作</span>
+          <span class="final-label">{{ t("turn.finalAction") }}</span>
           <strong>{{ actionLabel(actionType) }}<template v-if="actionAmount"> {{ chips(actionAmount) }}</template></strong>
           <span v-if="turn.auto" class="auto-chip">AUTO</span>
         </div>

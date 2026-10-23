@@ -20,6 +20,19 @@ def test_new_models_are_registered() -> None:
     assert gpt.public_dict(True)["icon"] == "openai.svg"
 
 
+def test_provider_metadata_has_english_fields() -> None:
+    registry = ProviderRegistry()
+    providers = {provider["id"]: provider for provider in registry.list_providers()}
+
+    assert providers["doubao"]["name_en"] == "Volcengine"
+    spec = registry.resolve("qwen", "qwen3.8-flash")
+    public = spec.public_dict(True)
+    assert public["provider_name_en"] == "Qwen"
+    assert public["tagline_en"] == "1M context · hybrid thinking · multimodal"
+    assert public["controls"]["thinking"]["label_en"] == "Deep thinking"
+    assert "hint_en" in public["controls"]["temperature"]
+
+
 def test_mimo_payload_uses_thinking_toggle() -> None:
     registry = ProviderRegistry()
     spec = registry.resolve("mimo", "mimo-v2.6-flash")

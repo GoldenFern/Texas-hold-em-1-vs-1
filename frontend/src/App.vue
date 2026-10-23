@@ -8,6 +8,7 @@ import TableView from "./components/TableView.vue";
 import ToastHost from "./components/ToastHost.vue";
 import TopBar from "./components/TopBar.vue";
 import { board, boardLocked } from "./boardReveal";
+import { t } from "./i18n";
 import { boot, game, refreshAnalysis } from "./store";
 
 const analysisTimer = ref(0);
@@ -47,7 +48,7 @@ function reload(): void {
     <div v-if="game.fatalError" class="global-banner">
       <AppIcon name="alert" :size="14" />
       <span>{{ game.fatalError }}</span>
-      <button class="btn btn-sm" @click="reload">重新加载</button>
+      <button class="btn btn-sm" @click="reload">{{ t("app.reload") }}</button>
     </div>
 
     <main class="app-main">
@@ -65,7 +66,7 @@ function reload(): void {
 
     <div v-if="game.loading" class="loading-cover">
       <div class="loading-mark">♠</div>
-      <div class="loading-text">正在连接牌桌</div>
+      <div class="loading-text">{{ t("app.loading") }}</div>
       <div class="loading-bar"><span></span></div>
     </div>
   </div>
