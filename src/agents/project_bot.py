@@ -26,6 +26,7 @@ import numpy as np
 
 from src.agents.base import AgentView, BaseAgent
 from src.engine.actions import Action
+from src.i18n import normalize_locale, tr
 from src.training.actions import (
     ACTION_LABELS,
     NUM_ACTIONS,
@@ -79,8 +80,10 @@ class ProjectBot(BaseAgent):
         algorithm: Optional[str] = None,
         device: str = "cpu",
         sample: Optional[bool] = None,
+        locale: str = "zh-CN",
     ) -> None:
         self.name = name
+        self.locale = normalize_locale(locale, "zh-CN") or "zh-CN"
         self.model_path = str(model_path)
         self.device_name = str(device)
         self.device: Any = None
@@ -102,28 +105,47 @@ class ProjectBot(BaseAgent):
         if not path.is_absolute():
             path = (PROJECT_ROOT / path).resolve()
         if not path.is_file():
-            raise FileNotFoundError(f"模型文件不存在: {path}")
+            raise FileNotFoundError(
+                tr(self.locale, "bot.project.model_missing", path=path)
+            )
         self.model_path = str(path)
         self.device = torch.device(self.device_name)
         try:
             payload = torch.load(path, map_location="cpu", weights_only=True)
         except Exception as exc:
             raise ValueError(
-                f"{path} 不是可安全加载的 {CHECKPOINT_FORMAT} checkpoint: {exc}"
+                tr(
+                    self.locale,
+                    "bot.project.unsafe_checkpoint",
+                    path=path,
+                    format=CHECKPOINT_FORMAT,
+                    error=exc,
+                )
             ) from exc
         if not isinstance(payload, dict) or payload.get("format") != CHECKPOINT_FORMAT:
             raise ValueError(
-                f"{path} 不是 {CHECKPOINT_FORMAT} 格式；"
-                "旧的 RLCard checkpoint 请用 RLCardBot，不要用 ProjectBot。"
+                tr(
+                    self.locale,
+                    "bot.project.wrong_format",
+                    path=path,
+                    format=CHECKPOINT_FORMAT,
+                )
             )
 
         requested_algorithm = self.algorithm
         algorithm = str(payload.get("algorithm") or self.algorithm).lower()
         if algorithm not in ("dqn", "nfsp"):
-            raise ValueError(f"不支持的算法: {algorithm!r}")
+            raise ValueError(
+                tr(self.locale, "bot.project.unsupported_algorithm", algorithm=repr(algorithm))
+            )
         if requested_algorithm and requested_algorithm != algorithm:
             raise ValueError(
-                f"checkpoint 的算法是 {algorithm}，但请求加载为 {requested_algorithm}"
+                tr(
+                    self.locale,
+                    "bot.project.algorithm_mismatch",
+                    actual=algorithm,
+                    requested=requested_algorithm,
+                )
             )
         self.algorithm = algorithm
         if not self._sample_explicit:
@@ -131,15 +153,29 @@ class ProjectBot(BaseAgent):
         self.obs_dim = int(payload.get("obs_dim", OBS_DIM))
         self.obs_version = int(payload.get("obs_version", 1))
         if self.obs_version < 1 or self.obs_version > OBS_VERSION:
-            raise ValueError(f"不支持的观测版本: {self.obs_version}")
+            raise ValueError(
+                tr(self.locale, "bot.project.unsupported_obs", version=self.obs_version)
+            )
         self.num_actions = int(payload.get("num_actions", NUM_ACTIONS))
         self.mlp_layers = list(payload.get("mlp_layers") or [128, 128])
 
         if self.obs_dim != OBS_DIM:
-            raise ValueError(f"模型 obs_dim={self.obs_dim}，当前推理格式需要 {OBS_DIM}")
+            raise ValueError(
+                tr(
+                    self.locale,
+                    "bot.project.obs_dim",
+                    actual=self.obs_dim,
+                    expected=OBS_DIM,
+                )
+            )
         if self.num_actions != NUM_ACTIONS:
             raise ValueError(
-                f"模型 num_actions={self.num_actions}，当前动作空间需要 {NUM_ACTIONS}"
+                tr(
+                    self.locale,
+                    "bot.project.num_actions",
+                    actual=self.num_actions,
+                    expected=NUM_ACTIONS,
+                )
             )
 
         if algorithm == "dqn":
@@ -165,7 +201,7 @@ class ProjectBot(BaseAgent):
 
         state_dict = payload.get("state_dict")
         if not isinstance(state_dict, dict):
-            raise ValueError("模型文件缺少 state_dict")
+            raise ValueError(tr(self.locale, "bot.project.missing_state_dict"))
         net.load_state_dict(state_dict)
         net.to(self.device)
         net.eval()
@@ -179,11 +215,11 @@ class ProjectBot(BaseAgent):
         import torch
 
         if self.net is None:
-            raise RuntimeError("模型尚未加载")
+            raise RuntimeError(tr(self.locale, "bot.project.not_loaded"))
         obs = encode_observation(view, view.big_blind, self.obs_version)
         mask = legal_action_mask(view)
         if not mask.any():
-            raise RuntimeError("当前没有合法动作")
+            raise RuntimeError(tr(self.locale, "bot.project.no_legal_actions"))
 
         tensor = torch.from_numpy(obs).float().unsqueeze(0).to(self.device)
         with torch.no_grad():

@@ -28,6 +28,7 @@ vi.mock("./api", () => {
       action: vi.fn(),
       nextHand: vi.fn(),
       setGodView: vi.fn(),
+      setLocale: vi.fn(),
       analyze: vi.fn(),
       testLLM: vi.fn(),
     },

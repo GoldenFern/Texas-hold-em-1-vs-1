@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from src.i18n import tr
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_PATH = PROJECT_ROOT / "config" / "providers.json"
 
@@ -175,10 +177,10 @@ class ProviderRegistry:
         return bool(os.environ.get(spec.api_key_env, "").strip())
 
     @staticmethod
-    def get_api_key(spec: ModelSpec) -> str:
+    def get_api_key(spec: ModelSpec, locale: str = "zh-CN") -> str:
         key = os.environ.get(spec.api_key_env, "").strip()
         if not key:
-            raise ValueError(f"缺少环境变量 {spec.api_key_env}，请在 .env 中配置")
+            raise ValueError(tr(locale, "providers.missing_key", env=spec.api_key_env))
         return key
 
     def list_providers(self) -> List[dict]:
@@ -194,12 +196,19 @@ class ProviderRegistry:
             providers.append({**provider, "models": models})
         return providers
 
-    def resolve(self, provider_id: str, model_id: str) -> ModelSpec:
+    def resolve(
+        self,
+        provider_id: str,
+        model_id: str,
+        locale: str = "zh-CN",
+    ) -> ModelSpec:
         if provider_id not in self._models:
-            raise ValueError(f"未知 Provider: {provider_id}")
+            raise ValueError(tr(locale, "providers.unknown_provider", provider=provider_id))
         models = self._models[provider_id]
         if model_id not in models:
-            raise ValueError(f"{provider_id} 不支持模型 {model_id}")
+            raise ValueError(
+                tr(locale, "providers.unknown_model", provider=provider_id, model=model_id)
+            )
         return models[model_id]
 
     def build_payload(

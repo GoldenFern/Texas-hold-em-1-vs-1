@@ -138,6 +138,15 @@ python scripts/eval_llm_tool_matrix.py --hands 300 --workers 10  # 五组工具�
 
 新增/修改 Provider：改 `config/providers.json` 的 `request` 与 `controls`，然后在 `src/llm/providers.py` 的 `build_payload` 里确认映射。前端会自动渲染参数控件。
 
+## 双语运行时
+
+- Python 端用户可见文案统一走 `src/i18n/` 的 `tr(locale, "key", **params)`；新增 API、Session、引擎或 Bot 错误时必须同时补 `catalog.py` 的中英条目。
+- Flask 从 `X-HU-Locale`、`?locale` 或 `Accept-Language` 解析界面语言，默认英文；`/api/preferences` 用于语言切换后更新服务端会话语言。
+- `GameSession.ui_locale` 随请求更新，控制人类可见错误和事件；`GameSession.agent_locale` 在开局时固定，写入 `match.agent_locale`，供 Agent 提示词和工具消息使用。
+- `HeadsUpGame`、`Action.from_payload`、`RLCardBot` 和 `ProjectBot` 都有 `locale` 参数，默认中文以保持离线脚本和旧测试兼容；Web 会话显式传界面语言。
+- 第三阶段接入 Agent 语言时，LLM 提示词、工具说明、工具返回和桌边喊话要使用 `agent_locale`，不要复用 `ui_locale`。
+- 运行时双语测试在 `tests/test_i18n.py`；前端语言测试在 `frontend/src/i18n/` 和 `LanguageSwitch.test.ts`。
+
 ## 状态同步（容易踩坑）
 
 - 服务端每次广播 state 前递增 `state_seq`，快照带 `seq`。

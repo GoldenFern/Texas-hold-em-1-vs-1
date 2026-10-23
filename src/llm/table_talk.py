@@ -6,6 +6,8 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
+from src.i18n import tr
+
 
 _ZERO_WIDTH = re.compile(r"[\u200b-\u200d\u2060\ufeff]")
 _BIDI = re.compile(r"[\u202a-\u202e\u2066-\u2069]")
@@ -42,7 +44,7 @@ class TableTalkLimits:
         )
 
 
-def normalize_table_talk(text: str, max_chars: int = 160) -> str:
+def normalize_table_talk(text: str, max_chars: int = 160, locale: str = "zh-CN") -> str:
     """Normalize one table-talk message into a single safe line.
 
     Args:
@@ -56,16 +58,16 @@ def normalize_table_talk(text: str, max_chars: int = 160) -> str:
         ValueError: If the text is empty or longer than ``max_chars``.
     """
     if not isinstance(text, str):
-        raise ValueError("喊话内容必须是文本")
+        raise ValueError(tr(locale, "table_talk.not_text"))
     normalized = unicodedata.normalize("NFC", text)
     normalized = _ZERO_WIDTH.sub("", normalized)
     normalized = _BIDI.sub("", normalized)
     normalized = _CONTROL.sub(" ", normalized)
     normalized = _WHITESPACE.sub(" ", normalized).strip()
     if not normalized:
-        raise ValueError("喊话内容不能为空")
+        raise ValueError(tr(locale, "table_talk.empty"))
     if len(normalized) > max_chars:
-        raise ValueError(f"喊话不能超过 {max_chars} 字")
+        raise ValueError(tr(locale, "table_talk.too_long", max=max_chars))
     return normalized
 
 

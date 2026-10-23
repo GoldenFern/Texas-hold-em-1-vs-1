@@ -64,6 +64,9 @@ export const api = {
   setGodView(enabled: boolean): Promise<{ ok: boolean; state: GameSnapshot }> {
     return request("/api/game/god-view", { method: "POST", body: JSON.stringify({ enabled }) });
   },
+  setLocale(locale: string): Promise<{ ok: boolean; locale: string }> {
+    return request("/api/preferences", { method: "POST", body: JSON.stringify({ locale }) });
+  },
   analyze(seat: number, iterations = 30000): Promise<{ ok: boolean; analysis: AnalysisResult }> {
     return request("/api/game/analyze", { method: "POST", body: JSON.stringify({ seat, iterations }) });
   },

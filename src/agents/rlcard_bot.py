@@ -25,6 +25,7 @@ import numpy as np
 
 from src.engine.actions import Action, ActionType
 from src.engine.cards import Card
+from src.i18n import normalize_locale, tr
 
 from .base import AgentView, BaseAgent
 
@@ -50,11 +51,15 @@ class RLCardBot(BaseAgent):
         model_path: Optional[str] = None,
         seed: int = 42,
         allow_external_model: bool = False,
+        locale: str = "zh-CN",
     ) -> None:
         self.name = name
+        self.locale = normalize_locale(locale, "zh-CN") or "zh-CN"
         self.agent_type = (agent_type or "random").strip().lower()
         if self.agent_type not in ("random", "dqn", "nfsp", "dmc"):
-            raise ValueError(f"不支持的 RLCard agent_type: {agent_type}")
+            raise ValueError(
+                tr(self.locale, "bot.rlcard.unsupported_type", type=agent_type)
+            )
         self.model_path = model_path or None
         self.seed = seed
         self.allow_external_model = bool(allow_external_model)
@@ -72,7 +77,7 @@ class RLCardBot(BaseAgent):
             import rlcard  # noqa: F401
         except ModuleNotFoundError:
             self._available = False
-            self._warning = "未安装 rlcard，已退化为 check/call 策略"
+            self._warning = tr(self.locale, "bot.rlcard.missing_warning")
             return
 
         np.random.seed(self.seed)
@@ -83,11 +88,17 @@ class RLCardBot(BaseAgent):
                 self._agent = RandomAgent(num_actions=5)
             else:
                 if not self.model_path:
-                    raise ValueError(f"agent_type={self.agent_type} 需要 model_path")
+                    raise ValueError(
+                        tr(
+                            self.locale,
+                            "bot.rlcard.model_path_required",
+                            type=self.agent_type,
+                        )
+                    )
                 self._agent = self._load_model(self.agent_type, self.model_path)
         except Exception as exc:  # noqa: BLE001 - surfaced to the UI
             self._available = False
-            self._warning = f"加载 RLCard 策略失败：{exc}；已退化为 check/call"
+            self._warning = tr(self.locale, "bot.rlcard.load_warning", error=exc)
             self._agent = None
 
     def _load_model(self, agent_type: str, model_path: str):
@@ -98,9 +109,13 @@ class RLCardBot(BaseAgent):
             resolved = resolved.resolve()
         if resolved != MODELS_DIR and MODELS_DIR not in resolved.parents:
             if not self.allow_external_model:
-                raise ValueError(f"模型文件必须位于 {MODELS_DIR} 下")
+                raise ValueError(
+                    tr(self.locale, "bot.rlcard.model_dir", dir=MODELS_DIR)
+                )
         if not resolved.is_file():
-            raise FileNotFoundError(f"模型文件不存在: {model_path}")
+            raise FileNotFoundError(
+                tr(self.locale, "bot.rlcard.model_missing", path=model_path)
+            )
         import torch
 
         checkpoint = torch.load(resolved, map_location="cpu", weights_only=False)
@@ -156,7 +171,7 @@ class RLCardBot(BaseAgent):
                 agent.load_state_dict(checkpoint)
             agent.eval()
             return agent
-        raise ValueError(f"未知 agent_type: {agent_type}")
+        raise ValueError(tr(self.locale, "bot.rlcard.unknown_type", type=agent_type))
 
     # ------------------------------------------------------------------
     # Decision
@@ -186,7 +201,7 @@ class RLCardBot(BaseAgent):
             action_id, info = self._agent.eval_step(state)
             action_id = int(action_id)
         except Exception as exc:  # noqa: BLE001
-            self._warning = f"RLCard 决策异常：{exc}"
+            self._warning = tr(self.locale, "bot.rlcard.decision_error", error=exc)
             return self._fallback(view, legal_types)
 
         mapped = self._map_action(view, action_id)

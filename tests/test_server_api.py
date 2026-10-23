@@ -80,6 +80,55 @@ def test_table_talk_requires_boolean_and_two_llm_seats() -> None:
         session.shutdown()
 
 
+def test_bootstrap_includes_english_provider_names() -> None:
+    client, session = make_client()
+    try:
+        response = client.get("/api/bootstrap", headers={"X-HU-Locale": "en-US"})
+        assert response.status_code == 200
+        providers = {item["id"]: item for item in response.get_json()["providers"]}
+        assert providers["doubao"]["name_en"] == "Volcengine"
+        assert providers["qwen"]["models"][0]["provider_name_en"] == "Qwen"
+    finally:
+        session.shutdown()
+
+
+def test_api_errors_follow_locale_header() -> None:
+    client, session = make_client()
+    try:
+        response = client.post(
+            "/api/game/god-view",
+            json={"enabled": "maybe"},
+            headers={"X-HU-Locale": "en-US"},
+        )
+        assert response.status_code == 400
+        assert "must be a boolean" in response.get_json()["error"]
+
+        response = client.post(
+            "/api/game/god-view",
+            json={"enabled": "maybe"},
+            headers={"X-HU-Locale": "zh-CN"},
+        )
+        assert response.status_code == 400
+        assert "必须是布尔值" in response.get_json()["error"]
+    finally:
+        session.shutdown()
+
+
+def test_preferences_endpoint_updates_session_locale() -> None:
+    client, session = make_client()
+    try:
+        response = client.post(
+            "/api/preferences",
+            json={"locale": "zh-CN"},
+            headers={"X-HU-Locale": "en-US"},
+        )
+        assert response.status_code == 200
+        assert response.get_json()["locale"] == "zh-CN"
+        assert session.ui_locale == "zh-CN"
+    finally:
+        session.shutdown()
+
+
 def test_invalid_rules_return_400() -> None:
     client, session = make_client()
     try:

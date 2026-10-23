@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict
 
+from src.i18n import tr
+
 
 class ActionType(str, Enum):
     FOLD = "fold"
@@ -53,7 +55,13 @@ class Action:
     meta: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_payload(cls, seat: int, payload: dict, source: str = "human") -> "Action":
+    def from_payload(
+        cls,
+        seat: int,
+        payload: dict,
+        source: str = "human",
+        locale: str = "zh-CN",
+    ) -> "Action":
         raw_type = str(payload.get("type") or payload.get("action") or "").strip().lower()
         aliases = {
             "x": "check",
@@ -68,12 +76,12 @@ class Action:
         }
         normalized = aliases.get(raw_type, raw_type)
         if normalized not in {item.value for item in ActionType}:
-            raise ValueError(f"未知动作: {raw_type!r}")
+            raise ValueError(tr(locale, "engine.payload.unknown_action", action=repr(raw_type)))
         amount = payload.get("amount", 0)
         if amount is None:
             amount = 0
         if isinstance(amount, bool):
-            raise ValueError("amount 必须是数字")
+            raise ValueError(tr(locale, "engine.payload.amount_number"))
         if isinstance(amount, str):
             text = amount.strip().replace(",", "")
             if not text:
@@ -82,13 +90,13 @@ class Action:
                 try:
                     amount = float(text)
                 except ValueError as exc:
-                    raise ValueError("amount 必须是数字") from exc
+                    raise ValueError(tr(locale, "engine.payload.amount_number")) from exc
         if isinstance(amount, float):
             if not amount.is_integer():
-                raise ValueError("amount 必须是整数")
+                raise ValueError(tr(locale, "engine.payload.amount_integer"))
             amount = int(amount)
         if not isinstance(amount, int):
-            raise ValueError("amount 必须是整数")
+            raise ValueError(tr(locale, "engine.payload.amount_integer"))
         return cls(seat=seat, type=ActionType(normalized), amount=amount, source=source)
 
     def to_dict(self) -> dict:

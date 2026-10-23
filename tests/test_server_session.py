@@ -76,6 +76,22 @@ def test_failed_bot_build_keeps_running_match(tmp_path) -> None:
         session.shutdown()
 
 
+def test_agent_locale_is_fixed_at_match_start() -> None:
+    session = make_session()
+    try:
+        session.set_ui_locale("en-US")
+        payload = human_vs_random()
+        payload["agent_locale"] = "zh-CN"
+        session.start_match(payload)
+        assert session.agent_locale == "zh-CN"
+        assert session.get_state()["match"]["agent_locale"] == "zh-CN"
+
+        session.set_ui_locale("en-US")
+        assert session.agent_locale == "zh-CN"
+    finally:
+        session.shutdown()
+
+
 def test_human_token_is_set_when_state_is_broadcast() -> None:
     session = make_session()
     try:

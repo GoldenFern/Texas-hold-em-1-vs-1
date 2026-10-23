@@ -11,7 +11,7 @@
 - 上帝视角：双方底牌、烧牌、完整牌堆
 - LLM：DeepSeek / 火山引擎 / MiniMax / Qwen / 智谱 GLM / Kimi / LongCat / MiMo / 4Router
 - Bot：RLCard（RandomAgent 开箱可用，支持加载 DQN/NFSP/DMC checkpoint）
-- 语言：界面首次打开默认英文，可在顶栏或对局配置里切换中文 / EN，选择会记住；`?lang=zh-CN` 或 `?lang=en` 可以临时覆盖。Agent 语言在开局时单独设置。
+- 语言：界面首次打开默认英文，可在顶栏或对局配置里切换中文 / EN，选择会记住；`?lang=zh-CN` 或 `?lang=en` 可以临时覆盖。牌局和 API 校验错误会跟随界面语言。Agent 语言在开局时单独记录，后续会用于提示词和桌边喊话。
 
 ---
 

@@ -105,6 +105,11 @@ let transcriptEpoch = 0;
 let analysisSeq = 0;
 let lastErrorToastAt = 0;
 
+watch(locale, (next) => {
+  if (!state.boot) return;
+  void api.setLocale(next).catch(() => undefined);
+});
+
 export const game = state;
 
 export const agentSeats = computed(() => {

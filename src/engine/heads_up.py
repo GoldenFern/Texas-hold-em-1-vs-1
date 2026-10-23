@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional, Sequence
 
+from src.i18n import normalize_locale, tr
+
 from .actions import Action, ActionType
 from .cards import Card, Deck
 from .evaluator import CATEGORY_BY_KEY, assess_hand
@@ -111,37 +113,40 @@ class HeadsUpGame:
         rebuy_amount: Optional[int] = None,
         seed: Optional[int] = None,
         max_hands: int = 0,
+        locale: str = "zh-CN",
     ) -> None:
+        self.locale = normalize_locale(locale, "zh-CN") or "zh-CN"
+
         def positive_int(value: object, label: str) -> int:
             if isinstance(value, bool):
-                raise ValueError(f"{label} 必须为正整数")
+                raise ValueError(tr(self.locale, "engine.rule.positive_int", label=label))
             if isinstance(value, float) and not value.is_integer():
-                raise ValueError(f"{label} 必须为正整数")
+                raise ValueError(tr(self.locale, "engine.rule.positive_int", label=label))
             try:
                 number = int(value)  # type: ignore[arg-type]
             except (TypeError, ValueError) as exc:
-                raise ValueError(f"{label} 必须为正整数") from exc
+                raise ValueError(tr(self.locale, "engine.rule.positive_int", label=label)) from exc
             if number <= 0:
-                raise ValueError(f"{label} 必须为正")
+                raise ValueError(tr(self.locale, "engine.rule.positive", label=label))
             return number
 
         starting_chips = positive_int(starting_chips, "starting_chips")
         small_blind = positive_int(small_blind, "small_blind")
         big_blind = positive_int(big_blind, "big_blind")
         if big_blind < small_blind:
-            raise ValueError("大盲必须不小于小盲")
+            raise ValueError(tr(self.locale, "engine.rule.blinds"))
         if starting_chips < big_blind:
-            raise ValueError("起始筹码不能低于大盲")
+            raise ValueError(tr(self.locale, "engine.rule.starting_chips"))
         if isinstance(max_hands, bool):
-            raise ValueError("max_hands 必须为非负整数")
+            raise ValueError(tr(self.locale, "engine.rule.max_hands"))
         if isinstance(max_hands, float) and not max_hands.is_integer():
-            raise ValueError("max_hands 必须为非负整数")
+            raise ValueError(tr(self.locale, "engine.rule.max_hands"))
         try:
             max_hands = int(max_hands or 0)
         except (TypeError, ValueError) as exc:
-            raise ValueError("max_hands 必须为非负整数") from exc
+            raise ValueError(tr(self.locale, "engine.rule.max_hands")) from exc
         if max_hands < 0:
-            raise ValueError("max_hands 必须为非负整数")
+            raise ValueError(tr(self.locale, "engine.rule.max_hands"))
         rebuy_amount = positive_int(
             starting_chips if rebuy_amount is None else rebuy_amount,
             "rebuy_amount",
@@ -200,12 +205,12 @@ class HeadsUpGame:
     def start_hand(self) -> None:
         """Deal a new hand. Raises when the match is over or a hand is active."""
         if self.street not in (Street.WAITING, Street.FINISHED):
-            raise RuntimeError("当前手牌尚未结束")
+            raise RuntimeError(tr(self.locale, "engine.rule.hand_active"))
         if self.match_over:
-            raise RuntimeError("比赛已结束")
+            raise RuntimeError(tr(self.locale, "engine.rule.match_over"))
         if self.max_hands and self.hands_played >= self.max_hands:
             self.match_over = True
-            raise RuntimeError("已达到最大手数")
+            raise RuntimeError(tr(self.locale, "engine.rule.max_hands_reached"))
 
         # Auto rebuy happens before the new hand is dealt.
         for player in self.players:
@@ -218,7 +223,7 @@ class HeadsUpGame:
                     self.match_over = True
         if any(player.chips <= 0 for player in self.players):
             self.match_over = True
-            raise RuntimeError("有玩家筹码为 0，比赛结束")
+            raise RuntimeError(tr(self.locale, "engine.rule.players_broke"))
 
         self.hand_id += 1
         self.button_index = (self.button_index + 1) % 2
@@ -282,7 +287,7 @@ class HeadsUpGame:
 
     def get_player(self, seat: int) -> HeadsUpPlayer:
         if seat not in (0, 1):
-            raise ValueError("seat 必须是 0 或 1")
+            raise ValueError(tr(self.locale, "engine.rule.seat"))
         return self.players[seat]
 
     def to_call(self, seat: int) -> int:
@@ -445,16 +450,16 @@ class HeadsUpGame:
     def apply(self, action: Action) -> ActionResult:
         """Validate and apply an action. Returns an error result instead of raising."""
         if self.street in (Street.FINISHED, Street.SHOWDOWN, Street.WAITING):
-            return ActionResult(False, action, "当前手牌已结束")
+            return ActionResult(False, action, tr(self.locale, "engine.action.hand_over"))
         if self.actor is None:
-            return ActionResult(False, action, "当前没有玩家可以行动")
+            return ActionResult(False, action, tr(self.locale, "engine.action.no_actor"))
         if action.seat != self.actor:
-            return ActionResult(False, action, "还没有轮到你行动")
+            return ActionResult(False, action, tr(self.locale, "engine.action.not_your_turn"))
 
         player = self.players[action.seat]
         opponent = self.players[1 - action.seat]
         if player.status != PlayerStatus.ACTIVE:
-            return ActionResult(False, action, "你当前不能行动")
+            return ActionResult(False, action, tr(self.locale, "engine.action.cannot_act"))
 
         to_call = self.to_call(player.seat)
         action_type = action.type
@@ -464,7 +469,11 @@ class HeadsUpGame:
 
         if action_type == ActionType.CHECK:
             if to_call > 0:
-                return ActionResult(False, action, f"需要跟注 {to_call}，不能过牌")
+                return ActionResult(
+                    False,
+                    action,
+                    tr(self.locale, "engine.action.must_call", to_call=to_call),
+                )
             self._record(player, action, pot_after=self.pot)
             player.acted_this_street = True
             player.raise_allowed = False
@@ -472,7 +481,7 @@ class HeadsUpGame:
 
         if action_type == ActionType.CALL:
             if to_call <= 0:
-                return ActionResult(False, action, "无需跟注，请使用过牌")
+                return ActionResult(False, action, tr(self.locale, "engine.action.no_call_check"))
             added = min(to_call, player.chips)
             self._commit(player, added)
             self._record(player, action, pot_after=self.pot, amount=added, added=added)
@@ -482,15 +491,19 @@ class HeadsUpGame:
 
         # BET / RAISE / ALL_IN
         if action_type == ActionType.BET and to_call > 0:
-            return ActionResult(False, action, f"面对下注 {to_call} 时请使用加注")
+            return ActionResult(
+                False,
+                action,
+                tr(self.locale, "engine.action.use_raise", to_call=to_call),
+            )
         if action_type == ActionType.RAISE and to_call == 0:
-            return ActionResult(False, action, "当前无需跟注，请使用下注")
+            return ActionResult(False, action, tr(self.locale, "engine.action.use_bet"))
         if not self.can_raise(player.seat) and not (
             action_type == ActionType.ALL_IN and to_call >= player.chips
         ):
             if not player.raise_allowed:
-                return ActionResult(False, action, "本轮不完整加注后不能再次加注")
-            return ActionResult(False, action, "当前不能加注")
+                return ActionResult(False, action, tr(self.locale, "engine.action.no_reraise_short"))
+            return ActionResult(False, action, tr(self.locale, "engine.action.cannot_raise"))
 
         if action_type == ActionType.ALL_IN and to_call >= player.chips:
             # All-in is only a call when the stack cannot cover the bet.
@@ -508,20 +521,28 @@ class HeadsUpGame:
             target = action.amount
 
         if isinstance(target, bool) or not isinstance(target, int):
-            return ActionResult(False, action, "加注金额必须是整数")
+            return ActionResult(False, action, tr(self.locale, "engine.action.raise_integer"))
 
         if target <= player.street_bet:
             return ActionResult(
                 False,
                 action,
-                f"加注后的本街总额必须高于你已投入的 {player.street_bet}",
+                tr(
+                    self.locale,
+                    "engine.action.raise_above_invested",
+                    invested=player.street_bet,
+                ),
             )
         if target > max_raise_to:
-            return ActionResult(False, action, f"加注后总额不能超过 {max_raise_to}")
+            return ActionResult(
+                False,
+                action,
+                tr(self.locale, "engine.action.raise_above_max", max=max_raise_to),
+            )
 
         added = target - player.street_bet
         if added <= 0:
-            return ActionResult(False, action, "加注金额必须为正")
+            return ActionResult(False, action, tr(self.locale, "engine.action.raise_positive"))
 
         previous_bet = self.current_bet
         previous_last_full_raise = self.last_full_raise
@@ -531,15 +552,31 @@ class HeadsUpGame:
             minimum = min(self.big_blind, max_raise_to)
             is_short_all_in = target == max_raise_to and target < self.big_blind
             if target < minimum and not is_short_all_in:
-                return ActionResult(False, action, f"最小下注为 {minimum}")
+                return ActionResult(
+                    False,
+                    action,
+                    tr(self.locale, "engine.action.min_bet", min=minimum),
+                )
             is_full_raise = target >= self.big_blind
         else:
             if target <= previous_bet:
-                return ActionResult(False, action, f"加注必须高于当前下注 {previous_bet}")
+                return ActionResult(
+                    False,
+                    action,
+                    tr(
+                        self.locale,
+                        "engine.action.raise_above_current",
+                        current=previous_bet,
+                    ),
+                )
             minimum = min(previous_bet + previous_last_full_raise, max_raise_to)
             is_short_all_in = target == max_raise_to and target < minimum
             if target < minimum and not is_short_all_in:
-                return ActionResult(False, action, f"最小加注到 {minimum}")
+                return ActionResult(
+                    False,
+                    action,
+                    tr(self.locale, "engine.action.min_raise_to", min=minimum),
+                )
             is_full_raise = (target - previous_bet) >= previous_last_full_raise
 
         self._commit(player, added)

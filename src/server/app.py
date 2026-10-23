@@ -9,11 +9,12 @@ import os
 import secrets
 import time
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, g, jsonify, request, send_from_directory
 from flask_socketio import SocketIO
 
 from src.analysis.equity import EquityAnalyzer
 from src.analysis.hand_distribution import HandDistributionAnalyzer
+from src.i18n import DEFAULT_LOCALE, normalize_locale, tr
 from src.llm.client import LLMClient, LLMError
 from src.llm.providers import PROJECT_ROOT, ProviderRegistry
 from src.server.session import GameSession
@@ -41,15 +42,26 @@ def _allowed_origins() -> list[str]:
     ]
 
 
+def _request_locale() -> str:
+    raw = (
+        request.headers.get("X-HU-Locale")
+        or request.args.get("locale")
+        or request.args.get("lang")
+    )
+    if not raw and request.path.startswith("/api/"):
+        raw = request.headers.get("Accept-Language")
+    return normalize_locale(raw, DEFAULT_LOCALE) or DEFAULT_LOCALE
+
+
 def _json_object() -> dict:
     """Return a JSON object body, rejecting arrays and malformed JSON."""
     payload = request.get_json(silent=True)
     if payload is None:
         if request.get_data(cache=True):
-            raise ValueError("请求体必须是合法的 JSON 对象")
+            raise ValueError(tr(g.locale, "api.invalid_json"))
         return {}
     if not isinstance(payload, dict):
-        raise ValueError("请求体必须是 JSON 对象")
+        raise ValueError(tr(g.locale, "api.json_object"))
     return payload
 
 
@@ -63,7 +75,7 @@ def _bool_field(payload: dict, key: str, default: bool) -> bool:
             return True
         if lowered in ("false", "0", "no", "off"):
             return False
-    raise ValueError(f"{key} 必须是布尔值")
+    raise ValueError(tr(g.locale, "api.bool_field", key=key))
 
 
 def create_app() -> tuple[Flask, SocketIO, GameSession]:
@@ -107,7 +119,23 @@ def create_app() -> tuple[Flask, SocketIO, GameSession]:
     )
     analyzer = HandDistributionAnalyzer()
     equity_analyzer = EquityAnalyzer()
-    session = GameSession(socketio, registry, client, analyzer, equity_analyzer)
+    session = GameSession(
+        socketio,
+        registry,
+        client,
+        analyzer,
+        equity_analyzer,
+        ui_locale=DEFAULT_LOCALE,
+    )
+
+    @app.before_request
+    def apply_request_locale():
+        g.locale = _request_locale()
+        # Static assets and the shell must not flip the session language based
+        # on the browser's Accept-Language. Only API calls carry the explicit
+        # UI preference.
+        if request.path.startswith("/api/"):
+            session.set_ui_locale(g.locale)
 
     # ------------------------------------------------------------------
     # Pages
@@ -121,10 +149,10 @@ def create_app() -> tuple[Flask, SocketIO, GameSession]:
         return (
             "<html><head><meta charset='utf-8'><title>Heads-Up Lab</title></head>"
             "<body style='background:#0b1512;color:#e8e3d7;font-family:system-ui;padding:48px'>"
-            "<h1>Heads-Up Lab</h1><p>前端尚未构建。</p>"
+            f"<h1>Heads-Up Lab</h1><p>{tr(g.locale, 'api.frontend_missing')}</p>"
             "<pre style='background:#13211d;padding:16px;border-radius:12px'>"
             "cd frontend\nnpm install\nnpm run build\n</pre>"
-            "<p>然后刷新本页。</p></body></html>"
+            f"<p>{tr(g.locale, 'api.frontend_after_build')}</p></body></html>"
         )
 
     # ------------------------------------------------------------------
@@ -138,7 +166,7 @@ def create_app() -> tuple[Flask, SocketIO, GameSession]:
                 "app": {
                     "name": "Heads-Up Lab",
                     "version": APP_VERSION,
-                    "description": "二人德州扑克 · Human / LLM / RLCard 实验室",
+                    "description": tr(g.locale, "bootstrap.description"),
                 },
                 "providers": registry.list_providers(),
                 "game": game_config,
@@ -171,7 +199,7 @@ def create_app() -> tuple[Flask, SocketIO, GameSession]:
             return jsonify({"ok": False, "error": str(exc)}), 400
         except Exception:  # noqa: BLE001
             logger.exception("start_match failed")
-            return jsonify({"ok": False, "error": "服务器内部错误，请查看日志"}), 500
+            return jsonify({"ok": False, "error": tr(g.locale, "api.internal_error")}), 500
         return jsonify({"ok": True, "state": state})
 
     @app.post("/api/game/action")
@@ -235,8 +263,18 @@ def create_app() -> tuple[Flask, SocketIO, GameSession]:
             return jsonify({"ok": False, "error": exc.detail, "kind": exc.kind}), 400
         except Exception:  # noqa: BLE001
             logger.exception("llm test failed")
-            return jsonify({"ok": False, "error": "服务器内部错误，请查看日志"}), 500
+            return jsonify({"ok": False, "error": tr(g.locale, "api.internal_error")}), 500
         return jsonify(result)
+
+    @app.post("/api/preferences")
+    def preferences():
+        try:
+            payload = _json_object()
+            locale = normalize_locale(payload.get("locale"), g.locale) or g.locale
+            session.set_ui_locale(locale)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        return jsonify({"ok": True, "locale": locale})
 
     @app.get("/api/health")
     def health():
@@ -248,6 +286,12 @@ def create_app() -> tuple[Flask, SocketIO, GameSession]:
 
     @socketio.on("connect")
     def on_connect():
+        raw = (
+            request.args.get("locale")
+            or request.headers.get("X-HU-Locale")
+            or request.headers.get("Accept-Language")
+        )
+        session.set_ui_locale(normalize_locale(raw, session.ui_locale) or session.ui_locale)
         socketio.emit("state", session.get_state(), to=request.sid)
 
     @socketio.on("request_state")
@@ -265,12 +309,16 @@ def create_app() -> tuple[Flask, SocketIO, GameSession]:
     @app.errorhandler(404)
     def not_found(error):
         if request.path.startswith("/api/") or request.path.startswith("/static/"):
-            return jsonify({"ok": False, "error": "Not found"}), 404
+            return jsonify(
+                {"ok": False, "error": tr(getattr(g, "locale", DEFAULT_LOCALE), "api.not_found")}
+            ), 404
         return index()
 
     @app.errorhandler(500)
     def server_error(error):
-        return jsonify({"ok": False, "error": "Internal server error"}), 500
+        return jsonify(
+            {"ok": False, "error": tr(getattr(g, "locale", DEFAULT_LOCALE), "api.internal_error")}
+        ), 500
 
     logger.info("Heads-Up Lab ready. Static dist: %s", DIST_DIR)
     return app, socketio, session

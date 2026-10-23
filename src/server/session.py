@@ -17,6 +17,7 @@ from src.analysis.equity import EquityAnalyzer
 from src.analysis.hand_distribution import HandDistributionAnalyzer
 from src.engine.actions import Action, ActionType
 from src.engine.heads_up import HeadsUpGame, Street
+from src.i18n import normalize_locale, tr
 from src.llm.agent import LLMAgent, select_tools
 from src.llm.client import LLMClient
 from src.llm.prompt import AGENT_TOOL_NAMES, ALL_TOOL_NAMES, build_system_prompt
@@ -57,12 +58,15 @@ class GameSession:
         client: LLMClient,
         analyzer: HandDistributionAnalyzer,
         equity_analyzer: Optional[EquityAnalyzer] = None,
+        ui_locale: str = "zh-CN",
     ) -> None:
         self.socketio = socketio
         self.registry = registry
         self.client = client
         self.analyzer = analyzer
         self.equity_analyzer = equity_analyzer or EquityAnalyzer()
+        self.ui_locale = normalize_locale(ui_locale, "zh-CN") or "zh-CN"
+        self.agent_locale = "zh-CN"
         self.lock = threading.RLock()
         self._start_lock = threading.Lock()
         self.game: Optional[HeadsUpGame] = None
@@ -95,6 +99,19 @@ class GameSession:
         self._table_talk_turn_counts: Dict[tuple[int, str], int] = {}
         self._final_talk_sent: Dict[int, bool] = {0: False, 1: False}
 
+    def set_ui_locale(self, locale: str) -> None:
+        normalized = normalize_locale(locale, self.ui_locale)
+        if not normalized:
+            return
+        self.ui_locale = normalized
+        # Human-facing engine errors follow the current interface language.
+        # Agent prompts and tool messages keep their own fixed match locale.
+        if self.game is not None:
+            self.game.locale = normalized
+
+    def _t(self, message_key: str, **params: object) -> str:
+        return tr(self.ui_locale, message_key, **params)
+
     # ------------------------------------------------------------------
     # Config
     # ------------------------------------------------------------------
@@ -114,13 +131,13 @@ class GameSession:
         def int_value(key: str, default: int) -> int:
             value = rules.get(key, default)
             if isinstance(value, bool):
-                raise ValueError(f"{key} 必须是整数")
+                raise ValueError(self._t("session.rule.int", key=key))
             if isinstance(value, float) and not value.is_integer():
-                raise ValueError(f"{key} 必须是整数")
+                raise ValueError(self._t("session.rule.int", key=key))
             try:
                 return int(value)
             except (TypeError, ValueError) as exc:
-                raise ValueError(f"{key} 必须是整数") from exc
+                raise ValueError(self._t("session.rule.int", key=key)) from exc
 
         for key, default in (
             ("starting_chips", 1000),
@@ -133,13 +150,17 @@ class GameSession:
             maximum = int(limit.get("max", 100000))
             value = int_value(key, default)
             if not minimum <= value <= maximum:
-                raise ValueError(f"{key} 必须在 {minimum} 到 {maximum} 之间")
+                raise ValueError(
+                    self._t("session.rule.range", key=key, min=minimum, max=maximum)
+                )
             rules[key] = value
 
         max_hands_limit = int(limits.get("max_hands", {}).get("max", 1000))
         max_hands = int_value("max_hands", 0)
         if not 0 <= max_hands <= max_hands_limit:
-            raise ValueError(f"max_hands 必须在 0 到 {max_hands_limit} 之间")
+            raise ValueError(
+                self._t("session.rule.max_hands_range", max=max_hands_limit)
+            )
         rules["max_hands"] = max_hands
 
         def bool_value(key: str, default: bool) -> bool:
@@ -152,7 +173,7 @@ class GameSession:
                     return True
                 if lowered in ("false", "0", "no", "off"):
                     return False
-            raise ValueError(f"{key} 必须是布尔值")
+            raise ValueError(self._t("session.rule.bool", key=key))
 
         rules["auto_rebuy"] = bool_value("auto_rebuy", False)
         rules["god_view"] = bool_value("god_view", True)
@@ -161,38 +182,43 @@ class GameSession:
             rules["seed"] = None
         else:
             if isinstance(seed, bool) or (isinstance(seed, float) and not seed.is_integer()):
-                raise ValueError("seed 必须是整数或留空")
+                raise ValueError(self._t("session.rule.seed"))
             try:
                 rules["seed"] = int(seed)
             except (TypeError, ValueError) as exc:
-                raise ValueError("seed 必须是整数或留空") from exc
+                raise ValueError(self._t("session.rule.seed")) from exc
         if rules["big_blind"] < rules["small_blind"]:
-            raise ValueError("大盲必须不小于小盲")
+            raise ValueError(self._t("session.rule.blinds"))
         if rules["starting_chips"] < rules["big_blind"]:
-            raise ValueError("起始筹码不能低于大盲")
+            raise ValueError(self._t("session.rule.starting_chips"))
         return rules
 
     def _parse_seats(self, payload: dict) -> List[SeatConfig]:
         seats_raw = payload.get("seats")
         if not isinstance(seats_raw, list) or len(seats_raw) != 2:
-            raise ValueError("必须提供两个座位")
+            raise ValueError(self._t("session.rule.two_seats"))
         seats: List[SeatConfig] = []
         for index, raw in enumerate(seats_raw):
             if not isinstance(raw, dict):
-                raise ValueError(f"座位 {index} 配置无效")
+                raise ValueError(self._t("session.rule.seat_invalid", index=index))
             kind = str(raw.get("kind") or "human").lower()
             if kind not in ("human", "llm", "bot"):
-                raise ValueError(f"座位 {index} 的类型必须是 human / llm / bot")
+                raise ValueError(self._t("session.rule.seat_kind", index=index))
             name = str(raw.get("name") or "").strip()
             if kind == "human":
-                name = name or "你"
+                name = name or ("你" if self.ui_locale == "zh-CN" else "You")
             elif kind == "llm":
                 provider_id = str(raw.get("provider_id") or "").strip()
                 model_id = str(raw.get("model_id") or "").strip()
                 if not provider_id or not model_id:
-                    raise ValueError(f"座位 {index} 的 LLM 需要 provider_id 和 model_id")
-                spec = self.registry.resolve(provider_id, model_id)
-                name = name or f"{spec.provider_name} · {spec.name}"
+                    raise ValueError(self._t("session.rule.llm_ids", index=index))
+                spec = self.registry.resolve(provider_id, model_id, locale=self.ui_locale)
+                provider_name = (
+                    spec.provider_name
+                    if self.ui_locale == "zh-CN"
+                    else spec.provider_name_en
+                )
+                name = name or f"{provider_name} · {spec.name}"
                 seats.append(
                     SeatConfig(
                         kind="llm",
@@ -214,20 +240,31 @@ class GameSession:
                     "project_dqn",
                     "project_nfsp",
                 ):
-                    raise ValueError(f"座位 {index} 的 Bot 类型无效: {agent_type}")
+                    raise ValueError(
+                        self._t("session.rule.bot_type", index=index, agent_type=agent_type)
+                    )
                 model_path = bot_raw.get("model_path")
                 if agent_type != "random" and not model_path:
-                    raise ValueError(f"座位 {index} 的 {agent_type} 需要模型文件")
+                    raise ValueError(
+                        self._t("session.rule.bot_model", index=index, agent_type=agent_type)
+                    )
                 delay_raw = bot_raw.get("delay_seconds", BOT_DELAY_DEFAULT)
                 if isinstance(delay_raw, bool):
-                    raise ValueError(f"座位 {index} 的 Bot 延迟必须是数字")
+                    raise ValueError(self._t("session.rule.bot_delay_number", index=index))
                 try:
                     delay_seconds = float(delay_raw)
                 except (TypeError, ValueError) as exc:
-                    raise ValueError(f"座位 {index} 的 Bot 延迟必须是数字") from exc
+                    raise ValueError(
+                        self._t("session.rule.bot_delay_number", index=index)
+                    ) from exc
                 if not BOT_DELAY_MIN <= delay_seconds <= BOT_DELAY_MAX:
                     raise ValueError(
-                        f"座位 {index} 的 Bot 延迟必须在 {BOT_DELAY_MIN:g} 到 {BOT_DELAY_MAX:g} 秒之间"
+                        self._t(
+                            "session.rule.bot_delay_range",
+                            index=index,
+                            min=f"{BOT_DELAY_MIN:g}",
+                            max=f"{BOT_DELAY_MAX:g}",
+                        )
                     )
                 name = name or ("Project Bot" if agent_type.startswith("project_") else "RLCard Bot")
                 seats.append(
@@ -242,16 +279,20 @@ class GameSession:
                 continue
             seats.append(SeatConfig(kind="human", name=name))
         if sum(1 for seat in seats if seat.kind == "human") >= 2:
-            raise ValueError("不能同时选择两个人类玩家")
+            raise ValueError(self._t("session.rule.two_humans"))
         if seats[0].name == seats[1].name:
             seats[1].name = seats[1].name + " B"
         return seats
 
     @staticmethod
-    def _resolve_table_talk(seats: List[SeatConfig], requested: object) -> bool:
+    def _resolve_table_talk(
+        seats: List[SeatConfig],
+        requested: object,
+        locale: str = "zh-CN",
+    ) -> bool:
         """Return the effective table-talk setting for a new match."""
         if not isinstance(requested, bool):
-            raise ValueError("table_talk 必须是布尔值")
+            raise ValueError(tr(locale, "session.rule.table_talk_bool"))
         return requested and all(seat.kind == "llm" for seat in seats)
 
     # ------------------------------------------------------------------
@@ -269,15 +310,34 @@ class GameSession:
                 "table_talk",
                 self._game_config.get("defaults", {}).get("table_talk", True),
             )
-            table_talk_enabled = self._resolve_table_talk(seats, table_talk_requested)
+            table_talk_enabled = self._resolve_table_talk(
+                seats, table_talk_requested, locale=self.ui_locale
+            )
+            requested_agent_locale = payload.get("agent_locale")
+            if requested_agent_locale in (None, "", "auto"):
+                requested_agent_locale = self.ui_locale
+            agent_locale = (
+                normalize_locale(requested_agent_locale, self.ui_locale) or self.ui_locale
+            )
 
             # Validate LLM keys before building anything.
             for seat in seats:
                 if seat.kind == "llm":
-                    spec = self.registry.resolve(seat.provider_id, seat.model_id)
+                    spec = self.registry.resolve(
+                        seat.provider_id, seat.model_id, locale=self.ui_locale
+                    )
                     if not ProviderRegistry.key_present(spec):
+                        provider_name = (
+                            spec.provider_name
+                            if self.ui_locale == "zh-CN"
+                            else spec.provider_name_en
+                        )
                         raise ValueError(
-                            f"{spec.provider_name} 缺少环境变量 {spec.api_key_env}，请在 .env 中配置后重启服务"
+                            self._t(
+                                "session.rule.missing_key",
+                                provider=provider_name,
+                                env=spec.api_key_env,
+                            )
                         )
 
             # Build the new game and all agents in local variables. A failure
@@ -290,6 +350,7 @@ class GameSession:
                 rebuy_amount=rules["rebuy_amount"],
                 seed=rules["seed"],
                 max_hands=rules["max_hands"],
+                locale=self.ui_locale,
             )
             new_game.configure_players(
                 {"name": seats[0].name, "kind": seats[0].kind},
@@ -313,7 +374,9 @@ class GameSession:
             )
             for seat_index, seat in enumerate(seats):
                 if seat.kind == "llm":
-                    spec = self.registry.resolve(seat.provider_id, seat.model_id)
+                    spec = self.registry.resolve(
+                        seat.provider_id, seat.model_id, locale=self.ui_locale
+                    )
                     new_agents[seat_index] = LLMAgent(
                         seat=seat_index,
                         name=seat.name,
@@ -341,10 +404,15 @@ class GameSession:
                                 name=seat.name,
                                 model_path=model_path or "",
                                 algorithm=algorithm,
+                                locale=self.ui_locale,
                             )
                         except (FileNotFoundError, ValueError, RuntimeError) as exc:
                             raise ValueError(
-                                f"座位 {seat_index} 的 Project Bot 加载失败: {exc}"
+                                self._t(
+                                    "session.rule.project_bot_failed",
+                                    index=seat_index,
+                                    error=exc,
+                                )
                             ) from exc
                     else:
                         bot = RLCardBot(
@@ -352,11 +420,15 @@ class GameSession:
                             agent_type=seat.bot_agent_type,
                             model_path=seat.bot_model_path,
                             seed=int(base_seed) + seat_index * 97,
+                            locale=self.ui_locale,
                         )
                         if not bot.describe().get("available"):
                             raise ValueError(
-                                f"座位 {seat_index} 的 RLCard Bot 加载失败: "
-                                f"{bot.describe().get('warning')}"
+                                self._t(
+                                    "session.rule.rlcard_bot_failed",
+                                    index=seat_index,
+                                    error=bot.describe().get("warning"),
+                                )
                             )
                         new_agents[seat_index] = bot
 
@@ -368,6 +440,7 @@ class GameSession:
                 self.match_id = new_match_id
                 self.god_view = rules["god_view"]
                 self.max_hands = rules["max_hands"]
+                self.agent_locale = agent_locale
                 self.hand_history = []
                 self.transcripts = {0: [], 1: []}
                 self.table_talk_enabled = table_talk_enabled
@@ -427,13 +500,13 @@ class GameSession:
         """Validate and store one table-talk message for the acting seat."""
         with self.lock:
             if not self._alive(generation) or not self.game:
-                return {"ok": False, "error": "牌局已结束或被重置"}
+                return {"ok": False, "error": self._t("session.table_talk.reset")}
             if not self.table_talk_enabled:
-                return {"ok": False, "error": "本局没有启用桌边喊话"}
+                return {"ok": False, "error": self._t("session.table_talk.disabled")}
             if self.game.street == Street.FINISHED:
-                return {"ok": False, "error": "当前手牌已经结束，不能喊话"}
+                return {"ok": False, "error": self._t("session.table_talk.hand_finished")}
             if self.game.actor != seat:
-                return {"ok": False, "error": "还没有轮到你行动，不能喊话"}
+                return {"ok": False, "error": self._t("session.table_talk.not_your_turn")}
 
             turn_key = (seat, str(turn_id or ""))
             used_turn = self._table_talk_turn_counts.get(turn_key, 0)
@@ -444,10 +517,9 @@ class GameSession:
             if remaining_turn <= 0:
                 return {
                     "ok": False,
-                    "error": (
-                        "本回合喊话次数已达上限"
-                        f"（{self._table_talk_limits.max_per_turn} 条），"
-                        "请直接调用 apply_action。"
+                    "error": self._t(
+                        "session.table_talk.limit",
+                        max=self._table_talk_limits.max_per_turn,
                     ),
                     "remaining_turn": 0,
                 }
@@ -456,6 +528,7 @@ class GameSession:
                 normalized = normalize_table_talk(
                     text,
                     self._table_talk_limits.max_chars,
+                    locale=self.ui_locale,
                 )
             except ValueError as exc:
                 return {
@@ -498,17 +571,18 @@ class GameSession:
         """Store one optional post-match message from a seat."""
         with self.lock:
             if not self._alive(generation) or not self.game:
-                return {"ok": False, "error": "比赛已经结束或被重置"}
+                return {"ok": False, "error": self._t("session.table_talk.match_reset")}
             if not self.table_talk_enabled:
-                return {"ok": False, "error": "本局没有启用桌边喊话"}
+                return {"ok": False, "error": self._t("session.table_talk.disabled")}
             if not self.game.match_over:
-                return {"ok": False, "error": "比赛还没有结束"}
+                return {"ok": False, "error": self._t("session.table_talk.match_not_finished")}
             if self._final_talk_sent.get(seat):
-                return {"ok": False, "error": "本局已经发过赛后喊话"}
+                return {"ok": False, "error": self._t("session.table_talk.final_sent")}
             try:
                 normalized = normalize_table_talk(
                     text,
                     self._table_talk_limits.max_chars,
+                    locale=self.ui_locale,
                 )
             except ValueError as exc:
                 return {"ok": False, "error": str(exc)}
@@ -580,13 +654,13 @@ class GameSession:
     def next_hand(self) -> dict:
         with self.lock:
             if not self.game:
-                raise ValueError("还没有开始比赛")
+                raise ValueError(self._t("session.not_started"))
             if self.match_error or not self._thread_alive_locked():
-                raise ValueError("对局线程已停止，请开始新比赛")
+                raise ValueError(self._t("session.thread_stopped"))
             if self.game.street != Street.FINISHED:
-                raise ValueError("当前手牌还没有结束")
+                raise ValueError(self._t("session.hand_not_finished"))
             if self.game.match_over:
-                raise ValueError("比赛已经结束，请开始新比赛")
+                raise ValueError(self._t("session.match_over_new"))
             self._next_hand_event.set()
         return self.get_state()
 
@@ -599,19 +673,21 @@ class GameSession:
     def human_action(self, payload: dict) -> dict:
         with self.lock:
             if not self.game:
-                raise ValueError("还没有开始比赛")
+                raise ValueError(self._t("session.not_started"))
             if self.match_error or not self._thread_alive_locked():
-                raise ValueError("对局线程已停止，请开始新比赛")
+                raise ValueError(self._t("session.thread_stopped"))
             actor = self.game.actor
             if actor is None:
-                raise ValueError("当前没有轮到人类行动")
+                raise ValueError(self._t("session.action.no_actor"))
             player = self.game.players[actor]
             if player.kind != "human":
-                raise ValueError("当前不是人类玩家的回合")
+                raise ValueError(self._t("session.action.not_human"))
             token = (self.game.hand_id, len(self.game.actions), actor)
             if self._human_token != token:
-                raise ValueError("牌局状态已变化，请刷新后重试")
-            action = Action.from_payload(actor, payload, source="human")
+                raise ValueError(self._t("session.action.state_changed"))
+            action = Action.from_payload(
+                actor, payload, source="human", locale=self.ui_locale
+            )
             result = self.game.apply(action)
             if not result.ok:
                 return {"ok": False, "error": result.error, "state": self._snapshot_locked()}
@@ -650,7 +726,7 @@ class GameSession:
                             {
                                 "type": "match_over",
                                 "match_id": self.match_id,
-                                "text": "比赛结束。",
+                                "text": self._t("session.event.match_over"),
                             }
                         )
                         self._run_final_table_talk(generation)
@@ -666,7 +742,9 @@ class GameSession:
                         try:
                             self.game.start_hand()
                         except Exception as exc:  # noqa: BLE001
-                            self.match_error = f"无法开始下一手：{exc}"
+                            self.match_error = self._t(
+                                "session.event.next_hand_failed", error=exc
+                            )
                             self.game.match_over = True
                             self._broadcast_state()
                             return
@@ -722,7 +800,10 @@ class GameSession:
                     {
                         "type": "note",
                         "level": "warn",
-                        "text": f"赛后喊话失败：{type(exc).__name__}: {exc}",
+                        "text": self._t(
+                            "session.event.final_talk_failed",
+                            error=f"{type(exc).__name__}: {exc}",
+                        ),
                     }
                 )
             if not self._alive(generation):
@@ -781,13 +862,17 @@ class GameSession:
                         "type": "error",
                         "kind": "engine",
                         "match_id": self.match_id,
-                        "text": f"Agent 动作被拒绝：{result.error}",
+                        "text": self._t(
+                            "session.event.agent_action_rejected", error=result.error
+                        ),
                     }
                 )
                 fallback = self._safe_action(seat, source="system")
                 result = self.game.apply(fallback)
                 if not result.ok:
-                    self.match_error = f"无法执行兜底动作：{result.error}"
+                    self.match_error = self._t(
+                        "session.event.fallback_failed", error=result.error
+                    )
             self._broadcast_state()
             if self.game.street == Street.FINISHED:
                 self._finish_hand_locked()
@@ -826,6 +911,7 @@ class GameSession:
             "match_over": self.game.match_over,
             "god_view": self.god_view,
             "table_talk": self.table_talk_enabled,
+            "agent_locale": self.agent_locale,
             "can_next_hand": self.game.street == Street.FINISHED and not self.game.match_over,
             "started_at": self.started_at,
             "error": self.match_error,
@@ -1073,14 +1159,14 @@ class GameSession:
     def analyze(self, seat: int, iterations: int = 30000) -> dict:
         with self.lock:
             if not self.game:
-                raise ValueError("还没有开始比赛")
+                raise ValueError(self._t("session.not_started"))
             if seat not in (0, 1):
-                raise ValueError("seat 必须是 0 或 1")
+                raise ValueError(self._t("session.analyze.seat"))
             player = self.game.players[seat]
             if player.kind != "human" and not self.god_view:
-                raise ValueError("需要开启上帝视角才能分析该玩家")
+                raise ValueError(self._t("session.analyze.god_view"))
             if len(player.hole_cards) != 2:
-                raise ValueError("当前没有可分析的底牌")
+                raise ValueError(self._t("session.analyze.no_hole"))
             hole = list(player.hole_cards)
             community = list(self.game.community)
             hand_id = self.game.hand_id
@@ -1093,15 +1179,17 @@ class GameSession:
         return payload
 
     def test_llm(self, provider_id: str, model_id: str, params: Optional[dict]) -> dict:
-        spec = self.registry.resolve(provider_id, model_id)
+        spec = self.registry.resolve(provider_id, model_id, locale=self.ui_locale)
         if not ProviderRegistry.key_present(spec):
-            raise ValueError(f"缺少环境变量 {spec.api_key_env}")
+            raise ValueError(
+                self._t("session.llm_test.missing_key", env=spec.api_key_env)
+            )
         normalized = spec.normalize_params(params or {})
         test_params = dict(normalized)
         test_params["max_tokens"] = min(int(test_params.get("max_tokens", 1024)), 2048)
         messages = [
-            {"role": "system", "content": "你是一个连通性测试助手。"},
-            {"role": "user", "content": "请只回复四个字：连接成功"},
+            {"role": "system", "content": self._t("session.llm_test.system")},
+            {"role": "user", "content": self._t("session.llm_test.user")},
         ]
         runtime = self._game_config.get("llm_runtime", {})
         test_client = LLMClient(
